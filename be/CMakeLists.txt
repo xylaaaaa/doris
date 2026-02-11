@@ -558,21 +558,7 @@ set(COMMON_THIRDPARTY
 
 if (ENABLE_PAIMON_CPP)
     if (NOT PAIMON_HOME)
-        set(_paimon_default_home "${THIRDPARTY_DIR}/paimon-cpp")
-        set(_paimon_config_rel "lib/cmake/Paimon/PaimonConfig.cmake")
-        set(_paimon_config_rel64 "lib64/cmake/Paimon/PaimonConfig.cmake")
-        # Prefer dedicated paimon-cpp prefix if present.
-        if (EXISTS "${_paimon_default_home}/${_paimon_config_rel}" OR
-            EXISTS "${_paimon_default_home}/${_paimon_config_rel64}")
-            set(PAIMON_HOME "${_paimon_default_home}" CACHE PATH "" FORCE)
-        # Fallback: some environments install paimon-cpp directly into THIRDPARTY_DIR.
-        elseif (EXISTS "${THIRDPARTY_DIR}/${_paimon_config_rel}" OR
-                EXISTS "${THIRDPARTY_DIR}/${_paimon_config_rel64}")
-            set(PAIMON_HOME "${THIRDPARTY_DIR}" CACHE PATH "" FORCE)
-        endif()
-        unset(_paimon_default_home)
-        unset(_paimon_config_rel)
-        unset(_paimon_config_rel64)
+        set(PAIMON_HOME "${THIRDPARTY_DIR}" CACHE PATH "" FORCE)
     endif()
     if (NOT PAIMON_HOME)
         message(FATAL_ERROR "ENABLE_PAIMON_CPP=ON but PAIMON_HOME is not set")
