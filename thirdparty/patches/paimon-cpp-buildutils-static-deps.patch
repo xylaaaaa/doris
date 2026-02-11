@@ -146,37 +146,3 @@ diff --git a/src/paimon/format/blob/blob_format_writer.cpp b/src/paimon/format/b
      }
  
      // write bin length
-
-diff --git a/cmake_modules/arrow.diff b/cmake_modules/arrow.diff
---- a/cmake_modules/arrow.diff
-+++ b/cmake_modules/arrow.diff
-@@ -196,3 +196,24 @@ class PARQUET_EXPORT WriterProperties {
-    int64_t pagesize_;
-   ParquetDataPageVersion parquet_data_page_version_;
-   ParquetVersion::type parquet_version_;
-+
-+diff --git a/cpp/cmake_modules/ThirdpartyToolchain.cmake b/cpp/cmake_modules/ThirdpartyToolchain.cmake
-+--- a/cpp/cmake_modules/ThirdpartyToolchain.cmake
-+++ b/cpp/cmake_modules/ThirdpartyToolchain.cmake
-+@@ -1789,7 +1789,20 @@ if(ARROW_WITH_THRIFT)
-+                      REQUIRED_VERSION
-+                      0.11.0)
-+ 
-+-  string(REPLACE "." ";" Thrift_VERSION_LIST ${Thrift_VERSION})
-++  # Some CMake find paths (e.g. pkg-config fallback) don't populate
-++  # Thrift_VERSION directly. Add a compatibility fallback before parsing.
-++  if(NOT DEFINED Thrift_VERSION OR Thrift_VERSION STREQUAL "")
-++    if(DEFINED THRIFT_VERSION AND NOT THRIFT_VERSION STREQUAL "")
-++      set(Thrift_VERSION ${THRIFT_VERSION})
-++    elseif(DEFINED Thrift_VERSION_STRING AND NOT Thrift_VERSION_STRING STREQUAL "")
-++      set(Thrift_VERSION ${Thrift_VERSION_STRING})
-++    endif()
-++  endif()
-++  if(NOT DEFINED Thrift_VERSION OR Thrift_VERSION STREQUAL "")
-++    message(FATAL_ERROR "Thrift_VERSION is empty after resolve_dependency(Thrift)")
-++  endif()
-++
-++  string(REPLACE "." ";" Thrift_VERSION_LIST "${Thrift_VERSION}")
-+   list(GET Thrift_VERSION_LIST 0 Thrift_VERSION_MAJOR)
-+   list(GET Thrift_VERSION_LIST 1 Thrift_VERSION_MINOR)
-+   list(GET Thrift_VERSION_LIST 2 Thrift_VERSION_PATCH)
