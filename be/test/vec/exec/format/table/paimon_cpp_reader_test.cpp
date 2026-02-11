@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include "vec/exec/format/table/paimon_cpp_reader.h"
+
 #include <gtest/gtest.h>
 
 #include <string>
@@ -23,7 +25,6 @@
 #include "runtime/runtime_state.h"
 #include "util/runtime_profile.h"
 #include "vec/core/block.h"
-#include "vec/exec/format/table/paimon_cpp_reader.h"
 
 namespace doris::vectorized {
 
