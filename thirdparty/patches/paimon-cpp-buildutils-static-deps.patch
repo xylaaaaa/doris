@@ -56,7 +56,7 @@ diff --git a/cmake_modules/ThirdpartyToolchain.cmake b/cmake_modules/ThirdpartyT
 diff --git a/cmake_modules/ThirdpartyToolchain.cmake b/cmake_modules/ThirdpartyToolchain.cmake
 --- a/cmake_modules/ThirdpartyToolchain.cmake
 +++ b/cmake_modules/ThirdpartyToolchain.cmake
-@@ -1024,6 +1024,17 @@ macro(build_arrow)
+@@ -1024,6 +1024,14 @@ macro(build_arrow)
          "-DCMAKE_C_FLAGS=${ARROW_CMAKE_C_FLAGS}"
          "-DCMAKE_CXX_FLAGS_${UPPERCASE_BUILD_TYPE}=${ARROW_CMAKE_CXX_FLAGS}"
          -DARROW_DEPENDENCY_USE_SHARED=OFF
@@ -68,9 +68,6 @@ diff --git a/cmake_modules/ThirdpartyToolchain.cmake b/cmake_modules/ThirdpartyT
 +        # reproducibility in CI and local mixed environments.
 +        -DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF
 +        -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF
-+        -DARROW_COMPUTE=ON
-+        -DARROW_FILESYSTEM=ON
-+        -DARROW_DATASET=ON
          -DARROW_BUILD_SHARED=OFF
          -DARROW_BUILD_STATIC=ON
          -DARROW_BUILD_TESTS=OFF
