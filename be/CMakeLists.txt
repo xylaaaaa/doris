@@ -620,6 +620,21 @@ if (BUILD_BENCHMARK)
     )
 endif()
 
+set(PAIMON_FACTORY_REGISTRY_LIBS)
+if (ENABLE_PAIMON_CPP)
+    # These paimon-cpp extension libs rely on static factory registration side effects.
+    # Link them with whole-archive to keep registration objects from being discarded.
+    set(PAIMON_FACTORY_REGISTRY_LIBS
+        paimon_parquet_file_format
+        paimon_orc_file_format
+        paimon_blob_file_format
+        paimon_local_file_system
+        paimon_file_index
+        paimon_global_index
+    )
+    list(REMOVE_ITEM COMMON_THIRDPARTY ${PAIMON_FACTORY_REGISTRY_LIBS})
+endif()
+
 set(DORIS_DEPENDENCIES
     ${DORIS_DEPENDENCIES}
     ${WL_START_GROUP}
@@ -638,6 +653,13 @@ set(DORIS_DEPENDENCIES ${DORIS_DEPENDENCIES} clucene-shared-static)
 set(DORIS_DEPENDENCIES ${DORIS_DEPENDENCIES} clucene-contribs-lib)
 
 if (ENABLE_PAIMON_CPP)
+    if (PAIMON_FACTORY_REGISTRY_LIBS)
+        set(DORIS_DEPENDENCIES ${DORIS_DEPENDENCIES}
+            -Wl,--whole-archive
+            ${PAIMON_FACTORY_REGISTRY_LIBS}
+            -Wl,--no-whole-archive)
+    endif()
+
     # paimon-cpp internal dependencies (renamed with _paimon suffix)
     # These must come after paimon libraries to resolve symbols.
     set(DORIS_DEPENDENCIES ${DORIS_DEPENDENCIES} roaring_bitmap_paimon)
