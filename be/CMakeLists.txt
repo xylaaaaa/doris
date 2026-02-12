@@ -626,13 +626,12 @@ if (ENABLE_PAIMON_CPP)
     # Link them with whole-archive to keep registration objects from being discarded.
     set(PAIMON_FACTORY_REGISTRY_LIBS
         paimon_parquet_file_format
-        paimon_orc_file_format
-        paimon_blob_file_format
-        paimon_local_file_system
-        paimon_file_index
-        paimon_global_index
     )
     list(REMOVE_ITEM COMMON_THIRDPARTY ${PAIMON_FACTORY_REGISTRY_LIBS})
+
+    add_library(paimon_arrow_dataset STATIC IMPORTED)
+    set_target_properties(paimon_arrow_dataset PROPERTIES
+        IMPORTED_LOCATION ${THIRDPARTY_DIR}/paimon-cpp/lib64/paimon_deps/libarrow_dataset.a)
 endif()
 
 set(DORIS_DEPENDENCIES
@@ -659,6 +658,7 @@ if (ENABLE_PAIMON_CPP)
             ${PAIMON_FACTORY_REGISTRY_LIBS}
             -Wl,--no-whole-archive)
     endif()
+    set(DORIS_DEPENDENCIES ${DORIS_DEPENDENCIES} paimon_arrow_dataset)
 
     # paimon-cpp internal dependencies (renamed with _paimon suffix)
     # These must come after paimon libraries to resolve symbols.
