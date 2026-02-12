@@ -621,6 +621,7 @@ if (BUILD_BENCHMARK)
 endif()
 
 set(PAIMON_FACTORY_REGISTRY_LIBS)
+set(PAIMON_ARROW_DATASET_LIB)
 if (ENABLE_PAIMON_CPP)
     # These paimon-cpp extension libs rely on static factory registration side effects.
     # Link them with whole-archive to keep registration objects from being discarded.
@@ -629,9 +630,22 @@ if (ENABLE_PAIMON_CPP)
     )
     list(REMOVE_ITEM COMMON_THIRDPARTY ${PAIMON_FACTORY_REGISTRY_LIBS})
 
-    add_library(paimon_arrow_dataset STATIC IMPORTED)
-    set_target_properties(paimon_arrow_dataset PROPERTIES
-        IMPORTED_LOCATION ${THIRDPARTY_DIR}/paimon-cpp/lib64/paimon_deps/libarrow_dataset.a)
+    set(_paimon_arrow_dataset_candidates
+        ${THIRDPARTY_DIR}/paimon-cpp/lib64/paimon_deps/libarrow_dataset.a
+        ${THIRDPARTY_DIR}/lib64/libarrow_dataset.a
+    )
+    foreach(_paimon_arrow_dataset_candidate IN LISTS _paimon_arrow_dataset_candidates)
+        if (EXISTS "${_paimon_arrow_dataset_candidate}")
+            add_library(paimon_arrow_dataset STATIC IMPORTED)
+            set_target_properties(paimon_arrow_dataset PROPERTIES
+                IMPORTED_LOCATION ${_paimon_arrow_dataset_candidate})
+            set(PAIMON_ARROW_DATASET_LIB paimon_arrow_dataset)
+            break()
+        endif()
+    endforeach()
+    if (NOT PAIMON_ARROW_DATASET_LIB)
+        message(STATUS "Paimon C++: libarrow_dataset.a not found, skip explicit arrow_dataset linkage")
+    endif()
 endif()
 
 set(DORIS_DEPENDENCIES
@@ -658,7 +672,9 @@ if (ENABLE_PAIMON_CPP)
             ${PAIMON_FACTORY_REGISTRY_LIBS}
             -Wl,--no-whole-archive)
     endif()
-    set(DORIS_DEPENDENCIES ${DORIS_DEPENDENCIES} paimon_arrow_dataset)
+    if (PAIMON_ARROW_DATASET_LIB)
+        set(DORIS_DEPENDENCIES ${DORIS_DEPENDENCIES} ${PAIMON_ARROW_DATASET_LIB})
+    endif()
 
     # paimon-cpp internal dependencies (renamed with _paimon suffix)
     # These must come after paimon libraries to resolve symbols.
