@@ -107,6 +107,9 @@ cleanup() {
     fi
 
     if [[ -f "${COMPOSE_FILE}" ]]; then
+        docker exec "${POC_CONTAINER_UID}hive3-metastore" bash -lc '
+            rm -rf /mnt/scripts/nm-local-dir/* /mnt/scripts/nm-log-dir/* /mnt/scripts/hive-local-scratch/* || true
+        ' >/dev/null 2>&1 || true
         docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" down >/dev/null 2>&1 || true
     fi
     rm -rf "${WORKDIR}"
@@ -184,6 +187,7 @@ render_temp_compose() {
     tez_container_id="$(docker create "${TEZ_SOURCE_IMAGE}")"
     mkdir -p "${COMPOSE_DIR}/scripts/tez-runtime" "${COMPOSE_DIR}/scripts/tez-conf"
     mkdir -p "${COMPOSE_DIR}/scripts/nm-local-dir" "${COMPOSE_DIR}/scripts/nm-log-dir"
+    mkdir -p "${COMPOSE_DIR}/scripts/hive-local-scratch"
     docker cp "${tez_container_id}:/usr/hdp/3.1.0.0-78/tez/." "${COMPOSE_DIR}/scripts/tez-runtime/"
     docker cp "${tez_container_id}:/etc/tez/conf/tez-site.xml" "${COMPOSE_DIR}/scripts/tez-conf/tez-site.xml"
     docker rm -f "${tez_container_id}" >/dev/null

@@ -18,6 +18,20 @@
 
 set -e -x
 
+wait_for_metastore_db() {
+    local schematool_log="/tmp/hive-schematool.log"
+
+    for i in {1..60}; do
+        if timeout 10s /opt/hive/bin/schematool -dbType postgres -info >"${schematool_log}" 2>&1; then
+            return 0
+        fi
+        sleep 5s
+    done
+
+    tail -n 200 "${schematool_log}" || true
+    return 1
+}
+
 
 AUX_LIB="/mnt/scripts/auxlib"
 for file in "${AUX_LIB}"/*.tar.gz; do
@@ -49,6 +63,8 @@ if [[ "${ENABLE_HIVE3_TEZ_RUNTIME:-false}" == "true" ]]; then
     # Tez write jobs create scratch directories on HDFS. Make sure HDFS is writable.
     hdfs dfsadmin -safemode leave >/dev/null 2>&1 || true
 fi
+
+wait_for_metastore_db
 
 # start metastore
 nohup /opt/hive/bin/hive --service metastore &

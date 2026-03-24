@@ -46,6 +46,7 @@ prepare_tez_runtime() {
 
 prepare_tez_runtime
 mkdir -p "${CUR_DIR}/nm-local-dir" "${CUR_DIR}/nm-log-dir"
+mkdir -p "${CUR_DIR}/hive-local-scratch"
 
 if [[ "${PREPARE_MODE}" == "tez-runtime" ]]; then
     exit 0

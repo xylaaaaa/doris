@@ -21,6 +21,7 @@ HIVE_SITE_CONF_hive_metastore_dml_events=true
 HIVE_SITE_CONF_hive_metastore_transactional_event_listeners=org.apache.hive.hcatalog.listener.DbNotificationListener
 HIVE_SITE_CONF_hive_stats_column_autogather=false
 HIVE_SITE_CONF_hive_execution_engine=tez
+HIVE_SITE_CONF_hive_exec_local_scratchdir=/mnt/scripts/hive-local-scratch
 HIVE_SITE_CONF_tez_lib_uris_ignore=false
 HIVE_SITE_CONF_tez_lib_uris=file:///mnt/scripts/tez-runtime/lib/tez.tar.gz
 HIVE_SITE_CONF_hive_tez_container_size=1024
