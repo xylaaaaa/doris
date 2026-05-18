@@ -17,8 +17,12 @@
 
 #include "io/fs/file_meta_cache.h"
 
+#include <filesystem>
+
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "io/cache/block_file_cache.h"
+#include "io/fs/file_meta_disk_cache.h"
 #include "io/fs/file_reader.h"
 
 namespace doris {
@@ -153,6 +157,50 @@ TEST(FileMetaCacheTest, InsertAndLookupWithIntValue) {
     const int* cached_val2 = handle2.data<int>();
     ASSERT_NE(cached_val2, nullptr);
     EXPECT_EQ(*cached_val2, 12345);
+}
+
+TEST(FileMetaDiskCacheTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
+    std::filesystem::path cache_dir = std::filesystem::current_path() / "file_meta_disk_cache_test";
+    if (std::filesystem::exists(cache_dir)) {
+        std::filesystem::remove_all(cache_dir);
+    }
+    std::filesystem::create_directories(cache_dir);
+
+    io::FileCacheSettings settings;
+    settings.capacity = 1024 * 1024;
+    settings.max_file_block_size = 16;
+    settings.meta_queue_size = 1024 * 1024;
+    settings.meta_queue_elements = 1024;
+    io::BlockFileCache block_cache(cache_dir.string(), settings);
+    ASSERT_TRUE(block_cache.initialize().ok());
+    for (int i = 0; i < 100; ++i) {
+        if (block_cache.get_async_open_success()) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(block_cache.get_async_open_success());
+
+    FileMetaDiskCache disk_cache(&block_cache);
+    const std::string meta_key = FileMetaCache::get_key("s3://bucket/test.parquet", 123, 456);
+    const std::string payload = "serialized footer payload";
+
+    ASSERT_TRUE(disk_cache
+                        .write(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456,
+                               std::string_view(payload))
+                        .ok());
+
+    std::string output;
+    ASSERT_TRUE(
+            disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456, &output).ok());
+    EXPECT_EQ(output, payload);
+
+    std::string stale_output;
+    Status stale_status =
+            disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 124, 456, &stale_output);
+    EXPECT_TRUE(stale_status.is<ErrorCode::NOT_FOUND>());
+
+    std::filesystem::remove_all(cache_dir);
 }
 
 } // namespace doris

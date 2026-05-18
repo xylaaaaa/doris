@@ -54,7 +54,7 @@ struct CachePath {
 
     CachePath(std::string path, int64_t total_bytes, int64_t query_limit_bytes,
               size_t normal_percent, size_t disposable_percent, size_t index_percent,
-              size_t ttl_percent, std::string storage)
+              size_t ttl_percent, size_t meta_percent, std::string storage)
             : path(std::move(path)),
               total_bytes(total_bytes),
               query_limit_bytes(query_limit_bytes),
@@ -62,6 +62,7 @@ struct CachePath {
               disposable_percent(disposable_percent),
               index_percent(index_percent),
               ttl_percent(ttl_percent),
+              meta_percent(meta_percent),
               storage(storage) {}
 
     std::string path;
@@ -71,6 +72,7 @@ struct CachePath {
     size_t disposable_percent = io::DEFAULT_DISPOSABLE_PERCENT;
     size_t index_percent = io::DEFAULT_INDEX_PERCENT;
     size_t ttl_percent = io::DEFAULT_TTL_PERCENT;
+    size_t meta_percent = io::DEFAULT_META_PERCENT;
     std::string storage = "disk";
 };
 

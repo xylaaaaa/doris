@@ -36,6 +36,8 @@ std::string cache_type_to_surfix(FileCacheType type) {
         return "";
     case FileCacheType::TTL:
         return "_ttl";
+    case FileCacheType::META:
+        return "_meta";
     }
     return "";
 }
@@ -47,6 +49,8 @@ FileCacheType surfix_to_cache_type(const std::string& str) {
         return FileCacheType::DISPOSABLE;
     } else if (str == "ttl") {
         return FileCacheType::TTL;
+    } else if (str == "meta") {
+        return FileCacheType::META;
     }
     DCHECK(false) << "The string is " << str;
     return FileCacheType::DISPOSABLE;
@@ -61,6 +65,8 @@ FileCacheType string_to_cache_type(const std::string& str) {
         return FileCacheType::DISPOSABLE;
     } else if (str == "ttl") {
         return FileCacheType::TTL;
+    } else if (str == "meta") {
+        return FileCacheType::META;
     }
     DCHECK(false) << "The string is " << str;
     return FileCacheType::NORMAL;
@@ -75,6 +81,8 @@ std::string cache_type_to_string(FileCacheType type) {
         return "normal";
     case FileCacheType::TTL:
         return "ttl";
+    case FileCacheType::META:
+        return "meta";
     }
     DCHECK(false) << "unknown type: " << type;
     return "normal";
@@ -89,6 +97,8 @@ std::string FileCacheSettings::to_string() const {
        << ", index_queue_size: " << index_queue_size
        << ", index_queue_elements: " << index_queue_elements
        << ", ttl_queue_size: " << ttl_queue_size << ", ttl_queue_elements: " << ttl_queue_elements
+       << ", meta_queue_size: " << meta_queue_size
+       << ", meta_queue_elements: " << meta_queue_elements
        << ", query_queue_size: " << query_queue_size
        << ", query_queue_elements: " << query_queue_elements << ", storage: " << storage;
     return ss.str();
@@ -97,14 +107,20 @@ std::string FileCacheSettings::to_string() const {
 FileCacheSettings get_file_cache_settings(size_t capacity, size_t max_query_cache_size,
                                           size_t normal_percent, size_t disposable_percent,
                                           size_t index_percent, size_t ttl_percent,
-                                          const std::string& storage) {
+                                          size_t meta_percent, const std::string& storage) {
     io::FileCacheSettings settings;
+    settings.normal_percent = normal_percent;
+    settings.disposable_percent = disposable_percent;
+    settings.index_percent = index_percent;
+    settings.ttl_percent = ttl_percent;
+    settings.meta_percent = meta_percent;
+    settings.max_query_cache_size = max_query_cache_size;
+    settings.storage = storage;
     if (capacity == 0) {
         return settings;
     }
     settings.capacity = capacity;
     settings.max_file_block_size = config::file_cache_each_block_size;
-    settings.max_query_cache_size = max_query_cache_size;
     size_t per_size = settings.capacity / 100;
     settings.disposable_queue_size = per_size * disposable_percent;
     settings.disposable_queue_elements =
@@ -120,12 +136,16 @@ FileCacheSettings get_file_cache_settings(size_t capacity, size_t max_query_cach
     settings.ttl_queue_elements = std::max(settings.ttl_queue_size / settings.max_file_block_size,
                                            REMOTE_FS_OBJECTS_CACHE_DEFAULT_ELEMENTS);
 
+    settings.meta_queue_size = per_size * meta_percent;
+    settings.meta_queue_elements = std::max(settings.meta_queue_size / settings.max_file_block_size,
+                                            REMOTE_FS_OBJECTS_CACHE_DEFAULT_ELEMENTS);
+
     settings.query_queue_size = settings.capacity - settings.disposable_queue_size -
-                                settings.index_queue_size - settings.ttl_queue_size;
+                                settings.index_queue_size - settings.ttl_queue_size -
+                                settings.meta_queue_size;
     settings.query_queue_elements =
             std::max(settings.query_queue_size / settings.max_file_block_size,
                      REMOTE_FS_OBJECTS_CACHE_DEFAULT_ELEMENTS);
-    settings.storage = storage;
     return settings;
 }
 

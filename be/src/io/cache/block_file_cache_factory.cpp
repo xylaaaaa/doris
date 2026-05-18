@@ -106,8 +106,11 @@ Status FileCacheFactory::create_file_cache(const std::string& cache_base_path,
                     "The cache {} config size {} is larger than disk size {} or zero, recalc "
                     "it.",
                     cache_base_path, file_cache_settings.capacity, disk_capacity);
-            file_cache_settings = get_file_cache_settings(disk_capacity,
-                                                          file_cache_settings.max_query_cache_size);
+            file_cache_settings = get_file_cache_settings(
+                    disk_capacity, file_cache_settings.max_query_cache_size,
+                    file_cache_settings.normal_percent, file_cache_settings.disposable_percent,
+                    file_cache_settings.index_percent, file_cache_settings.ttl_percent,
+                    file_cache_settings.meta_percent, file_cache_settings.storage);
         }
         LOG(INFO) << "[FileCache] path: " << cache_base_path
                   << " total_size: " << file_cache_settings.capacity

@@ -295,6 +295,14 @@ void OrcReader::_collect_profile_before_close() {
         COUNTER_UPDATE(_orc_profile.lazy_read_filtered_rows, _statistics.lazy_read_filtered_rows);
         COUNTER_UPDATE(_orc_profile.file_footer_read_calls, _statistics.file_footer_read_calls);
         COUNTER_UPDATE(_orc_profile.file_footer_hit_cache, _statistics.file_footer_hit_cache);
+        COUNTER_UPDATE(_orc_profile.file_footer_hit_memory_cache,
+                       _statistics.file_footer_hit_memory_cache);
+        COUNTER_UPDATE(_orc_profile.file_footer_hit_disk_cache,
+                       _statistics.file_footer_hit_disk_cache);
+        COUNTER_UPDATE(_orc_profile.file_footer_miss_disk_cache,
+                       _statistics.file_footer_miss_disk_cache);
+        COUNTER_UPDATE(_orc_profile.file_footer_write_disk_cache,
+                       _statistics.file_footer_write_disk_cache);
         if (_file_input_stream != nullptr) {
             _file_input_stream->collect_profile_before_close();
         }
@@ -335,6 +343,14 @@ void OrcReader::_init_profile() {
                 ADD_COUNTER_WITH_LEVEL(_profile, "FileFooterReadCalls", TUnit::UNIT, 1);
         _orc_profile.file_footer_hit_cache =
                 ADD_COUNTER_WITH_LEVEL(_profile, "FileFooterHitCache", TUnit::UNIT, 1);
+        _orc_profile.file_footer_hit_memory_cache =
+                ADD_COUNTER_WITH_LEVEL(_profile, "FileFooterHitMemoryCache", TUnit::UNIT, 1);
+        _orc_profile.file_footer_hit_disk_cache =
+                ADD_COUNTER_WITH_LEVEL(_profile, "FileFooterHitDiskCache", TUnit::UNIT, 1);
+        _orc_profile.file_footer_miss_disk_cache =
+                ADD_COUNTER_WITH_LEVEL(_profile, "FileFooterMissDiskCache", TUnit::UNIT, 1);
+        _orc_profile.file_footer_write_disk_cache =
+                ADD_COUNTER_WITH_LEVEL(_profile, "FileFooterWriteDiskCache", TUnit::UNIT, 1);
     }
 }
 
@@ -408,11 +424,35 @@ Status OrcReader::_create_file_reader() {
             options.setSerializedFileTail(*footer_ptr);
             RETURN_IF_ERROR(create_orc_reader());
             _statistics.file_footer_hit_cache++;
+            _statistics.file_footer_hit_memory_cache++;
         } else {
-            _statistics.file_footer_read_calls++;
-            RETURN_IF_ERROR(create_orc_reader());
-            std::string* footer_ptr = new std::string {_reader->getSerializedFileTail()};
-            _meta_cache->insert(file_meta_cache_key, footer_ptr, &_meta_cache_handle);
+            const int64_t file_size = _file_description.file_size == -1
+                                              ? inner_file_reader->size()
+                                              : _file_description.file_size;
+            std::string footer_payload;
+            if (_meta_cache->lookup_disk_cache(FileMetaDiskCacheFormat::ORC, file_meta_cache_key,
+                                               _file_description.mtime, file_size,
+                                               &footer_payload)) {
+                options.setSerializedFileTail(footer_payload);
+                RETURN_IF_ERROR(create_orc_reader());
+                std::string* footer_ptr = new std::string {std::move(footer_payload)};
+                _meta_cache->insert(file_meta_cache_key, footer_ptr, &_meta_cache_handle);
+                _statistics.file_footer_hit_cache++;
+                _statistics.file_footer_hit_disk_cache++;
+            } else {
+                if (config::enable_external_file_meta_disk_cache) {
+                    _statistics.file_footer_miss_disk_cache++;
+                }
+                _statistics.file_footer_read_calls++;
+                RETURN_IF_ERROR(create_orc_reader());
+                std::string* footer_ptr = new std::string {_reader->getSerializedFileTail()};
+                _meta_cache->insert(file_meta_cache_key, footer_ptr, &_meta_cache_handle);
+                if (_meta_cache->insert_disk_cache(FileMetaDiskCacheFormat::ORC,
+                                                   file_meta_cache_key, _file_description.mtime,
+                                                   file_size, *footer_ptr)) {
+                    _statistics.file_footer_write_disk_cache++;
+                }
+            }
         }
     }
 

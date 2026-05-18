@@ -17,7 +17,11 @@
 
 #pragma once
 
+#include <memory>
+#include <mutex>
+
 #include "io/file_factory.h"
+#include "io/fs/file_meta_disk_cache.h"
 #include "io/fs/file_reader_writer_fwd.h"
 #include "util/obj_lru_cache.h"
 
@@ -28,7 +32,7 @@ namespace doris {
 // The capacity will limit the number of cache entries in cache.
 class FileMetaCache {
 public:
-    FileMetaCache(int64_t capacity) : _cache(capacity) {}
+    FileMetaCache(int64_t capacity);
 
     FileMetaCache(const FileMetaCache&) = delete;
     const FileMetaCache& operator=(const FileMetaCache&) = delete;
@@ -52,8 +56,18 @@ public:
 
     bool enabled() const { return _cache.enabled(); }
 
+    bool lookup_disk_cache(FileMetaDiskCacheFormat format, const std::string& key,
+                           int64_t modification_time, int64_t file_size, std::string* payload);
+
+    bool insert_disk_cache(FileMetaDiskCacheFormat format, const std::string& key,
+                           int64_t modification_time, int64_t file_size, std::string_view payload);
+
 private:
+    FileMetaDiskCache* disk_cache();
+
     ObjLRUCache _cache;
+    std::mutex _disk_cache_mutex;
+    std::unique_ptr<FileMetaDiskCache> _disk_cache;
 };
 
 } // namespace doris
