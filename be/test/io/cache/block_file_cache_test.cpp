@@ -42,6 +42,25 @@ public:
     }
 };
 
+class ScopedFileCacheDiskResourceLimitConfig {
+public:
+    ScopedFileCacheDiskResourceLimitConfig()
+            : _old_enter_percent(config::file_cache_enter_disk_resource_limit_mode_percent),
+              _old_exit_percent(config::file_cache_exit_disk_resource_limit_mode_percent) {
+        config::file_cache_enter_disk_resource_limit_mode_percent = 101;
+        config::file_cache_exit_disk_resource_limit_mode_percent = 100;
+    }
+
+    ~ScopedFileCacheDiskResourceLimitConfig() {
+        config::file_cache_enter_disk_resource_limit_mode_percent = _old_enter_percent;
+        config::file_cache_exit_disk_resource_limit_mode_percent = _old_exit_percent;
+    }
+
+private:
+    int32_t _old_enter_percent;
+    int32_t _old_exit_percent;
+};
+
 fs::path caches_dir = fs::current_path() / "lru_cache_test";
 std::string cache_base_path = caches_dir / "cache1" / "";
 std::string tmp_file = caches_dir / "tmp_file";
@@ -5084,6 +5103,7 @@ TEST_F(BlockFileCacheTest, file_meta_disk_cache_initializes_without_data_file_ca
         fs::remove_all(meta_cache_path);
     }
 
+    ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
     const bool old_enable_file_cache = config::enable_file_cache;
     const bool old_enable_external_file_meta_disk_cache =
             config::enable_external_file_meta_disk_cache;
@@ -5121,7 +5141,7 @@ TEST_F(BlockFileCacheTest, file_meta_disk_cache_initializes_without_data_file_ca
 
     auto* cache = FileCacheFactory::instance()->get_by_path(meta_cache_path);
     ASSERT_NE(cache, nullptr);
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < 5000; ++i) {
         if (cache->get_async_open_success()) {
             break;
         }
@@ -6710,7 +6730,7 @@ TEST_F(BlockFileCacheTest, evict_privilege_order_for_ttl) {
 namespace {
 
 void wait_cache_async_open(BlockFileCache* cache) {
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < 5000; ++i) {
         if (cache->get_async_open_success()) {
             break;
         }
@@ -6720,7 +6740,7 @@ void wait_cache_async_open(BlockFileCache* cache) {
 }
 
 void fill_cache_blocks(BlockFileCache* cache, const std::string& key_material,
-                       FileCacheType cache_type, int64_t total_size) {
+                       FileCacheType cache_type, int64_t total_size, int64_t expiration_time = 0) {
     TUniqueId query_id;
     query_id.hi = 1;
     query_id.lo = 1;
@@ -6729,6 +6749,7 @@ void fill_cache_blocks(BlockFileCache* cache, const std::string& key_material,
     context.stats = &rstats;
     context.cache_type = cache_type;
     context.query_id = query_id;
+    context.expiration_time = expiration_time;
     auto key = BlockFileCache::hash(key_material);
 
     for (int64_t offset = 0; offset < total_size; offset += 100000) {
@@ -6770,6 +6791,7 @@ TEST_F(BlockFileCacheTest, meta_queue_can_evict_data_cache_first) {
     }
     fs::create_directories(cache_base_path);
 
+    ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
     auto settings = meta_eviction_test_settings();
     BlockFileCache cache(cache_base_path, settings);
     ASSERT_TRUE(cache.initialize().ok());
@@ -6778,7 +6800,7 @@ TEST_F(BlockFileCacheTest, meta_queue_can_evict_data_cache_first) {
     fill_cache_blocks(&cache, "normal_data", FileCacheType::NORMAL, 4000000);
     fill_cache_blocks(&cache, "disposable_data", FileCacheType::DISPOSABLE, 1000000);
     fill_cache_blocks(&cache, "index_data", FileCacheType::INDEX, 1000000);
-    fill_cache_blocks(&cache, "ttl_data", FileCacheType::TTL, 3000000);
+    fill_cache_blocks(&cache, "ttl_data", FileCacheType::TTL, 3000000, 120);
 
     ASSERT_EQ(cache.get_stats_unsafe()["normal_queue_curr_size"], 4000000);
     ASSERT_EQ(cache.get_stats_unsafe()["disposable_queue_curr_size"], 1000000);
@@ -6807,6 +6829,7 @@ TEST_F(BlockFileCacheTest, normal_queue_does_not_evict_meta_cache) {
     }
     fs::create_directories(cache_base_path);
 
+    ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
     auto settings = meta_eviction_test_settings();
     BlockFileCache cache(cache_base_path, settings);
     ASSERT_TRUE(cache.initialize().ok());
@@ -6816,7 +6839,7 @@ TEST_F(BlockFileCacheTest, normal_queue_does_not_evict_meta_cache) {
     fill_cache_blocks(&cache, "normal_data", FileCacheType::NORMAL, 3000000);
     fill_cache_blocks(&cache, "disposable_data", FileCacheType::DISPOSABLE, 1000000);
     fill_cache_blocks(&cache, "index_data", FileCacheType::INDEX, 1000000);
-    fill_cache_blocks(&cache, "ttl_data", FileCacheType::TTL, 3000000);
+    fill_cache_blocks(&cache, "ttl_data", FileCacheType::TTL, 3000000, 120);
 
     ASSERT_EQ(cache.get_stats_unsafe()["meta_queue_curr_size"], 1000000);
     ASSERT_EQ(cache.get_stats_unsafe()["normal_queue_curr_size"], 3000000);
@@ -6851,6 +6874,7 @@ TEST_F(BlockFileCacheTest, read_if_cached_returns_downloaded_meta_block) {
     }
     fs::create_directories(cache_base_path);
 
+    ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
     auto settings = meta_eviction_test_settings();
     BlockFileCache cache(cache_base_path, settings);
     ASSERT_TRUE(cache.initialize().ok());

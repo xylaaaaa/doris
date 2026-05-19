@@ -20,20 +20,67 @@
 #include <filesystem>
 #include <fstream>
 
+#include "common/config.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "io/cache/block_file_cache.h"
+#include "io/cache/fs_file_cache_storage.h"
 #include "io/fs/file_meta_disk_cache.h"
 #include "io/fs/file_reader.h"
+#include "runtime/exec_env.h"
 #include "util/defer_op.h"
 
 namespace doris {
 namespace {
 
+class ScopedFileCacheDiskResourceLimitConfig {
+public:
+    ScopedFileCacheDiskResourceLimitConfig()
+            : _old_enter_percent(config::file_cache_enter_disk_resource_limit_mode_percent),
+              _old_exit_percent(config::file_cache_exit_disk_resource_limit_mode_percent),
+              _old_ttl_gc_interval_ms(config::file_cache_background_ttl_gc_interval_ms),
+              _old_ttl_info_update_interval_ms(
+                      config::file_cache_background_ttl_info_update_interval_ms),
+              _old_leak_scan_interval_seconds(config::file_cache_leak_scan_interval_seconds) {
+        config::file_cache_enter_disk_resource_limit_mode_percent = 101;
+        config::file_cache_exit_disk_resource_limit_mode_percent = 100;
+        config::file_cache_background_ttl_gc_interval_ms = 1;
+        config::file_cache_background_ttl_info_update_interval_ms = 1;
+        config::file_cache_leak_scan_interval_seconds = 0;
+    }
+
+    ~ScopedFileCacheDiskResourceLimitConfig() {
+        config::file_cache_enter_disk_resource_limit_mode_percent = _old_enter_percent;
+        config::file_cache_exit_disk_resource_limit_mode_percent = _old_exit_percent;
+        config::file_cache_background_ttl_gc_interval_ms = _old_ttl_gc_interval_ms;
+        config::file_cache_background_ttl_info_update_interval_ms =
+                _old_ttl_info_update_interval_ms;
+        config::file_cache_leak_scan_interval_seconds = _old_leak_scan_interval_seconds;
+    }
+
+private:
+    int32_t _old_enter_percent;
+    int32_t _old_exit_percent;
+    int64_t _old_ttl_gc_interval_ms;
+    int64_t _old_ttl_info_update_interval_ms;
+    int64_t _old_leak_scan_interval_seconds;
+};
+
+class FileMetaDiskCacheTest : public testing::Test {
+public:
+    static void SetUpTestSuite() {
+        ExecEnv::GetInstance()->set_file_cache_open_fd_cache(std::make_unique<io::FDCache>());
+    }
+
+    static void TearDownTestSuite() {
+        ExecEnv::GetInstance()->set_file_cache_open_fd_cache(nullptr);
+    }
+};
+
 class MockFileReader : public io::FileReader {
 public:
     MockFileReader(const std::string& file_name, size_t size)
-            : _file_name(file_name), _size(size), _closed(false) {}
+            : _file_name(file_name), _size(size) {}
     ~MockFileReader() override = default;
 
     const io::Path& path() const override {
@@ -62,7 +109,7 @@ protected:
 private:
     std::string _file_name;
     size_t _size;
-    bool _closed;
+    bool _closed {false};
 };
 } // anonymous namespace
 
@@ -161,12 +208,14 @@ TEST(FileMetaCacheTest, InsertAndLookupWithIntValue) {
     EXPECT_EQ(*cached_val2, 12345);
 }
 
-TEST(FileMetaDiskCacheTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
+TEST_F(FileMetaDiskCacheTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
     std::filesystem::path cache_dir = std::filesystem::current_path() / "file_meta_disk_cache_test";
     if (std::filesystem::exists(cache_dir)) {
         std::filesystem::remove_all(cache_dir);
     }
     std::filesystem::create_directories(cache_dir);
+    ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
+    Defer defer {[&] { std::filesystem::remove_all(cache_dir); }};
 
     io::FileCacheSettings settings;
     settings.capacity = 1024 * 1024;
@@ -175,7 +224,7 @@ TEST(FileMetaDiskCacheTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
     settings.meta_queue_elements = 1024;
     io::BlockFileCache block_cache(cache_dir.string(), settings);
     ASSERT_TRUE(block_cache.initialize().ok());
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < 5000; ++i) {
         if (block_cache.get_async_open_success()) {
             break;
         }
@@ -210,17 +259,16 @@ TEST(FileMetaDiskCacheTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
     ASSERT_TRUE(disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 124, 456, &stale_output)
                         .ok());
     EXPECT_EQ(stale_output, refreshed_payload);
-
-    std::filesystem::remove_all(cache_dir);
 }
 
-TEST(FileMetaDiskCacheTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
+TEST_F(FileMetaDiskCacheTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
     std::filesystem::path cache_dir =
             std::filesystem::current_path() / "file_meta_disk_cache_invalid_entry_test";
     if (std::filesystem::exists(cache_dir)) {
         std::filesystem::remove_all(cache_dir);
     }
     std::filesystem::create_directories(cache_dir);
+    ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
     Defer defer {[&] { std::filesystem::remove_all(cache_dir); }};
 
     io::FileCacheSettings settings;
@@ -230,7 +278,7 @@ TEST(FileMetaDiskCacheTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
     settings.meta_queue_elements = 1024;
     io::BlockFileCache block_cache(cache_dir.string(), settings);
     ASSERT_TRUE(block_cache.initialize().ok());
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < 5000; ++i) {
         if (block_cache.get_async_open_success()) {
             break;
         }
