@@ -433,10 +433,10 @@ Status OrcReader::_create_file_reader() {
             if (_meta_cache->lookup_disk_cache(FileMetaDiskCacheFormat::ORC, file_meta_cache_key,
                                                _file_description.mtime, file_size,
                                                &footer_payload)) {
-                options.setSerializedFileTail(footer_payload);
+                auto footer_ptr = std::make_unique<std::string>(std::move(footer_payload));
+                options.setSerializedFileTail(*footer_ptr);
                 RETURN_IF_ERROR(create_orc_reader());
-                std::string* footer_ptr = new std::string {std::move(footer_payload)};
-                _meta_cache->insert(file_meta_cache_key, footer_ptr, &_meta_cache_handle);
+                _meta_cache->insert(file_meta_cache_key, footer_ptr.release(), &_meta_cache_handle);
                 _statistics.file_footer_hit_cache++;
                 _statistics.file_footer_hit_disk_cache++;
             } else {
@@ -445,13 +445,13 @@ Status OrcReader::_create_file_reader() {
                 }
                 _statistics.file_footer_read_calls++;
                 RETURN_IF_ERROR(create_orc_reader());
-                std::string* footer_ptr = new std::string {_reader->getSerializedFileTail()};
-                _meta_cache->insert(file_meta_cache_key, footer_ptr, &_meta_cache_handle);
+                auto footer_ptr = std::make_unique<std::string>(_reader->getSerializedFileTail());
                 if (_meta_cache->insert_disk_cache(FileMetaDiskCacheFormat::ORC,
                                                    file_meta_cache_key, _file_description.mtime,
                                                    file_size, *footer_ptr)) {
                     _statistics.file_footer_write_disk_cache++;
                 }
+                _meta_cache->insert(file_meta_cache_key, footer_ptr.release(), &_meta_cache_handle);
             }
         }
     }

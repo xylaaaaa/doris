@@ -5026,6 +5026,27 @@ TEST_F(BlockFileCacheTest, file_cache_path_storage_parse) {
         ASSERT_EQ(cache_paths[0].meta_percent, 0);
     }
     {
+        const bool old_enable_external_file_meta_disk_cache =
+                config::enable_external_file_meta_disk_cache;
+        const int32_t old_external_file_meta_disk_cache_percent =
+                config::external_file_meta_disk_cache_percent;
+        Defer defer {[&] {
+            config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
+            config::external_file_meta_disk_cache_percent =
+                    old_external_file_meta_disk_cache_percent;
+        }};
+        config::enable_external_file_meta_disk_cache = true;
+        config::external_file_meta_disk_cache_percent = 1;
+        std::string file_cache_path = std::string(
+                "[{\"path\": \"memory\", \"total_size\":102400, \"ttl_percent\":50, "
+                "\"normal_percent\":40, \"disposable_percent\":5, \"index_percent\":5}]");
+        std::vector<doris::CachePath> cache_paths;
+        ASSERT_TRUE(parse_conf_cache_paths(file_cache_path, cache_paths).ok());
+        ASSERT_EQ(cache_paths.size(), 1);
+        ASSERT_EQ(cache_paths[0].normal_percent, 39);
+        ASSERT_EQ(cache_paths[0].meta_percent, 1);
+    }
+    {
         std::string file_cache_path = std::string(
                 "[{\"path\": \"memory\", \"total_size\":102400, \"ttl_percent\":50, "
                 "\"normal_percent\":39, \"disposable_percent\":5, \"index_percent\":5, "

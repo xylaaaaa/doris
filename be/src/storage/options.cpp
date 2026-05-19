@@ -277,6 +277,20 @@ Status parse_conf_cache_paths(const std::string& config_path, std::vector<CacheP
         size_t index_percent = io::DEFAULT_INDEX_PERCENT;
         size_t ttl_percent = io::DEFAULT_TTL_PERCENT;
         size_t meta_percent = io::DEFAULT_META_PERCENT;
+        auto apply_global_meta_percent = [&]() -> Status {
+            if (!config::enable_external_file_meta_disk_cache ||
+                config::external_file_meta_disk_cache_percent <= 0) {
+                return Status::OK();
+            }
+            if (config::external_file_meta_disk_cache_percent >= normal_percent) {
+                return Status::InvalidArgument(
+                        "external_file_meta_disk_cache_percent should be positive and smaller "
+                        "than normal_percent.");
+            }
+            meta_percent = static_cast<size_t>(config::external_file_meta_disk_cache_percent);
+            normal_percent -= meta_percent;
+            return Status::OK();
+        };
         bool has_normal_percent = map.HasMember(CACHE_NORMAL_PERCENT.c_str());
         bool has_disposable_percent = map.HasMember(CACHE_DISPOSABLE_PERCENT.c_str());
         bool has_index_percent = map.HasMember(CACHE_INDEX_PERCENT.c_str());
@@ -295,6 +309,7 @@ Status parse_conf_cache_paths(const std::string& config_path, std::vector<CacheP
             RETURN_IF_ERROR(get_percent_value(CACHE_DISPOSABLE_PERCENT, disposable_percent));
             RETURN_IF_ERROR(get_percent_value(CACHE_INDEX_PERCENT, index_percent));
             RETURN_IF_ERROR(get_percent_value(CACHE_TTL_PERCENT, ttl_percent));
+            RETURN_IF_ERROR(apply_global_meta_percent());
         } else if (has_normal_percent || has_disposable_percent || has_index_percent ||
                    has_ttl_percent || has_meta_percent) {
             return Status::InvalidArgument(
@@ -303,15 +318,8 @@ Status parse_conf_cache_paths(const std::string& config_path, std::vector<CacheP
                     "or set with all five fields plus meta_percent. "
                     "when all unset, use default: ttl_percent=50, index_percent=5, "
                     "normal_percent=40, disposable_percent=5, meta_percent=0.");
-        } else if (config::enable_external_file_meta_disk_cache &&
-                   config::external_file_meta_disk_cache_percent > 0) {
-            if (config::external_file_meta_disk_cache_percent >= normal_percent) {
-                return Status::InvalidArgument(
-                        "external_file_meta_disk_cache_percent should be positive and smaller "
-                        "than default normal_percent.");
-            }
-            meta_percent = static_cast<size_t>(config::external_file_meta_disk_cache_percent);
-            normal_percent -= meta_percent;
+        } else {
+            RETURN_IF_ERROR(apply_global_meta_percent());
         }
         if ((normal_percent + disposable_percent + index_percent + ttl_percent + meta_percent) !=
             100) {

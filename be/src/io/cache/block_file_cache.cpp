@@ -176,13 +176,13 @@ BlockFileCache::BlockFileCache(const std::string& cache_base_path,
     _cur_meta_queue_cache_size_metrics = std::make_shared<bvar::Status<size_t>>(
             _cache_base_path.c_str(), "file_cache_meta_queue_cache_size", 0);
 
-    _queue_evict_size_metrics[0] = std::make_shared<bvar::Adder<size_t>>(
-            _cache_base_path.c_str(), "file_cache_index_queue_evict_size");
-    _queue_evict_size_metrics[1] = std::make_shared<bvar::Adder<size_t>>(
-            _cache_base_path.c_str(), "file_cache_normal_queue_evict_size");
-    _queue_evict_size_metrics[2] = std::make_shared<bvar::Adder<size_t>>(
+    _queue_evict_size_metrics[FileCacheType::DISPOSABLE] = std::make_shared<bvar::Adder<size_t>>(
             _cache_base_path.c_str(), "file_cache_disposable_queue_evict_size");
-    _queue_evict_size_metrics[3] = std::make_shared<bvar::Adder<size_t>>(
+    _queue_evict_size_metrics[FileCacheType::NORMAL] = std::make_shared<bvar::Adder<size_t>>(
+            _cache_base_path.c_str(), "file_cache_normal_queue_evict_size");
+    _queue_evict_size_metrics[FileCacheType::INDEX] = std::make_shared<bvar::Adder<size_t>>(
+            _cache_base_path.c_str(), "file_cache_index_queue_evict_size");
+    _queue_evict_size_metrics[FileCacheType::TTL] = std::make_shared<bvar::Adder<size_t>>(
             _cache_base_path.c_str(), "file_cache_ttl_cache_evict_size");
     _queue_evict_size_metrics[FileCacheType::META] = std::make_shared<bvar::Adder<size_t>>(
             _cache_base_path.c_str(), "file_cache_meta_queue_evict_size");
@@ -944,6 +944,8 @@ Status BlockFileCache::read_if_cached(const UInt128Wrapper& hash, size_t offset,
         }
     }
 
+    // Holding FileBlockSPtr references keeps the downloaded blocks alive after releasing
+    // the cache mutex; eviction can detach them from queues, but cannot destroy them here.
     size_t current_pos = range.left;
     size_t written_size = 0;
     for (const auto& block : file_blocks) {
