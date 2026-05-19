@@ -502,7 +502,9 @@ void ExecEnv::init_file_cache_factory(std::vector<doris::CachePath>& cache_paths
                           "= true";
             exit(-1);
         }
-        return;
+        if (!config::enable_external_file_meta_disk_cache) {
+            return;
+        }
     }
     if (config::file_cache_each_block_size > config::s3_write_buffer_size ||
         config::s3_write_buffer_size % config::file_cache_each_block_size != 0) {

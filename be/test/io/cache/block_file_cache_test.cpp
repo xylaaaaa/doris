@@ -19,7 +19,10 @@
 // and modified by Doris
 
 #include "io/cache/block_file_cache_test_common.h"
+#include "io/fs/file_meta_cache.h"
+#include "io/fs/file_meta_disk_cache.h"
 #include "storage/olap_define.h"
+#include "util/defer_op.h"
 
 namespace doris::io {
 
@@ -5052,6 +5055,75 @@ TEST_F(BlockFileCacheTest, file_cache_path_storage_parse) {
         ASSERT_EQ(cache_paths[0].init_settings().normal_percent, 39);
         ASSERT_EQ(cache_paths[0].init_settings().meta_percent, 1);
     }
+}
+
+TEST_F(BlockFileCacheTest, file_meta_disk_cache_initializes_without_data_file_cache) {
+    std::string meta_cache_path = caches_dir / "meta_cache_without_data_file_cache" / "";
+    if (fs::exists(meta_cache_path)) {
+        fs::remove_all(meta_cache_path);
+    }
+
+    const bool old_enable_file_cache = config::enable_file_cache;
+    const bool old_enable_external_file_meta_disk_cache =
+            config::enable_external_file_meta_disk_cache;
+    const int32_t old_external_file_meta_disk_cache_percent =
+            config::external_file_meta_disk_cache_percent;
+    const std::string old_file_cache_path = config::file_cache_path;
+    Defer defer {[&] {
+        config::enable_file_cache = old_enable_file_cache;
+        config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
+        config::external_file_meta_disk_cache_percent = old_external_file_meta_disk_cache_percent;
+        config::file_cache_path = old_file_cache_path;
+        FileCacheFactory::instance()->_caches.clear();
+        FileCacheFactory::instance()->_path_to_cache.clear();
+        FileCacheFactory::instance()->_capacity = 0;
+        if (fs::exists(meta_cache_path)) {
+            fs::remove_all(meta_cache_path);
+        }
+    }};
+
+    FileCacheFactory::instance()->_caches.clear();
+    FileCacheFactory::instance()->_path_to_cache.clear();
+    FileCacheFactory::instance()->_capacity = 0;
+    config::enable_file_cache = false;
+    config::enable_external_file_meta_disk_cache = true;
+    config::external_file_meta_disk_cache_percent = 1;
+    config::file_cache_path = "[{\"path\":\"" + meta_cache_path + "\",\"total_size\":1048576}]";
+
+    std::vector<doris::CachePath> cache_paths;
+    ExecEnv::GetInstance()->init_file_cache_factory(cache_paths);
+
+    ASSERT_EQ(cache_paths.size(), 1);
+    ASSERT_EQ(cache_paths[0].normal_percent, 39);
+    ASSERT_EQ(cache_paths[0].meta_percent, 1);
+    ASSERT_EQ(FileCacheFactory::instance()->get_cache_instance_size(), 1);
+
+    auto* cache = FileCacheFactory::instance()->get_by_path(meta_cache_path);
+    ASSERT_NE(cache, nullptr);
+    for (int i = 0; i < 100; ++i) {
+        if (cache->get_async_open_success()) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(cache->get_async_open_success());
+    ASSERT_GT(cache->get_stats_unsafe()["meta_queue_max_size"], 0);
+
+    doris::FileMetaDiskCache disk_cache;
+    const std::string meta_key =
+            doris::FileMetaCache::get_key("s3://bucket/test.parquet", 123, 456);
+    const std::string payload = "serialized footer payload";
+    ASSERT_TRUE(disk_cache
+                        .write(doris::FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456,
+                               std::string_view(payload))
+                        .ok());
+
+    std::string output;
+    ASSERT_TRUE(
+            disk_cache.read(doris::FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456, &output)
+                    .ok());
+    EXPECT_EQ(output, payload);
+    ASSERT_GT(cache->get_stats_unsafe()["meta_queue_curr_size"], 0);
 }
 
 //TODO(zhengyu): should be compatible with version3 format
