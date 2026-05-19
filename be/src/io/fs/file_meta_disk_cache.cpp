@@ -136,28 +136,39 @@ Status FileMetaDiskCache::read(FileMetaDiskCacheFormat format,
     io::ReadStatistics stats;
     io::CacheContext context = build_meta_cache_context();
     context.stats = &stats;
+    auto invalidate_entry = [&](Status status) {
+        payload->clear();
+        cache->remove_if_cached(hash);
+        return status;
+    };
 
     std::string header(FILE_META_DISK_CACHE_HEADER_SIZE, '\0');
     RETURN_IF_ERROR(cache->read_if_cached(hash, 0, Slice(header.data(), header.size()), context));
 
     FileMetaDiskCacheHeader parsed;
-    RETURN_IF_ERROR(parse_header(header, &parsed));
+    Status status = parse_header(header, &parsed);
+    if (!status.ok()) {
+        return invalidate_entry(status);
+    }
     if (parsed.format != format || parsed.modification_time != modification_time ||
         parsed.file_size != file_size ||
         parsed.payload_size >
                 static_cast<uint64_t>(config::external_file_meta_disk_cache_max_entry_bytes)) {
-        return Status::NotFound("file meta disk cache header mismatch");
+        return invalidate_entry(Status::NotFound("file meta disk cache header mismatch"));
     }
 
     payload->resize(parsed.payload_size);
     if (parsed.payload_size > 0) {
-        RETURN_IF_ERROR(cache->read_if_cached(hash, FILE_META_DISK_CACHE_HEADER_SIZE,
-                                              Slice(payload->data(), payload->size()), context));
+        status = cache->read_if_cached(hash, FILE_META_DISK_CACHE_HEADER_SIZE,
+                                       Slice(payload->data(), payload->size()), context);
+        if (!status.ok()) {
+            payload->clear();
+            return status;
+        }
     }
     const uint32_t checksum = crc32c::Crc32c(payload->data(), payload->size());
     if (checksum != parsed.checksum) {
-        payload->clear();
-        return Status::NotFound("file meta disk cache checksum mismatch");
+        return invalidate_entry(Status::NotFound("file meta disk cache checksum mismatch"));
     }
     return Status::OK();
 }

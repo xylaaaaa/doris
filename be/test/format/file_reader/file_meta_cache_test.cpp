@@ -18,12 +18,14 @@
 #include "io/fs/file_meta_cache.h"
 
 #include <filesystem>
+#include <fstream>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "io/cache/block_file_cache.h"
 #include "io/fs/file_meta_disk_cache.h"
 #include "io/fs/file_reader.h"
+#include "util/defer_op.h"
 
 namespace doris {
 namespace {
@@ -200,7 +202,79 @@ TEST(FileMetaDiskCacheTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
             disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 124, 456, &stale_output);
     EXPECT_TRUE(stale_status.is<ErrorCode::NOT_FOUND>());
 
+    const std::string refreshed_payload = "refreshed serialized footer payload";
+    ASSERT_TRUE(disk_cache
+                        .write(FileMetaDiskCacheFormat::PARQUET, meta_key, 124, 456,
+                               std::string_view(refreshed_payload))
+                        .ok());
+    ASSERT_TRUE(disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 124, 456, &stale_output)
+                        .ok());
+    EXPECT_EQ(stale_output, refreshed_payload);
+
     std::filesystem::remove_all(cache_dir);
+}
+
+TEST(FileMetaDiskCacheTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
+    std::filesystem::path cache_dir =
+            std::filesystem::current_path() / "file_meta_disk_cache_invalid_entry_test";
+    if (std::filesystem::exists(cache_dir)) {
+        std::filesystem::remove_all(cache_dir);
+    }
+    std::filesystem::create_directories(cache_dir);
+    Defer defer {[&] { std::filesystem::remove_all(cache_dir); }};
+
+    io::FileCacheSettings settings;
+    settings.capacity = 1024 * 1024;
+    settings.max_file_block_size = 1024;
+    settings.meta_queue_size = 1024 * 1024;
+    settings.meta_queue_elements = 1024;
+    io::BlockFileCache block_cache(cache_dir.string(), settings);
+    ASSERT_TRUE(block_cache.initialize().ok());
+    for (int i = 0; i < 100; ++i) {
+        if (block_cache.get_async_open_success()) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(block_cache.get_async_open_success());
+
+    FileMetaDiskCache disk_cache(&block_cache);
+    const std::string meta_key = FileMetaCache::get_key("s3://bucket/corrupt.parquet", 123, 456);
+    const std::string payload = "serialized footer payload";
+    ASSERT_TRUE(disk_cache
+                        .write(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456,
+                               std::string_view(payload))
+                        .ok());
+
+    const auto hash = io::BlockFileCache::hash(
+            FileMetaDiskCache::get_key(FileMetaDiskCacheFormat::PARQUET, meta_key));
+    auto blocks = block_cache.get_blocks_by_key(hash);
+    ASSERT_EQ(blocks.size(), 1);
+    const std::string cache_file = blocks.begin()->second->get_cache_file();
+    blocks.clear();
+
+    constexpr size_t payload_offset = 4 + 1 + 1 + 2 + 8 + 8 + 8 + 4;
+    std::fstream cache_stream(cache_file, std::ios::in | std::ios::out | std::ios::binary);
+    ASSERT_TRUE(cache_stream.is_open());
+    cache_stream.seekp(payload_offset);
+    const char corrupted_byte = payload[0] == 'x' ? 'y' : 'x';
+    cache_stream.write(&corrupted_byte, 1);
+    ASSERT_TRUE(cache_stream.good());
+    cache_stream.close();
+
+    std::string output;
+    Status status = disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456, &output);
+    EXPECT_TRUE(status.is<ErrorCode::NOT_FOUND>());
+    EXPECT_TRUE(output.empty());
+
+    const std::string refreshed_payload = "refreshed serialized footer payload";
+    ASSERT_TRUE(disk_cache
+                        .write(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456,
+                               std::string_view(refreshed_payload))
+                        .ok());
+    ASSERT_TRUE(
+            disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456, &output).ok());
+    EXPECT_EQ(output, refreshed_payload);
 }
 
 } // namespace doris
