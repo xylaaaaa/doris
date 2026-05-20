@@ -419,7 +419,8 @@ Status OrcReader::_create_file_reader() {
 
         // Local variables can be required because setSerializedFileTail is an assignment operation, not a reference.
         ObjLRUCache::CacheHandle _meta_cache_handle;
-        if (_meta_cache->lookup(file_meta_cache_key, &_meta_cache_handle)) {
+        const bool use_memory_cache = _enable_file_meta_memory_cache && _meta_cache->enabled();
+        if (use_memory_cache && _meta_cache->lookup(file_meta_cache_key, &_meta_cache_handle)) {
             const std::string* footer_ptr = _meta_cache_handle.data<String>();
             options.setSerializedFileTail(*footer_ptr);
             RETURN_IF_ERROR(create_orc_reader());
@@ -436,7 +437,10 @@ Status OrcReader::_create_file_reader() {
                 auto footer_ptr = std::make_unique<std::string>(std::move(footer_payload));
                 options.setSerializedFileTail(*footer_ptr);
                 RETURN_IF_ERROR(create_orc_reader());
-                _meta_cache->insert(file_meta_cache_key, footer_ptr.release(), &_meta_cache_handle);
+                if (use_memory_cache) {
+                    _meta_cache->insert(file_meta_cache_key, footer_ptr.release(),
+                                        &_meta_cache_handle);
+                }
                 _statistics.file_footer_hit_cache++;
                 _statistics.file_footer_hit_disk_cache++;
             } else {
@@ -451,7 +455,10 @@ Status OrcReader::_create_file_reader() {
                                                    file_size, *footer_ptr)) {
                     _statistics.file_footer_write_disk_cache++;
                 }
-                _meta_cache->insert(file_meta_cache_key, footer_ptr.release(), &_meta_cache_handle);
+                if (use_memory_cache) {
+                    _meta_cache->insert(file_meta_cache_key, footer_ptr.release(),
+                                        &_meta_cache_handle);
+                }
             }
         }
     }

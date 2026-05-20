@@ -56,6 +56,9 @@ public:
 
     bool enabled() const { return _cache.enabled(); }
 
+    bool should_enable_memory_cache(int64_t num_scan_ranges) const;
+    bool should_enable_for_reader(int64_t num_scan_ranges) const;
+
     bool lookup_disk_cache(FileMetaDiskCacheFormat format, const std::string& key,
                            int64_t modification_time, int64_t file_size, std::string* payload);
 

@@ -28,6 +28,7 @@
 #include "io/fs/file_meta_disk_cache.h"
 #include "io/fs/file_reader.h"
 #include "runtime/exec_env.h"
+#include "storage/id_manager.h"
 #include "util/defer_op.h"
 
 namespace doris {
@@ -206,6 +207,46 @@ TEST(FileMetaCacheTest, InsertAndLookupWithIntValue) {
     const int* cached_val2 = handle2.data<int>();
     ASSERT_NE(cached_val2, nullptr);
     EXPECT_EQ(*cached_val2, 12345);
+}
+
+TEST(FileMetaCacheTest, ReaderPolicyKeepsDiskCacheWhenMemoryCacheIsSkipped) {
+    const bool old_enable_external_file_meta_disk_cache =
+            config::enable_external_file_meta_disk_cache;
+    Defer defer {[&] {
+        config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
+    }};
+
+    config::enable_external_file_meta_disk_cache = true;
+    FileMetaCache cache(config::max_external_file_meta_cache_num);
+    const int64_t large_scan_ranges = config::max_external_file_meta_cache_num / 3;
+
+    EXPECT_FALSE(cache.should_enable_memory_cache(large_scan_ranges));
+    EXPECT_TRUE(cache.should_enable_for_reader(large_scan_ranges));
+}
+
+TEST(FileMetaCacheTest, ReaderPolicyKeepsDiskCacheWhenMemoryCacheCapacityIsZero) {
+    const bool old_enable_external_file_meta_disk_cache =
+            config::enable_external_file_meta_disk_cache;
+    Defer defer {[&] {
+        config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
+    }};
+
+    config::enable_external_file_meta_disk_cache = true;
+    FileMetaCache cache(0);
+
+    EXPECT_FALSE(cache.should_enable_memory_cache(1));
+    EXPECT_TRUE(cache.should_enable_for_reader(1));
+}
+
+TEST(FileMetaCacheTest, ExternalFileMappingKeepsMemoryCachePolicy) {
+    TFileRangeDesc range;
+    range.path = "s3://bucket/path/file.parquet";
+
+    FileMapping mapping(10, range, true, false);
+    ExternalFileMappingInfo& info = mapping.get_external_file_info();
+
+    EXPECT_TRUE(info.enable_file_meta_cache);
+    EXPECT_FALSE(info.enable_file_meta_memory_cache);
 }
 
 TEST_F(FileMetaDiskCacheTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
