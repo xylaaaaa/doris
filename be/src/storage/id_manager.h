@@ -77,11 +77,12 @@ struct ExternalFileMappingInfo {
     */
     int plan_node_id;
 
-    // Record TFileRangeDesc external_scan_range_desc in fileMapping, usage:
-    // 1. If the file belongs to a partition, columns_from_path_keys and columns_from_path in
-    // TFileRangeDesc are needed when materializing the partition column
-    // 2. path, file_type, modification_time, compress_type .... used to read the file
-    // 3. TFileFormatType can distinguish whether it is iceberg/hive/hudi/paimon
+    /*
+     * Record TFileRangeDesc external_scan_range_desc in fileMapping, usage:
+     * 1. If the file belongs to a partition, columns_from_path_keys and columns_from_path in TFileRangeDesc are needed when materializing the partition column
+     * 2. path, file_type, modification_time,compress_type .... used to read the file
+     * 3. TFileFormatType can distinguish whether it is iceberg/hive/hudi/paimon
+     */
     TFileRangeDesc scan_range_desc;
     bool enable_file_meta_cache;
     bool enable_file_meta_memory_cache;
