@@ -303,6 +303,10 @@ void OrcReader::_collect_profile_before_close() {
                        _statistics.file_footer_miss_disk_cache);
         COUNTER_UPDATE(_orc_profile.file_footer_write_disk_cache,
                        _statistics.file_footer_write_disk_cache);
+        COUNTER_UPDATE(_orc_profile.file_footer_read_disk_cache_time,
+                       _statistics.file_footer_read_disk_cache_time);
+        COUNTER_UPDATE(_orc_profile.file_footer_write_disk_cache_time,
+                       _statistics.file_footer_write_disk_cache_time);
         if (_file_input_stream != nullptr) {
             _file_input_stream->collect_profile_before_close();
         }
@@ -351,6 +355,10 @@ void OrcReader::_init_profile() {
                 ADD_COUNTER_WITH_LEVEL(_profile, "FileFooterMissDiskCache", TUnit::UNIT, 1);
         _orc_profile.file_footer_write_disk_cache =
                 ADD_COUNTER_WITH_LEVEL(_profile, "FileFooterWriteDiskCache", TUnit::UNIT, 1);
+        _orc_profile.file_footer_read_disk_cache_time =
+                ADD_CHILD_TIMER_WITH_LEVEL(_profile, "FileFooterReadDiskCacheTime", orc_profile, 1);
+        _orc_profile.file_footer_write_disk_cache_time = ADD_CHILD_TIMER_WITH_LEVEL(
+                _profile, "FileFooterWriteDiskCacheTime", orc_profile, 1);
     }
 }
 
@@ -431,9 +439,15 @@ Status OrcReader::_create_file_reader() {
                                               ? inner_file_reader->size()
                                               : _file_description.file_size;
             std::string footer_payload;
-            if (_meta_cache->lookup_disk_cache(FileMetaDiskCacheFormat::ORC, file_meta_cache_key,
-                                               _file_description.mtime, file_size,
-                                               &footer_payload)) {
+            MonotonicStopWatch disk_cache_read_watch;
+            disk_cache_read_watch.start();
+            const bool hit_disk_cache = _meta_cache->lookup_disk_cache(
+                    FileMetaDiskCacheFormat::ORC, file_meta_cache_key, _file_description.mtime,
+                    file_size, &footer_payload);
+            disk_cache_read_watch.stop();
+            if (hit_disk_cache) {
+                _statistics.file_footer_read_disk_cache_time +=
+                        disk_cache_read_watch.elapsed_time();
                 auto footer_ptr = std::make_unique<std::string>(std::move(footer_payload));
                 options.setSerializedFileTail(*footer_ptr);
                 RETURN_IF_ERROR(create_orc_reader());
@@ -450,9 +464,15 @@ Status OrcReader::_create_file_reader() {
                 _statistics.file_footer_read_calls++;
                 RETURN_IF_ERROR(create_orc_reader());
                 auto footer_ptr = std::make_unique<std::string>(_reader->getSerializedFileTail());
-                if (_meta_cache->insert_disk_cache(FileMetaDiskCacheFormat::ORC,
-                                                   file_meta_cache_key, _file_description.mtime,
-                                                   file_size, *footer_ptr)) {
+                MonotonicStopWatch disk_cache_write_watch;
+                disk_cache_write_watch.start();
+                const bool wrote_disk_cache = _meta_cache->insert_disk_cache(
+                        FileMetaDiskCacheFormat::ORC, file_meta_cache_key, _file_description.mtime,
+                        file_size, *footer_ptr);
+                disk_cache_write_watch.stop();
+                if (wrote_disk_cache) {
+                    _statistics.file_footer_write_disk_cache_time +=
+                            disk_cache_write_watch.elapsed_time();
                     _statistics.file_footer_write_disk_cache++;
                 }
                 if (use_memory_cache) {

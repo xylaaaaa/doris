@@ -228,6 +228,23 @@ TEST_F(OrcReaderTest, set_batch_size_rebuilds_batch_when_size_changes) {
     EXPECT_EQ(reader->_batch->capacity, new_batch_size);
 }
 
+TEST_F(OrcReaderTest, file_footer_disk_cache_time_counters_exist) {
+    RuntimeProfile profile("test_profile");
+    TFileScanRangeParams params;
+    TFileRangeDesc range;
+    range.path = "./be/test/exec/test_data/orc_scanner/orders.orc";
+    range.start_offset = 0;
+    range.size = 1293;
+
+    auto reader = std::make_unique<OrcReader>(&profile, nullptr, params, range, 64, "UTC",
+                                              static_cast<io::IOContext*>(nullptr), &cache, true);
+
+    ASSERT_NE(profile.get_counter("FileFooterReadDiskCacheTime"), nullptr);
+    ASSERT_EQ(profile.get_counter("FileFooterReadDiskCacheTime")->type(), TUnit::TIME_NS);
+    ASSERT_NE(profile.get_counter("FileFooterWriteDiskCacheTime"), nullptr);
+    ASSERT_EQ(profile.get_counter("FileFooterWriteDiskCacheTime")->type(), TUnit::TIME_NS);
+}
+
 TEST_F(OrcReaderTest, set_batch_size_without_row_reader_is_safe) {
     TFileScanRangeParams params;
     TFileRangeDesc range;

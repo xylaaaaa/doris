@@ -153,6 +153,8 @@ public:
         int64_t file_footer_hit_disk_cache = 0;
         int64_t file_footer_miss_disk_cache = 0;
         int64_t file_footer_write_disk_cache = 0;
+        int64_t file_footer_read_disk_cache_time = 0;
+        int64_t file_footer_write_disk_cache_time = 0;
     };
 
     OrcReader(RuntimeProfile* profile, RuntimeState* state, const TFileScanRangeParams& params,
@@ -318,6 +320,8 @@ private:
         RuntimeProfile::Counter* file_footer_hit_disk_cache = nullptr;
         RuntimeProfile::Counter* file_footer_miss_disk_cache = nullptr;
         RuntimeProfile::Counter* file_footer_write_disk_cache = nullptr;
+        RuntimeProfile::Counter* file_footer_read_disk_cache_time = nullptr;
+        RuntimeProfile::Counter* file_footer_write_disk_cache_time = nullptr;
     };
 
     class ORCFilterImpl : public orc::ORCFilter {

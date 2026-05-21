@@ -394,6 +394,21 @@ TEST_F(ParquetReaderTest, normal) {
     delete p_reader;
 }
 
+TEST_F(ParquetReaderTest, file_footer_disk_cache_time_counters_exist) {
+    RuntimeProfile profile("test_profile");
+    TFileScanRangeParams scan_params;
+    TFileRangeDesc scan_range;
+    cctz::time_zone ctz;
+    TimezoneUtils::find_cctz_time_zone(TimezoneUtils::default_time_zone, ctz);
+
+    ParquetReader reader(&profile, scan_params, scan_range, 992, &ctz, nullptr, nullptr, &cache);
+
+    ASSERT_NE(profile.get_counter("FileFooterReadDiskCacheTime"), nullptr);
+    ASSERT_EQ(profile.get_counter("FileFooterReadDiskCacheTime")->type(), TUnit::TIME_NS);
+    ASSERT_NE(profile.get_counter("FileFooterWriteDiskCacheTime"), nullptr);
+    ASSERT_EQ(profile.get_counter("FileFooterWriteDiskCacheTime")->type(), TUnit::TIME_NS);
+}
+
 TEST_F(ParquetReaderTest, uuid_varbinary) {
     TDescriptorTable t_desc_table;
     TTableDescriptor t_table_desc;

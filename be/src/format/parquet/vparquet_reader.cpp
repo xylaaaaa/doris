@@ -251,6 +251,10 @@ void ParquetReader::_init_profile() {
                 ADD_COUNTER_WITH_LEVEL(_profile, "FileFooterMissDiskCache", TUnit::UNIT, 1);
         _parquet_profile.file_footer_write_disk_cache =
                 ADD_COUNTER_WITH_LEVEL(_profile, "FileFooterWriteDiskCache", TUnit::UNIT, 1);
+        _parquet_profile.file_footer_read_disk_cache_time = ADD_CHILD_TIMER_WITH_LEVEL(
+                _profile, "FileFooterReadDiskCacheTime", parquet_profile, 1);
+        _parquet_profile.file_footer_write_disk_cache_time = ADD_CHILD_TIMER_WITH_LEVEL(
+                _profile, "FileFooterWriteDiskCacheTime", parquet_profile, 1);
         _parquet_profile.decompress_time =
                 ADD_CHILD_TIMER_WITH_LEVEL(_profile, "DecompressTime", parquet_profile, 1);
         _parquet_profile.decompress_cnt = ADD_CHILD_COUNTER_WITH_LEVEL(
@@ -364,9 +368,15 @@ Status ParquetReader::_open_file() {
                                                   ? _tracing_file_reader->size()
                                                   : _file_description.file_size;
                 std::string footer_payload;
-                if (_meta_cache->lookup_disk_cache(FileMetaDiskCacheFormat::PARQUET,
-                                                   file_meta_cache_key, _file_description.mtime,
-                                                   file_size, &footer_payload)) {
+                MonotonicStopWatch disk_cache_read_watch;
+                disk_cache_read_watch.start();
+                const bool hit_disk_cache = _meta_cache->lookup_disk_cache(
+                        FileMetaDiskCacheFormat::PARQUET, file_meta_cache_key,
+                        _file_description.mtime, file_size, &footer_payload);
+                disk_cache_read_watch.stop();
+                if (hit_disk_cache) {
+                    _reader_statistics.file_footer_read_disk_cache_time +=
+                            disk_cache_read_watch.elapsed_time();
                     uint32_t metadata_size = static_cast<uint32_t>(footer_payload.size());
                     tparquet::FileMetaData t_metadata;
                     RETURN_IF_ERROR(deserialize_thrift_msg(
@@ -394,9 +404,15 @@ Status ParquetReader::_open_file() {
                     tparquet::FileMetaData thrift_metadata = _file_metadata_ptr->to_thrift();
                     ThriftSerializer serializer(true, static_cast<int>(meta_size));
                     RETURN_IF_ERROR(serializer.serialize(&thrift_metadata, &footer_payload));
-                    if (_meta_cache->insert_disk_cache(FileMetaDiskCacheFormat::PARQUET,
-                                                       file_meta_cache_key, _file_description.mtime,
-                                                       file_size, footer_payload)) {
+                    MonotonicStopWatch disk_cache_write_watch;
+                    disk_cache_write_watch.start();
+                    const bool wrote_disk_cache = _meta_cache->insert_disk_cache(
+                            FileMetaDiskCacheFormat::PARQUET, file_meta_cache_key,
+                            _file_description.mtime, file_size, footer_payload);
+                    disk_cache_write_watch.stop();
+                    if (wrote_disk_cache) {
+                        _reader_statistics.file_footer_write_disk_cache_time +=
+                                disk_cache_write_watch.elapsed_time();
                         _reader_statistics.file_footer_write_disk_cache++;
                     }
                     if (use_memory_cache) {
@@ -1544,6 +1560,10 @@ void ParquetReader::_collect_profile() {
                    _reader_statistics.file_footer_miss_disk_cache);
     COUNTER_UPDATE(_parquet_profile.file_footer_write_disk_cache,
                    _reader_statistics.file_footer_write_disk_cache);
+    COUNTER_UPDATE(_parquet_profile.file_footer_read_disk_cache_time,
+                   _reader_statistics.file_footer_read_disk_cache_time);
+    COUNTER_UPDATE(_parquet_profile.file_footer_write_disk_cache_time,
+                   _reader_statistics.file_footer_write_disk_cache_time);
 
     COUNTER_UPDATE(_parquet_profile.skip_page_header_num, _column_statistics.skip_page_header_num);
     COUNTER_UPDATE(_parquet_profile.parse_page_header_num,
