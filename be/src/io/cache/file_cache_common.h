@@ -33,8 +33,6 @@ inline static constexpr size_t DEFAULT_NORMAL_PERCENT = 40;
 inline static constexpr size_t DEFAULT_DISPOSABLE_PERCENT = 5;
 inline static constexpr size_t DEFAULT_INDEX_PERCENT = 5;
 inline static constexpr size_t DEFAULT_TTL_PERCENT = 50;
-inline static constexpr size_t DEFAULT_META_PERCENT = 0;
-inline static constexpr size_t FILE_CACHE_TYPE_NUM = 5;
 
 using uint128_t = UInt128;
 
@@ -43,7 +41,6 @@ enum FileCacheType {
     NORMAL = 1,
     DISPOSABLE = 0,
     TTL = 3,
-    META = 4,
 };
 std::string cache_type_to_surfix(FileCacheType type);
 FileCacheType surfix_to_cache_type(const std::string& str);
@@ -134,13 +131,6 @@ struct FileCacheSettings {
     size_t query_queue_elements {0};
     size_t ttl_queue_size {0};
     size_t ttl_queue_elements {0};
-    size_t meta_queue_size {0};
-    size_t meta_queue_elements {0};
-    size_t normal_percent {DEFAULT_NORMAL_PERCENT};
-    size_t disposable_percent {DEFAULT_DISPOSABLE_PERCENT};
-    size_t index_percent {DEFAULT_INDEX_PERCENT};
-    size_t ttl_percent {DEFAULT_TTL_PERCENT};
-    size_t meta_percent {DEFAULT_META_PERCENT};
     size_t max_file_block_size {0};
     size_t max_query_cache_size {0};
     std::string storage;
@@ -154,7 +144,6 @@ FileCacheSettings get_file_cache_settings(size_t capacity, size_t max_query_cach
                                           size_t disposable_percent = DEFAULT_DISPOSABLE_PERCENT,
                                           size_t index_percent = DEFAULT_INDEX_PERCENT,
                                           size_t ttl_percent = DEFAULT_TTL_PERCENT,
-                                          size_t meta_percent = DEFAULT_META_PERCENT,
                                           const std::string& storage = "disk");
 
 struct CacheContext {

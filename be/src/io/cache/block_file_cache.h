@@ -236,13 +236,6 @@ public:
                                 CacheContext& context);
 
     /**
-     * Read data only when the full requested range is already cached and downloaded.
-     * This method never creates EMPTY cache blocks for misses.
-     */
-    Status read_if_cached(const UInt128Wrapper& hash, size_t offset, Slice buffer,
-                          CacheContext& context);
-
-    /**
      * record blocks read directly by CachedRemoteFileReader
      */
     void add_need_update_lru_block(FileBlockSPtr block);
@@ -553,7 +546,6 @@ private:
     LRUQueue _normal_queue;
     LRUQueue _disposable_queue;
     LRUQueue _ttl_queue;
-    LRUQueue _meta_queue;
 
     // keys for async remove
     RecycleFileCacheKeys _recycle_keys;
@@ -574,19 +566,15 @@ private:
     std::shared_ptr<bvar::Status<size_t>> _cur_index_queue_cache_size_metrics;
     std::shared_ptr<bvar::Status<size_t>> _cur_disposable_queue_element_count_metrics;
     std::shared_ptr<bvar::Status<size_t>> _cur_disposable_queue_cache_size_metrics;
-    std::shared_ptr<bvar::Status<size_t>> _cur_meta_queue_element_count_metrics;
-    std::shared_ptr<bvar::Status<size_t>> _cur_meta_queue_cache_size_metrics;
-    std::array<std::shared_ptr<bvar::Adder<size_t>>, FILE_CACHE_TYPE_NUM> _queue_evict_size_metrics;
+    std::array<std::shared_ptr<bvar::Adder<size_t>>, 4> _queue_evict_size_metrics;
     std::shared_ptr<bvar::Adder<size_t>> _total_read_size_metrics;
     std::shared_ptr<bvar::Adder<size_t>> _total_hit_size_metrics;
     std::shared_ptr<bvar::Adder<size_t>> _total_evict_size_metrics;
     std::shared_ptr<bvar::Adder<size_t>> _gc_evict_bytes_metrics;
     std::shared_ptr<bvar::Adder<size_t>> _gc_evict_count_metrics;
-    std::shared_ptr<bvar::Adder<size_t>> _evict_by_time_metrics_matrix[FILE_CACHE_TYPE_NUM]
-                                                                      [FILE_CACHE_TYPE_NUM];
-    std::shared_ptr<bvar::Adder<size_t>> _evict_by_size_metrics_matrix[FILE_CACHE_TYPE_NUM]
-                                                                      [FILE_CACHE_TYPE_NUM];
-    std::shared_ptr<bvar::Adder<size_t>> _evict_by_self_lru_metrics_matrix[FILE_CACHE_TYPE_NUM];
+    std::shared_ptr<bvar::Adder<size_t>> _evict_by_time_metrics_matrix[4][4];
+    std::shared_ptr<bvar::Adder<size_t>> _evict_by_size_metrics_matrix[4][4];
+    std::shared_ptr<bvar::Adder<size_t>> _evict_by_self_lru_metrics_matrix[4];
     std::shared_ptr<bvar::Adder<size_t>> _evict_by_try_release;
 
     std::shared_ptr<bvar::Window<bvar::Adder<size_t>>> _num_hit_blocks_5m;

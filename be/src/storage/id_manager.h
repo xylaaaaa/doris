@@ -74,7 +74,7 @@ struct ExternalFileMappingInfo {
     * TFileScanRangeParams (needed when creating hdfs/s3 reader):
     *      8: optional THdfsParams hdfs_params;
     *      9: optional map<string, string> properties;
-     */
+    */
     int plan_node_id;
 
     /*

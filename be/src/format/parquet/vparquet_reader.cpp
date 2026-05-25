@@ -366,16 +366,21 @@ Status ParquetReader::_open_file() {
                     .key = file_meta_cache_key,
                     .modification_time = _file_description.mtime,
                     .file_size = file_size};
+            FileMetaCacheProfile file_meta_cache_profile {
+                    .hit_cache = &_reader_statistics.file_footer_hit_cache,
+                    .hit_memory_cache = &_reader_statistics.file_footer_hit_memory_cache,
+                    .hit_disk_cache = &_reader_statistics.file_footer_hit_disk_cache,
+                    .miss_disk_cache = &_reader_statistics.file_footer_miss_disk_cache,
+                    .write_disk_cache = &_reader_statistics.file_footer_write_disk_cache,
+                    .read_disk_cache_time = &_reader_statistics.file_footer_read_disk_cache_time,
+                    .write_disk_cache_time = &_reader_statistics.file_footer_write_disk_cache_time};
             std::string footer_payload;
-            const auto lookup_result = _meta_cache->lookup(file_meta_cache_context,
-                                                           &_meta_cache_handle, &footer_payload);
+            const auto lookup_result =
+                    _meta_cache->lookup(file_meta_cache_context, &_meta_cache_handle,
+                                        &footer_payload, &file_meta_cache_profile);
             if (lookup_result.state == FileMetaCacheLookupState::MEMORY_HIT) {
                 _file_metadata = _meta_cache_handle.data<FileMetaData>();
-                _reader_statistics.file_footer_hit_cache++;
-                _reader_statistics.file_footer_hit_memory_cache++;
             } else if (lookup_result.state == FileMetaCacheLookupState::PERSISTED_HIT) {
-                _reader_statistics.file_footer_read_disk_cache_time +=
-                        lookup_result.persisted_read_time;
                 auto metadata_size = static_cast<uint32_t>(footer_payload.size());
                 tparquet::FileMetaData t_metadata;
                 RETURN_IF_ERROR(deserialize_thrift_msg(
@@ -390,24 +395,16 @@ Status ParquetReader::_open_file() {
                 } else {
                     _file_metadata = _file_metadata_ptr.get();
                 }
-                _reader_statistics.file_footer_hit_cache++;
-                _reader_statistics.file_footer_hit_disk_cache++;
             } else {
-                _reader_statistics.file_footer_miss_disk_cache++;
                 RETURN_IF_ERROR(parse_thrift_footer(_tracing_file_reader, &_file_metadata_ptr,
                                                     &meta_size, _io_ctx, enable_mapping_varbinary,
                                                     enable_mapping_timestamp_tz));
                 tparquet::FileMetaData thrift_metadata = _file_metadata_ptr->to_thrift();
                 ThriftSerializer serializer(true, static_cast<int>(meta_size));
                 RETURN_IF_ERROR(serializer.serialize(&thrift_metadata, &footer_payload));
-                const auto insert_result =
-                        _meta_cache->insert(file_meta_cache_context, _file_metadata_ptr,
-                                            &_meta_cache_handle, footer_payload);
-                if (insert_result.persisted_inserted) {
-                    _reader_statistics.file_footer_write_disk_cache_time +=
-                            insert_result.persisted_write_time;
-                    _reader_statistics.file_footer_write_disk_cache++;
-                }
+                const auto insert_result = _meta_cache->insert(
+                        file_meta_cache_context, _file_metadata_ptr, &_meta_cache_handle,
+                        footer_payload, &file_meta_cache_profile);
                 if (insert_result.memory_inserted) {
                     _file_metadata = _meta_cache_handle.data<FileMetaData>();
                 } else {

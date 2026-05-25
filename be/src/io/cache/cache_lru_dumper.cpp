@@ -482,8 +482,6 @@ void CacheLRUDumper::restore_queue(LRUQueue& queue, const std::string& queue_nam
                 ctx.cache_type = FileCacheType::NORMAL;
             } else if (queue_name == "disposable") {
                 ctx.cache_type = FileCacheType::DISPOSABLE;
-            } else if (queue_name == "meta") {
-                ctx.cache_type = FileCacheType::META;
             } else {
                 LOG_WARNING("unknown queue type for lru restore, skip");
                 DCHECK(false);
@@ -500,7 +498,7 @@ void CacheLRUDumper::restore_queue(LRUQueue& queue, const std::string& queue_nam
 };
 
 void CacheLRUDumper::remove_lru_dump_files() {
-    std::vector<std::string> queue_names = {"disposable", "index", "normal", "ttl", "meta"};
+    std::vector<std::string> queue_names = {"disposable", "index", "normal", "ttl"};
     for (const auto& queue_name : queue_names) {
         std::string filename =
                 fmt::format("{}/lru_dump_{}.tail", _mgr->_cache_base_path, queue_name);

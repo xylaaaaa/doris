@@ -224,7 +224,47 @@ TEST(FileMetaCacheTest, ReaderPolicyIsControlledByDiskCacheSwitch) {
     EXPECT_TRUE(cache.should_enable_for_reader());
 }
 
-TEST_F(FileMetaCacheDiskTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
+TEST(FileMetaCacheTest, LookupUpdatesMemoryHitProfile) {
+    FileMetaCache cache(config::max_external_file_meta_cache_num);
+    const std::string meta_key = FileMetaCache::get_key("s3://bucket/memory.parquet", 123, 456);
+    const FileMetaCacheContext meta_context {.format = FileMetaCacheFormat::PARQUET,
+                                             .key = meta_key,
+                                             .modification_time = 123,
+                                             .file_size = 456};
+    auto cached_payload = std::make_unique<std::string>("serialized footer payload");
+    ObjLRUCache::CacheHandle insert_handle;
+    ASSERT_TRUE(cache.insert(meta_key, cached_payload, &insert_handle));
+
+    int64_t hit_cache = 0;
+    int64_t hit_memory_cache = 0;
+    int64_t hit_disk_cache = 0;
+    int64_t miss_disk_cache = 0;
+    int64_t write_disk_cache = 0;
+    int64_t read_disk_cache_time = 0;
+    int64_t write_disk_cache_time = 0;
+    FileMetaCacheProfile profile {.hit_cache = &hit_cache,
+                                  .hit_memory_cache = &hit_memory_cache,
+                                  .hit_disk_cache = &hit_disk_cache,
+                                  .miss_disk_cache = &miss_disk_cache,
+                                  .write_disk_cache = &write_disk_cache,
+                                  .read_disk_cache_time = &read_disk_cache_time,
+                                  .write_disk_cache_time = &write_disk_cache_time};
+
+    ObjLRUCache::CacheHandle lookup_handle;
+    std::string output;
+    const auto lookup_result = cache.lookup(meta_context, &lookup_handle, &output, &profile);
+
+    EXPECT_EQ(lookup_result.state, FileMetaCacheLookupState::MEMORY_HIT);
+    EXPECT_EQ(hit_cache, 1);
+    EXPECT_EQ(hit_memory_cache, 1);
+    EXPECT_EQ(hit_disk_cache, 0);
+    EXPECT_EQ(miss_disk_cache, 0);
+    EXPECT_EQ(write_disk_cache, 0);
+    EXPECT_EQ(read_disk_cache_time, 0);
+    EXPECT_EQ(write_disk_cache_time, 0);
+}
+
+TEST_F(FileMetaCacheDiskTest, ReadReturnsPayloadWrittenThroughIndexQueue) {
     std::filesystem::path cache_dir = std::filesystem::current_path() / "file_meta_disk_cache_test";
     if (std::filesystem::exists(cache_dir)) {
         std::filesystem::remove_all(cache_dir);
@@ -242,8 +282,8 @@ TEST_F(FileMetaCacheDiskTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
     io::FileCacheSettings settings;
     settings.capacity = 1024 * 1024;
     settings.max_file_block_size = 16;
-    settings.meta_queue_size = 1024 * 1024;
-    settings.meta_queue_elements = 1024;
+    settings.index_queue_size = 1024 * 1024;
+    settings.index_queue_elements = 1024;
     io::BlockFileCache block_cache(cache_dir.string(), settings);
     ASSERT_TRUE(block_cache.initialize().ok());
     for (int i = 0; i < 5000; ++i) {
@@ -263,17 +303,37 @@ TEST_F(FileMetaCacheDiskTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
     const std::string payload = "serialized footer payload";
     auto cached_payload = std::make_unique<std::string>(payload);
     ObjLRUCache::CacheHandle cache_handle;
+    int64_t write_disk_cache = 0;
+    int64_t write_disk_cache_time = 0;
+    FileMetaCacheProfile insert_profile {.write_disk_cache = &write_disk_cache,
+                                         .write_disk_cache_time = &write_disk_cache_time};
 
-    const auto insert_result =
-            cache.insert(meta_context, cached_payload, &cache_handle, std::string_view(payload));
+    const auto insert_result = cache.insert(meta_context, cached_payload, &cache_handle,
+                                            std::string_view(payload), &insert_profile);
     EXPECT_TRUE(insert_result.persisted_inserted);
+    EXPECT_EQ(write_disk_cache, 1);
 
     FileMetaCache cache_after_l1_miss(config::max_external_file_meta_cache_num, &block_cache);
     std::string output;
     ObjLRUCache::CacheHandle lookup_handle;
-    const auto lookup_result = cache_after_l1_miss.lookup(meta_context, &lookup_handle, &output);
+    int64_t hit_cache = 0;
+    int64_t hit_memory_cache = 0;
+    int64_t hit_disk_cache = 0;
+    int64_t miss_disk_cache = 0;
+    int64_t read_disk_cache_time = 0;
+    FileMetaCacheProfile lookup_profile {.hit_cache = &hit_cache,
+                                         .hit_memory_cache = &hit_memory_cache,
+                                         .hit_disk_cache = &hit_disk_cache,
+                                         .miss_disk_cache = &miss_disk_cache,
+                                         .read_disk_cache_time = &read_disk_cache_time};
+    const auto lookup_result =
+            cache_after_l1_miss.lookup(meta_context, &lookup_handle, &output, &lookup_profile);
     EXPECT_EQ(lookup_result.state, FileMetaCacheLookupState::PERSISTED_HIT);
     EXPECT_EQ(output, payload);
+    EXPECT_EQ(hit_cache, 1);
+    EXPECT_EQ(hit_memory_cache, 0);
+    EXPECT_EQ(hit_disk_cache, 1);
+    EXPECT_EQ(miss_disk_cache, 0);
 
     std::string stale_output;
     ObjLRUCache::CacheHandle stale_lookup_handle;
@@ -281,22 +341,25 @@ TEST_F(FileMetaCacheDiskTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
                                                    .key = meta_key,
                                                    .modification_time = 124,
                                                    .file_size = 456};
-    const auto stale_lookup_result =
-            cache_after_l1_miss.lookup(stale_meta_context, &stale_lookup_handle, &stale_output);
+    int64_t stale_miss_disk_cache = 0;
+    FileMetaCacheProfile stale_lookup_profile {.miss_disk_cache = &stale_miss_disk_cache};
+    const auto stale_lookup_result = cache_after_l1_miss.lookup(
+            stale_meta_context, &stale_lookup_handle, &stale_output, &stale_lookup_profile);
     EXPECT_EQ(stale_lookup_result.state, FileMetaCacheLookupState::MISS);
+    EXPECT_EQ(stale_miss_disk_cache, 1);
 
     const std::string refreshed_payload = "refreshed serialized footer payload";
     auto refreshed_cached_payload = std::make_unique<std::string>(refreshed_payload);
     ObjLRUCache::CacheHandle refreshed_cache_handle;
     const auto refreshed_insert_result = cache_after_l1_miss.insert(
             stale_meta_context, refreshed_cached_payload, &refreshed_cache_handle,
-            std::string_view(refreshed_payload));
+            std::string_view(refreshed_payload), &insert_profile);
     EXPECT_TRUE(refreshed_insert_result.persisted_inserted);
 
     FileMetaCache cache_after_stale_l1_miss(config::max_external_file_meta_cache_num, &block_cache);
     ObjLRUCache::CacheHandle refreshed_lookup_handle;
     const auto refreshed_lookup_result = cache_after_stale_l1_miss.lookup(
-            stale_meta_context, &refreshed_lookup_handle, &stale_output);
+            stale_meta_context, &refreshed_lookup_handle, &stale_output, &lookup_profile);
     EXPECT_EQ(refreshed_lookup_result.state, FileMetaCacheLookupState::PERSISTED_HIT);
     EXPECT_EQ(stale_output, refreshed_payload);
 }
@@ -320,8 +383,8 @@ TEST_F(FileMetaCacheDiskTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
     io::FileCacheSettings settings;
     settings.capacity = 1024 * 1024;
     settings.max_file_block_size = 1024;
-    settings.meta_queue_size = 1024 * 1024;
-    settings.meta_queue_elements = 1024;
+    settings.index_queue_size = 1024 * 1024;
+    settings.index_queue_elements = 1024;
     io::BlockFileCache block_cache(cache_dir.string(), settings);
     ASSERT_TRUE(block_cache.initialize().ok());
     for (int i = 0; i < 5000; ++i) {

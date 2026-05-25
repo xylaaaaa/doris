@@ -53,13 +53,21 @@ enum class FileMetaCacheLookupState {
 
 struct FileMetaCacheLookupResult {
     FileMetaCacheLookupState state = FileMetaCacheLookupState::MISS;
-    int64_t persisted_read_time = 0;
 };
 
 struct FileMetaCacheInsertResult {
     bool memory_inserted = false;
     bool persisted_inserted = false;
-    int64_t persisted_write_time = 0;
+};
+
+struct FileMetaCacheProfile {
+    int64_t* hit_cache = nullptr;
+    int64_t* hit_memory_cache = nullptr;
+    int64_t* hit_disk_cache = nullptr;
+    int64_t* miss_disk_cache = nullptr;
+    int64_t* write_disk_cache = nullptr;
+    int64_t* read_disk_cache_time = nullptr;
+    int64_t* write_disk_cache_time = nullptr;
 };
 
 // A file meta cache depends on a LRU cache.
@@ -105,16 +113,26 @@ public:
     bool should_enable_for_reader() const;
 
     FileMetaCacheLookupResult lookup(const FileMetaCacheContext& context,
-                                     ObjLRUCache::CacheHandle* handle,
-                                     std::string* serialized_meta);
+                                     ObjLRUCache::CacheHandle* handle, std::string* serialized_meta,
+                                     FileMetaCacheProfile* profile = nullptr);
 
     template <typename T>
     FileMetaCacheInsertResult insert(const FileMetaCacheContext& context, std::unique_ptr<T>& value,
                                      ObjLRUCache::CacheHandle* handle,
-                                     std::string_view serialized_meta) {
+                                     std::string_view serialized_meta,
+                                     FileMetaCacheProfile* profile = nullptr) {
         FileMetaCacheInsertResult result;
+        int64_t persisted_write_time = 0;
         result.persisted_inserted =
-                insert_persistent_cache(context, serialized_meta, &result.persisted_write_time);
+                insert_persistent_cache(context, serialized_meta, &persisted_write_time);
+        if (result.persisted_inserted && profile != nullptr) {
+            if (profile->write_disk_cache != nullptr) {
+                ++(*profile->write_disk_cache);
+            }
+            if (profile->write_disk_cache_time != nullptr) {
+                *profile->write_disk_cache_time += persisted_write_time;
+            }
+        }
         result.memory_inserted = insert(context.key, value, handle);
         return result;
     }

@@ -1160,25 +1160,25 @@ Status FileScanner::_get_next_reader() {
             break;
         }
         case TFileFormatType::FORMAT_PARQUET: {
-            auto* file_meta_cache_ptr = _should_enable_file_meta_cache()
-                                                ? ExecEnv::GetInstance()->file_meta_cache()
-                                                : nullptr;
+            auto file_meta_cache_ptr = _should_enable_file_meta_cache()
+                                               ? ExecEnv::GetInstance()->file_meta_cache()
+                                               : nullptr;
             if (push_down_predicates) {
                 RETURN_IF_ERROR(_process_late_arrival_conjuncts());
             }
-            RETURN_IF_ERROR(_init_parquet_reader(file_meta_cache_ptr, nullptr));
+            RETURN_IF_ERROR(_init_parquet_reader(file_meta_cache_ptr));
 
             need_to_get_parsed_schema = true;
             break;
         }
         case TFileFormatType::FORMAT_ORC: {
-            auto* file_meta_cache_ptr = _should_enable_file_meta_cache()
-                                                ? ExecEnv::GetInstance()->file_meta_cache()
-                                                : nullptr;
+            auto file_meta_cache_ptr = _should_enable_file_meta_cache()
+                                               ? ExecEnv::GetInstance()->file_meta_cache()
+                                               : nullptr;
             if (push_down_predicates) {
                 RETURN_IF_ERROR(_process_late_arrival_conjuncts());
             }
-            RETURN_IF_ERROR(_init_orc_reader(file_meta_cache_ptr, nullptr));
+            RETURN_IF_ERROR(_init_orc_reader(file_meta_cache_ptr));
 
             need_to_get_parsed_schema = true;
             break;
@@ -1617,9 +1617,9 @@ Status FileScanner::read_lines_from_range(const TFileRangeDesc& range,
     TFileFormatType::type format_type = _get_current_format_type();
     Status init_status = Status::OK();
 
-    auto* file_meta_cache_ptr = external_info.enable_file_meta_cache
-                                        ? ExecEnv::GetInstance()->file_meta_cache()
-                                        : nullptr;
+    auto file_meta_cache_ptr = external_info.enable_file_meta_cache
+                                       ? ExecEnv::GetInstance()->file_meta_cache()
+                                       : nullptr;
 
     RETURN_IF_ERROR(scope_timer_run(
             [&]() -> Status {

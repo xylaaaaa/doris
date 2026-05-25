@@ -556,7 +556,7 @@ std::optional<BlockMeta> deserialize_value(const std::string& value_str, Status*
     if (pb.ParseFromString(value_str)) {
         // Validate the parsed protobuf data
         int type = pb.type();
-        if (type < 0 || type >= static_cast<int>(FILE_CACHE_TYPE_NUM)) {
+        if (type < 0 || type > 3) { // Valid FileCacheType values: 0-3
             LOG(WARNING) << "Invalid FileCacheType value: " << type;
             if (status)
                 *status = Status::InternalError("Failed to deserialize value: invalid type");
@@ -589,7 +589,7 @@ std::optional<BlockMeta> deserialize_value(std::string_view value_view, Status* 
     if (pb.ParseFromArray(value_view.data(), static_cast<int>(value_view.size()))) {
         // Validate the parsed protobuf data
         int type = pb.type();
-        if (type < 0 || type >= static_cast<int>(FILE_CACHE_TYPE_NUM)) {
+        if (type < 0 || type > 3) { // Valid FileCacheType values: 0-3
             LOG(WARNING) << "Invalid FileCacheType value: " << type;
             if (status)
                 *status = Status::InternalError("Failed to deserialize value: invalid type");

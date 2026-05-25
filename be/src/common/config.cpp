@@ -1195,7 +1195,6 @@ DEFINE_String(file_cache_path, "[{\"path\":\"${DORIS_HOME}/file_cache\"}]");
 DEFINE_Int64(file_cache_each_block_size, "1048576"); // 1MB
 DEFINE_mBool(enable_external_file_meta_disk_cache, "false");
 DEFINE_mInt64(external_file_meta_disk_cache_max_entry_bytes, "67108864"); // 64MB
-DEFINE_mInt32(external_file_meta_disk_cache_percent, "1");
 
 DEFINE_Bool(clear_file_cache, "false");
 DEFINE_mBool(enable_file_cache_query_limit, "false");
