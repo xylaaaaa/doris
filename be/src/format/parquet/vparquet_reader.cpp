@@ -358,8 +358,7 @@ Status ParquetReader::_open_file() {
         } else {
             const auto& file_meta_cache_key =
                     FileMetaCache::get_key(_tracing_file_reader, _file_description);
-            const bool use_memory_cache = _meta_cache->enabled();
-            if (use_memory_cache && _meta_cache->lookup(file_meta_cache_key, &_meta_cache_handle)) {
+            if (_meta_cache->lookup(file_meta_cache_key, &_meta_cache_handle)) {
                 _file_metadata = _meta_cache_handle.data<FileMetaData>();
                 _reader_statistics.file_footer_hit_cache++;
                 _reader_statistics.file_footer_hit_memory_cache++;
@@ -371,13 +370,13 @@ Status ParquetReader::_open_file() {
                 MonotonicStopWatch disk_cache_read_watch;
                 disk_cache_read_watch.start();
                 const bool hit_disk_cache = _meta_cache->lookup_disk_cache(
-                        FileMetaDiskCacheFormat::PARQUET, file_meta_cache_key,
-                        _file_description.mtime, file_size, &footer_payload);
+                        FileMetaCacheFormat::PARQUET, file_meta_cache_key, _file_description.mtime,
+                        file_size, &footer_payload);
                 disk_cache_read_watch.stop();
                 if (hit_disk_cache) {
                     _reader_statistics.file_footer_read_disk_cache_time +=
                             disk_cache_read_watch.elapsed_time();
-                    uint32_t metadata_size = static_cast<uint32_t>(footer_payload.size());
+                    auto metadata_size = static_cast<uint32_t>(footer_payload.size());
                     tparquet::FileMetaData t_metadata;
                     RETURN_IF_ERROR(deserialize_thrift_msg(
                             reinterpret_cast<const uint8_t*>(footer_payload.data()), &metadata_size,
@@ -385,9 +384,8 @@ Status ParquetReader::_open_file() {
                     _file_metadata_ptr = std::make_unique<FileMetaData>(t_metadata, metadata_size);
                     RETURN_IF_ERROR(_file_metadata_ptr->init_schema(enable_mapping_varbinary,
                                                                     enable_mapping_timestamp_tz));
-                    if (use_memory_cache) {
-                        _meta_cache->insert(file_meta_cache_key, _file_metadata_ptr.release(),
-                                            &_meta_cache_handle);
+                    if (_meta_cache->insert(file_meta_cache_key, _file_metadata_ptr,
+                                            &_meta_cache_handle)) {
                         _file_metadata = _meta_cache_handle.data<FileMetaData>();
                     } else {
                         _file_metadata = _file_metadata_ptr.get();
@@ -405,7 +403,7 @@ Status ParquetReader::_open_file() {
                     MonotonicStopWatch disk_cache_write_watch;
                     disk_cache_write_watch.start();
                     const bool wrote_disk_cache = _meta_cache->insert_disk_cache(
-                            FileMetaDiskCacheFormat::PARQUET, file_meta_cache_key,
+                            FileMetaCacheFormat::PARQUET, file_meta_cache_key,
                             _file_description.mtime, file_size, footer_payload);
                     disk_cache_write_watch.stop();
                     if (wrote_disk_cache) {
@@ -413,10 +411,8 @@ Status ParquetReader::_open_file() {
                                 disk_cache_write_watch.elapsed_time();
                         _reader_statistics.file_footer_write_disk_cache++;
                     }
-                    if (use_memory_cache) {
-                        // _file_metadata_ptr.release() : move control of _file_metadata to _meta_cache_handle
-                        _meta_cache->insert(file_meta_cache_key, _file_metadata_ptr.release(),
-                                            &_meta_cache_handle);
+                    if (_meta_cache->insert(file_meta_cache_key, _file_metadata_ptr,
+                                            &_meta_cache_handle)) {
                         _file_metadata = _meta_cache_handle.data<FileMetaData>();
                     } else {
                         _file_metadata = _file_metadata_ptr.get();

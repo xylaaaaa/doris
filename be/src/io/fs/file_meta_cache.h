@@ -17,22 +17,33 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
-#include <mutex>
+#include <string>
+#include <string_view>
 
 #include "io/file_factory.h"
-#include "io/fs/file_meta_disk_cache.h"
 #include "io/fs/file_reader_writer_fwd.h"
 #include "util/obj_lru_cache.h"
 
 namespace doris {
+
+namespace io {
+class BlockFileCache;
+struct UInt128Wrapper;
+} // namespace io
+
+enum class FileMetaCacheFormat : uint8_t {
+    PARQUET = 1,
+    ORC = 2,
+};
 
 // A file meta cache depends on a LRU cache.
 // Such as parsed parquet footer.
 // The capacity will limit the number of cache entries in cache.
 class FileMetaCache {
 public:
-    FileMetaCache(int64_t capacity);
+    explicit FileMetaCache(int64_t capacity, io::BlockFileCache* block_file_cache = nullptr);
 
     FileMetaCache(const FileMetaCache&) = delete;
     const FileMetaCache& operator=(const FileMetaCache&) = delete;
@@ -54,22 +65,35 @@ public:
         _cache.insert({key}, value, handle);
     }
 
+    template <typename T>
+    bool insert(const std::string& key, std::unique_ptr<T>& value,
+                ObjLRUCache::CacheHandle* handle) {
+        DCHECK(value != nullptr);
+        if (!_cache.enabled()) {
+            return false;
+        }
+        _cache.insert({key}, value.release(), handle);
+        return true;
+    }
+
     bool enabled() const { return _cache.enabled(); }
 
     bool should_enable_for_reader() const;
 
-    bool lookup_disk_cache(FileMetaDiskCacheFormat format, const std::string& key,
+    static std::string get_disk_cache_key(FileMetaCacheFormat format,
+                                          std::string_view file_meta_cache_key);
+
+    bool lookup_disk_cache(FileMetaCacheFormat format, const std::string& key,
                            int64_t modification_time, int64_t file_size, std::string* payload);
 
-    bool insert_disk_cache(FileMetaDiskCacheFormat format, const std::string& key,
+    bool insert_disk_cache(FileMetaCacheFormat format, const std::string& key,
                            int64_t modification_time, int64_t file_size, std::string_view payload);
 
 private:
-    FileMetaDiskCache* disk_cache();
+    io::BlockFileCache* get_block_file_cache(const io::UInt128Wrapper& hash) const;
 
     ObjLRUCache _cache;
-    std::mutex _disk_cache_mutex;
-    std::unique_ptr<FileMetaDiskCache> _disk_cache;
+    io::BlockFileCache* _block_file_cache = nullptr;
 };
 
 } // namespace doris

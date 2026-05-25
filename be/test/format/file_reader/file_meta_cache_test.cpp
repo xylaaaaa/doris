@@ -25,7 +25,6 @@
 #include "gtest/gtest.h"
 #include "io/cache/block_file_cache.h"
 #include "io/cache/fs_file_cache_storage.h"
-#include "io/fs/file_meta_disk_cache.h"
 #include "io/fs/file_reader.h"
 #include "runtime/exec_env.h"
 #include "util/defer_op.h"
@@ -66,7 +65,7 @@ private:
     int64_t _old_leak_scan_interval_seconds;
 };
 
-class FileMetaDiskCacheTest : public testing::Test {
+class FileMetaCacheDiskTest : public testing::Test {
 public:
     static void SetUpTestSuite() {
         ExecEnv::GetInstance()->set_file_cache_open_fd_cache(std::make_unique<io::FDCache>());
@@ -224,14 +223,20 @@ TEST(FileMetaCacheTest, ReaderPolicyIsControlledByDiskCacheSwitch) {
     EXPECT_TRUE(cache.should_enable_for_reader());
 }
 
-TEST_F(FileMetaDiskCacheTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
+TEST_F(FileMetaCacheDiskTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
     std::filesystem::path cache_dir = std::filesystem::current_path() / "file_meta_disk_cache_test";
     if (std::filesystem::exists(cache_dir)) {
         std::filesystem::remove_all(cache_dir);
     }
     std::filesystem::create_directories(cache_dir);
     ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
-    Defer defer {[&] { std::filesystem::remove_all(cache_dir); }};
+    const bool old_enable_external_file_meta_disk_cache =
+            config::enable_external_file_meta_disk_cache;
+    Defer defer {[&] {
+        config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
+        std::filesystem::remove_all(cache_dir);
+    }};
+    config::enable_external_file_meta_disk_cache = true;
 
     io::FileCacheSettings settings;
     settings.capacity = 1024 * 1024;
@@ -248,36 +253,30 @@ TEST_F(FileMetaDiskCacheTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
     }
     ASSERT_TRUE(block_cache.get_async_open_success());
 
-    FileMetaDiskCache disk_cache(&block_cache);
+    FileMetaCache cache(config::max_external_file_meta_cache_num, &block_cache);
     const std::string meta_key = FileMetaCache::get_key("s3://bucket/test.parquet", 123, 456);
     const std::string payload = "serialized footer payload";
 
-    ASSERT_TRUE(disk_cache
-                        .write(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456,
-                               std::string_view(payload))
-                        .ok());
+    ASSERT_TRUE(cache.insert_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456,
+                                        std::string_view(payload)));
 
     std::string output;
-    ASSERT_TRUE(
-            disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456, &output).ok());
+    ASSERT_TRUE(cache.lookup_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456, &output));
     EXPECT_EQ(output, payload);
 
     std::string stale_output;
-    Status stale_status =
-            disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 124, 456, &stale_output);
-    EXPECT_TRUE(stale_status.is<ErrorCode::NOT_FOUND>());
+    EXPECT_FALSE(cache.lookup_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 124, 456,
+                                         &stale_output));
 
     const std::string refreshed_payload = "refreshed serialized footer payload";
-    ASSERT_TRUE(disk_cache
-                        .write(FileMetaDiskCacheFormat::PARQUET, meta_key, 124, 456,
-                               std::string_view(refreshed_payload))
-                        .ok());
-    ASSERT_TRUE(disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 124, 456, &stale_output)
-                        .ok());
+    ASSERT_TRUE(cache.insert_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 124, 456,
+                                        std::string_view(refreshed_payload)));
+    ASSERT_TRUE(cache.lookup_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 124, 456,
+                                        &stale_output));
     EXPECT_EQ(stale_output, refreshed_payload);
 }
 
-TEST_F(FileMetaDiskCacheTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
+TEST_F(FileMetaCacheDiskTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
     std::filesystem::path cache_dir =
             std::filesystem::current_path() / "file_meta_disk_cache_invalid_entry_test";
     if (std::filesystem::exists(cache_dir)) {
@@ -285,7 +284,13 @@ TEST_F(FileMetaDiskCacheTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
     }
     std::filesystem::create_directories(cache_dir);
     ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
-    Defer defer {[&] { std::filesystem::remove_all(cache_dir); }};
+    const bool old_enable_external_file_meta_disk_cache =
+            config::enable_external_file_meta_disk_cache;
+    Defer defer {[&] {
+        config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
+        std::filesystem::remove_all(cache_dir);
+    }};
+    config::enable_external_file_meta_disk_cache = true;
 
     io::FileCacheSettings settings;
     settings.capacity = 1024 * 1024;
@@ -302,16 +307,14 @@ TEST_F(FileMetaDiskCacheTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
     }
     ASSERT_TRUE(block_cache.get_async_open_success());
 
-    FileMetaDiskCache disk_cache(&block_cache);
+    FileMetaCache cache(config::max_external_file_meta_cache_num, &block_cache);
     const std::string meta_key = FileMetaCache::get_key("s3://bucket/corrupt.parquet", 123, 456);
     const std::string payload = "serialized footer payload";
-    ASSERT_TRUE(disk_cache
-                        .write(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456,
-                               std::string_view(payload))
-                        .ok());
+    ASSERT_TRUE(cache.insert_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456,
+                                        std::string_view(payload)));
 
     const auto hash = io::BlockFileCache::hash(
-            FileMetaDiskCache::get_key(FileMetaDiskCacheFormat::PARQUET, meta_key));
+            FileMetaCache::get_disk_cache_key(FileMetaCacheFormat::PARQUET, meta_key));
     auto blocks = block_cache.get_blocks_by_key(hash);
     ASSERT_EQ(blocks.size(), 1);
     const std::string cache_file = blocks.begin()->second->get_cache_file();
@@ -327,17 +330,14 @@ TEST_F(FileMetaDiskCacheTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
     cache_stream.close();
 
     std::string output;
-    Status status = disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456, &output);
-    EXPECT_TRUE(status.is<ErrorCode::NOT_FOUND>());
+    EXPECT_FALSE(
+            cache.lookup_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456, &output));
     EXPECT_TRUE(output.empty());
 
     const std::string refreshed_payload = "refreshed serialized footer payload";
-    ASSERT_TRUE(disk_cache
-                        .write(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456,
-                               std::string_view(refreshed_payload))
-                        .ok());
-    ASSERT_TRUE(
-            disk_cache.read(FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456, &output).ok());
+    ASSERT_TRUE(cache.insert_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456,
+                                        std::string_view(refreshed_payload)));
+    ASSERT_TRUE(cache.lookup_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456, &output));
     EXPECT_EQ(output, refreshed_payload);
 }
 

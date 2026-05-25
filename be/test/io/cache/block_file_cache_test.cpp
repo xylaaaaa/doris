@@ -20,7 +20,6 @@
 
 #include "io/cache/block_file_cache_test_common.h"
 #include "io/fs/file_meta_cache.h"
-#include "io/fs/file_meta_disk_cache.h"
 #include "storage/olap_define.h"
 #include "util/defer_op.h"
 
@@ -5150,19 +5149,16 @@ TEST_F(BlockFileCacheTest, file_meta_disk_cache_initializes_without_data_file_ca
     ASSERT_TRUE(cache->get_async_open_success());
     ASSERT_GT(cache->get_stats_unsafe()["meta_queue_max_size"], 0);
 
-    doris::FileMetaDiskCache disk_cache;
+    doris::FileMetaCache meta_cache(config::max_external_file_meta_cache_num);
     const std::string meta_key =
             doris::FileMetaCache::get_key("s3://bucket/test.parquet", 123, 456);
     const std::string payload = "serialized footer payload";
-    ASSERT_TRUE(disk_cache
-                        .write(doris::FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456,
-                               std::string_view(payload))
-                        .ok());
+    ASSERT_TRUE(meta_cache.insert_disk_cache(doris::FileMetaCacheFormat::PARQUET, meta_key, 123,
+                                             456, std::string_view(payload)));
 
     std::string output;
-    ASSERT_TRUE(
-            disk_cache.read(doris::FileMetaDiskCacheFormat::PARQUET, meta_key, 123, 456, &output)
-                    .ok());
+    ASSERT_TRUE(meta_cache.lookup_disk_cache(doris::FileMetaCacheFormat::PARQUET, meta_key, 123,
+                                             456, &output));
     EXPECT_EQ(output, payload);
     ASSERT_GT(cache->get_stats_unsafe()["meta_queue_curr_size"], 0);
 }
