@@ -399,9 +399,11 @@ Status ParquetReader::_open_file() {
                 RETURN_IF_ERROR(parse_thrift_footer(_tracing_file_reader, &_file_metadata_ptr,
                                                     &meta_size, _io_ctx, enable_mapping_varbinary,
                                                     enable_mapping_timestamp_tz));
-                tparquet::FileMetaData thrift_metadata = _file_metadata_ptr->to_thrift();
-                ThriftSerializer serializer(true, static_cast<int>(meta_size));
-                RETURN_IF_ERROR(serializer.serialize(&thrift_metadata, &footer_payload));
+                if (config::enable_external_file_meta_disk_cache) {
+                    tparquet::FileMetaData thrift_metadata = _file_metadata_ptr->to_thrift();
+                    ThriftSerializer serializer(true, static_cast<int>(meta_size));
+                    RETURN_IF_ERROR(serializer.serialize(&thrift_metadata, &footer_payload));
+                }
                 const auto insert_result = _meta_cache->insert(
                         file_meta_cache_context, _file_metadata_ptr, &_meta_cache_handle,
                         footer_payload, &file_meta_cache_profile);

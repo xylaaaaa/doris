@@ -458,9 +458,12 @@ Status OrcReader::_create_file_reader() {
             _statistics.file_footer_read_calls++;
             RETURN_IF_ERROR(create_orc_reader());
             auto footer_ptr = std::make_unique<std::string>(_reader->getSerializedFileTail());
-            static_cast<void>(_meta_cache->insert(file_meta_cache_context, footer_ptr,
-                                                  &_meta_cache_handle, *footer_ptr,
-                                                  &file_meta_cache_profile));
+            const auto insert_result = _meta_cache->insert(
+                    file_meta_cache_context, footer_ptr, &_meta_cache_handle, *footer_ptr,
+                    &file_meta_cache_profile);
+            if (insert_result.memory_inserted) {
+                DCHECK(_meta_cache_handle.valid());
+            }
         }
     }
 
