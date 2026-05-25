@@ -271,12 +271,6 @@ public:
     // Pass condition cache context to the reader for HIT/MISS tracking.
     virtual void set_condition_cache_context(std::shared_ptr<ConditionCacheContext> ctx) {}
 
-    void set_file_meta_memory_cache_enabled(bool enabled) {
-        _enable_file_meta_memory_cache = enabled;
-    }
-
-    bool file_meta_memory_cache_enabled() const { return _enable_file_meta_memory_cache; }
-
     // Returns true if this reader can produce an accurate total row count from metadata
     // without reading actual data. Used to determine if CountReader decorator can be applied.
     // Only ORC and Parquet readers support this (via file footer metadata).
@@ -298,7 +292,6 @@ protected:
     // Cache to save some common part such as file footer.
     // Maybe null if not used
     FileMetaCache* _meta_cache = nullptr;
-    bool _enable_file_meta_memory_cache = true;
 
     // ---- Column descriptors (set by init_reader, owned by FileScanner) ----
     const std::vector<ColumnDescriptor>* _column_descs = nullptr;

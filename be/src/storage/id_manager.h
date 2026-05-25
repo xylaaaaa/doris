@@ -74,7 +74,7 @@ struct ExternalFileMappingInfo {
     * TFileScanRangeParams (needed when creating hdfs/s3 reader):
     *      8: optional THdfsParams hdfs_params;
     *      9: optional map<string, string> properties;
-    */
+     */
     int plan_node_id;
 
     /*
@@ -85,14 +85,12 @@ struct ExternalFileMappingInfo {
      */
     TFileRangeDesc scan_range_desc;
     bool enable_file_meta_cache;
-    bool enable_file_meta_memory_cache;
 
     ExternalFileMappingInfo(int plan_node_id, const TFileRangeDesc& scan_range,
-                            bool file_meta_cache, bool file_meta_memory_cache = true)
+                            bool file_meta_cache)
             : plan_node_id(plan_node_id),
               scan_range_desc(scan_range),
-              enable_file_meta_cache(file_meta_cache),
-              enable_file_meta_memory_cache(file_meta_memory_cache) {}
+              enable_file_meta_cache(file_meta_cache) {}
 
     std::string to_string() const {
         std::string value;
@@ -120,11 +118,10 @@ struct FileMapping {
               value(std::in_place_type<InternalFileMappingInfo>, tablet_id, rowset_id, segment_id) {
     }
 
-    FileMapping(int plan_node_id, const TFileRangeDesc& scan_range, bool enable_file_meta_cache,
-                bool enable_file_meta_memory_cache = true)
+    FileMapping(int plan_node_id, const TFileRangeDesc& scan_range, bool enable_file_meta_cache)
             : type(FileMappingType::EXTERNAL),
               value(std::in_place_type<ExternalFileMappingInfo>, plan_node_id, scan_range,
-                    enable_file_meta_cache, enable_file_meta_memory_cache) {}
+                    enable_file_meta_cache) {}
 
     std::tuple<int64_t, RowsetId, uint32_t> get_doris_format_info() const {
         DCHECK(type == FileMappingType::INTERNAL);

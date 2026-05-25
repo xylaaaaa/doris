@@ -358,7 +358,7 @@ Status ParquetReader::_open_file() {
         } else {
             const auto& file_meta_cache_key =
                     FileMetaCache::get_key(_tracing_file_reader, _file_description);
-            const bool use_memory_cache = _enable_file_meta_memory_cache && _meta_cache->enabled();
+            const bool use_memory_cache = _meta_cache->enabled();
             if (use_memory_cache && _meta_cache->lookup(file_meta_cache_key, &_meta_cache_handle)) {
                 _file_metadata = _meta_cache_handle.data<FileMetaData>();
                 _reader_statistics.file_footer_hit_cache++;
@@ -395,9 +395,7 @@ Status ParquetReader::_open_file() {
                     _reader_statistics.file_footer_hit_cache++;
                     _reader_statistics.file_footer_hit_disk_cache++;
                 } else {
-                    if (config::enable_external_file_meta_disk_cache) {
-                        _reader_statistics.file_footer_miss_disk_cache++;
-                    }
+                    _reader_statistics.file_footer_miss_disk_cache++;
                     RETURN_IF_ERROR(parse_thrift_footer(
                             _tracing_file_reader, &_file_metadata_ptr, &meta_size, _io_ctx,
                             enable_mapping_varbinary, enable_mapping_timestamp_tz));

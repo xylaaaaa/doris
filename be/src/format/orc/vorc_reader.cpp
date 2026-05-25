@@ -427,7 +427,7 @@ Status OrcReader::_create_file_reader() {
 
         // Local variables can be required because setSerializedFileTail is an assignment operation, not a reference.
         ObjLRUCache::CacheHandle _meta_cache_handle;
-        const bool use_memory_cache = _enable_file_meta_memory_cache && _meta_cache->enabled();
+        const bool use_memory_cache = _meta_cache->enabled();
         if (use_memory_cache && _meta_cache->lookup(file_meta_cache_key, &_meta_cache_handle)) {
             const std::string* footer_ptr = _meta_cache_handle.data<String>();
             options.setSerializedFileTail(*footer_ptr);
@@ -458,9 +458,7 @@ Status OrcReader::_create_file_reader() {
                 _statistics.file_footer_hit_cache++;
                 _statistics.file_footer_hit_disk_cache++;
             } else {
-                if (config::enable_external_file_meta_disk_cache) {
-                    _statistics.file_footer_miss_disk_cache++;
-                }
+                _statistics.file_footer_miss_disk_cache++;
                 _statistics.file_footer_read_calls++;
                 RETURN_IF_ERROR(create_orc_reader());
                 auto footer_ptr = std::make_unique<std::string>(_reader->getSerializedFileTail());

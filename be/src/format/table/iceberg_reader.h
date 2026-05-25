@@ -91,7 +91,6 @@ protected:
                 this->get_profile(), this->get_scan_params(), delete_desc,
                 READ_DELETE_FILE_BATCH_SIZE, &this->get_state()->timezone_obj(), this->get_io_ctx(),
                 this->get_state(), this->_meta_cache);
-        reader->set_file_meta_memory_cache_enabled(this->file_meta_memory_cache_enabled());
         return reader;
     }
 
@@ -130,7 +129,6 @@ protected:
                 this->get_profile(), this->get_state(), this->get_scan_params(), delete_desc,
                 READ_DELETE_FILE_BATCH_SIZE, this->get_state()->timezone(), this->get_io_ctx(),
                 this->_meta_cache);
-        reader->set_file_meta_memory_cache_enabled(this->file_meta_memory_cache_enabled());
         return reader;
     }
 

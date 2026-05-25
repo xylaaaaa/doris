@@ -45,13 +45,8 @@ std::string FileMetaCache::get_key(io::FileReaderSPtr file_reader,
             _file_description.file_size == -1 ? file_reader->size() : _file_description.file_size);
 }
 
-bool FileMetaCache::should_enable_memory_cache(int64_t num_scan_ranges) const {
-    return enabled() && num_scan_ranges < config::max_external_file_meta_cache_num / 3;
-}
-
-bool FileMetaCache::should_enable_for_reader(int64_t num_scan_ranges) const {
-    return should_enable_memory_cache(num_scan_ranges) ||
-           config::enable_external_file_meta_disk_cache;
+bool FileMetaCache::should_enable_for_reader() const {
+    return config::enable_external_file_meta_disk_cache;
 }
 
 bool FileMetaCache::lookup_disk_cache(FileMetaDiskCacheFormat format, const std::string& key,
