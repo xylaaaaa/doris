@@ -19,6 +19,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 #include "common/config.h"
 #include "gmock/gmock.h"
@@ -255,24 +256,48 @@ TEST_F(FileMetaCacheDiskTest, ReadReturnsPayloadWrittenThroughMetaQueue) {
 
     FileMetaCache cache(config::max_external_file_meta_cache_num, &block_cache);
     const std::string meta_key = FileMetaCache::get_key("s3://bucket/test.parquet", 123, 456);
+    const FileMetaCacheContext meta_context {.format = FileMetaCacheFormat::PARQUET,
+                                             .key = meta_key,
+                                             .modification_time = 123,
+                                             .file_size = 456};
     const std::string payload = "serialized footer payload";
+    auto cached_payload = std::make_unique<std::string>(payload);
+    ObjLRUCache::CacheHandle cache_handle;
 
-    ASSERT_TRUE(cache.insert_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456,
-                                        std::string_view(payload)));
+    const auto insert_result =
+            cache.insert(meta_context, cached_payload, &cache_handle, std::string_view(payload));
+    EXPECT_TRUE(insert_result.persisted_inserted);
 
+    FileMetaCache cache_after_l1_miss(config::max_external_file_meta_cache_num, &block_cache);
     std::string output;
-    ASSERT_TRUE(cache.lookup_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456, &output));
+    ObjLRUCache::CacheHandle lookup_handle;
+    const auto lookup_result = cache_after_l1_miss.lookup(meta_context, &lookup_handle, &output);
+    EXPECT_EQ(lookup_result.state, FileMetaCacheLookupState::PERSISTED_HIT);
     EXPECT_EQ(output, payload);
 
     std::string stale_output;
-    EXPECT_FALSE(cache.lookup_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 124, 456,
-                                         &stale_output));
+    ObjLRUCache::CacheHandle stale_lookup_handle;
+    const FileMetaCacheContext stale_meta_context {.format = FileMetaCacheFormat::PARQUET,
+                                                   .key = meta_key,
+                                                   .modification_time = 124,
+                                                   .file_size = 456};
+    const auto stale_lookup_result =
+            cache_after_l1_miss.lookup(stale_meta_context, &stale_lookup_handle, &stale_output);
+    EXPECT_EQ(stale_lookup_result.state, FileMetaCacheLookupState::MISS);
 
     const std::string refreshed_payload = "refreshed serialized footer payload";
-    ASSERT_TRUE(cache.insert_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 124, 456,
-                                        std::string_view(refreshed_payload)));
-    ASSERT_TRUE(cache.lookup_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 124, 456,
-                                        &stale_output));
+    auto refreshed_cached_payload = std::make_unique<std::string>(refreshed_payload);
+    ObjLRUCache::CacheHandle refreshed_cache_handle;
+    const auto refreshed_insert_result = cache_after_l1_miss.insert(
+            stale_meta_context, refreshed_cached_payload, &refreshed_cache_handle,
+            std::string_view(refreshed_payload));
+    EXPECT_TRUE(refreshed_insert_result.persisted_inserted);
+
+    FileMetaCache cache_after_stale_l1_miss(config::max_external_file_meta_cache_num, &block_cache);
+    ObjLRUCache::CacheHandle refreshed_lookup_handle;
+    const auto refreshed_lookup_result = cache_after_stale_l1_miss.lookup(
+            stale_meta_context, &refreshed_lookup_handle, &stale_output);
+    EXPECT_EQ(refreshed_lookup_result.state, FileMetaCacheLookupState::PERSISTED_HIT);
     EXPECT_EQ(stale_output, refreshed_payload);
 }
 
@@ -309,19 +334,28 @@ TEST_F(FileMetaCacheDiskTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
 
     FileMetaCache cache(config::max_external_file_meta_cache_num, &block_cache);
     const std::string meta_key = FileMetaCache::get_key("s3://bucket/corrupt.parquet", 123, 456);
+    const FileMetaCacheContext meta_context {.format = FileMetaCacheFormat::PARQUET,
+                                             .key = meta_key,
+                                             .modification_time = 123,
+                                             .file_size = 456};
     const std::string payload = "serialized footer payload";
-    ASSERT_TRUE(cache.insert_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456,
-                                        std::string_view(payload)));
-
-    const auto hash = io::BlockFileCache::hash(
-            FileMetaCache::get_disk_cache_key(FileMetaCacheFormat::PARQUET, meta_key));
-    auto blocks = block_cache.get_blocks_by_key(hash);
-    ASSERT_EQ(blocks.size(), 1);
-    const std::string cache_file = blocks.begin()->second->get_cache_file();
-    blocks.clear();
+    auto cached_payload = std::make_unique<std::string>(payload);
+    ObjLRUCache::CacheHandle cache_handle;
+    const auto insert_result =
+            cache.insert(meta_context, cached_payload, &cache_handle, std::string_view(payload));
+    ASSERT_TRUE(insert_result.persisted_inserted);
 
     constexpr size_t payload_offset = 4 + 1 + 1 + 2 + 8 + 8 + 8 + 4;
-    std::fstream cache_stream(cache_file, std::ios::in | std::ios::out | std::ios::binary);
+    std::vector<std::filesystem::path> cache_files;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(cache_dir)) {
+        if (entry.is_regular_file() &&
+            entry.file_size() == payload_offset + static_cast<size_t>(payload.size())) {
+            cache_files.emplace_back(entry.path());
+        }
+    }
+    ASSERT_EQ(cache_files.size(), 1);
+
+    std::fstream cache_stream(cache_files[0], std::ios::in | std::ios::out | std::ios::binary);
     ASSERT_TRUE(cache_stream.is_open());
     cache_stream.seekp(payload_offset);
     const char corrupted_byte = payload[0] == 'x' ? 'y' : 'x';
@@ -330,14 +364,26 @@ TEST_F(FileMetaCacheDiskTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
     cache_stream.close();
 
     std::string output;
-    EXPECT_FALSE(
-            cache.lookup_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456, &output));
+    FileMetaCache cache_after_l1_miss(config::max_external_file_meta_cache_num, &block_cache);
+    ObjLRUCache::CacheHandle lookup_handle;
+    const auto lookup_result = cache_after_l1_miss.lookup(meta_context, &lookup_handle, &output);
+    EXPECT_EQ(lookup_result.state, FileMetaCacheLookupState::MISS);
     EXPECT_TRUE(output.empty());
 
     const std::string refreshed_payload = "refreshed serialized footer payload";
-    ASSERT_TRUE(cache.insert_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456,
-                                        std::string_view(refreshed_payload)));
-    ASSERT_TRUE(cache.lookup_disk_cache(FileMetaCacheFormat::PARQUET, meta_key, 123, 456, &output));
+    auto refreshed_cached_payload = std::make_unique<std::string>(refreshed_payload);
+    ObjLRUCache::CacheHandle refreshed_cache_handle;
+    const auto refreshed_insert_result = cache_after_l1_miss.insert(
+            meta_context, refreshed_cached_payload, &refreshed_cache_handle,
+            std::string_view(refreshed_payload));
+    ASSERT_TRUE(refreshed_insert_result.persisted_inserted);
+
+    FileMetaCache cache_after_refresh_l1_miss(config::max_external_file_meta_cache_num,
+                                              &block_cache);
+    ObjLRUCache::CacheHandle refreshed_lookup_handle;
+    const auto refreshed_lookup_result =
+            cache_after_refresh_l1_miss.lookup(meta_context, &refreshed_lookup_handle, &output);
+    EXPECT_EQ(refreshed_lookup_result.state, FileMetaCacheLookupState::PERSISTED_HIT);
     EXPECT_EQ(output, refreshed_payload);
 }
 

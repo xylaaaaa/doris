@@ -29,6 +29,7 @@
 #include "io/cache/file_cache_common.h"
 #include "util/coding.h"
 #include "util/slice.h"
+#include "util/stopwatch.hpp"
 
 namespace doris {
 namespace {
@@ -139,8 +140,8 @@ bool FileMetaCache::should_enable_for_reader() const {
     return config::enable_external_file_meta_disk_cache;
 }
 
-std::string FileMetaCache::get_disk_cache_key(FileMetaCacheFormat format,
-                                              std::string_view file_meta_cache_key) {
+std::string FileMetaCache::get_persistent_cache_key(FileMetaCacheFormat format,
+                                                    std::string_view file_meta_cache_key) {
     std::string key;
     key.reserve(32 + file_meta_cache_key.size());
     key.append("file_meta_cache:v1:");
@@ -150,36 +151,62 @@ std::string FileMetaCache::get_disk_cache_key(FileMetaCacheFormat format,
     return key;
 }
 
-bool FileMetaCache::lookup_disk_cache(FileMetaCacheFormat format, const std::string& key,
-                                      int64_t modification_time, int64_t file_size,
-                                      std::string* payload) {
+FileMetaCacheLookupResult FileMetaCache::lookup(const FileMetaCacheContext& context,
+                                                ObjLRUCache::CacheHandle* handle,
+                                                std::string* serialized_meta) {
+    DCHECK(handle != nullptr);
+    DCHECK(serialized_meta != nullptr);
+    if (lookup(context.key, handle)) {
+        serialized_meta->clear();
+        return {.state = FileMetaCacheLookupState::MEMORY_HIT, .persisted_read_time = 0};
+    }
+
+    FileMetaCacheLookupResult result;
+    if (lookup_persistent_cache(context, serialized_meta, &result.persisted_read_time)) {
+        result.state = FileMetaCacheLookupState::PERSISTED_HIT;
+    }
+    return result;
+}
+
+bool FileMetaCache::lookup_persistent_cache(const FileMetaCacheContext& context,
+                                            std::string* payload, int64_t* read_time) {
     DCHECK(payload != nullptr);
+    DCHECK(read_time != nullptr);
     payload->clear();
+    *read_time = 0;
     if (!config::enable_external_file_meta_disk_cache) {
         return false;
     }
 
-    const std::string disk_cache_key = get_disk_cache_key(format, key);
+    MonotonicStopWatch watch;
+    watch.start();
+    auto stop_watch = [&]() { *read_time = watch.elapsed_time(); };
+
+    const std::string disk_cache_key = get_persistent_cache_key(context.format, context.key);
     const auto hash = io::BlockFileCache::hash(disk_cache_key);
     io::BlockFileCache* cache = get_block_file_cache(hash);
     if (cache == nullptr) {
+        stop_watch();
         return false;
     }
 
     io::ReadStatistics stats;
-    io::CacheContext context = build_meta_cache_context();
-    context.stats = &stats;
+    io::CacheContext cache_context = build_meta_cache_context();
+    cache_context.stats = &stats;
     auto invalidate_entry = [&](const Status& status) {
         payload->clear();
         cache->remove_if_cached(hash);
         VLOG_DEBUG << "lookup file meta disk cache failed: " << status;
+        stop_watch();
         return false;
     };
 
     std::string header(FILE_META_CACHE_DISK_HEADER_SIZE, '\0');
-    Status status = cache->read_if_cached(hash, 0, Slice(header.data(), header.size()), context);
+    Status status =
+            cache->read_if_cached(hash, 0, Slice(header.data(), header.size()), cache_context);
     if (!status.ok()) {
         VLOG_DEBUG << "lookup file meta disk cache failed: " << status;
+        stop_watch();
         return false;
     }
 
@@ -190,18 +217,19 @@ bool FileMetaCache::lookup_disk_cache(FileMetaCacheFormat format, const std::str
     }
     const auto max_entry_bytes =
             static_cast<uint64_t>(config::external_file_meta_disk_cache_max_entry_bytes);
-    if (parsed.format != format || parsed.modification_time != modification_time ||
-        parsed.file_size != file_size || parsed.payload_size > max_entry_bytes) {
+    if (parsed.format != context.format || parsed.modification_time != context.modification_time ||
+        parsed.file_size != context.file_size || parsed.payload_size > max_entry_bytes) {
         return invalidate_entry(Status::NotFound("file meta disk cache header mismatch"));
     }
 
     payload->resize(parsed.payload_size);
     if (parsed.payload_size > 0) {
         status = cache->read_if_cached(hash, FILE_META_CACHE_DISK_HEADER_SIZE,
-                                       Slice(payload->data(), payload->size()), context);
+                                       Slice(payload->data(), payload->size()), cache_context);
         if (!status.ok()) {
             payload->clear();
             VLOG_DEBUG << "lookup file meta disk cache failed: " << status;
+            stop_watch();
             return false;
         }
     }
@@ -210,30 +238,38 @@ bool FileMetaCache::lookup_disk_cache(FileMetaCacheFormat format, const std::str
         return invalidate_entry(Status::NotFound("file meta disk cache checksum mismatch"));
     }
 
+    stop_watch();
     return true;
 }
 
-bool FileMetaCache::insert_disk_cache(FileMetaCacheFormat format, const std::string& key,
-                                      int64_t modification_time, int64_t file_size,
-                                      std::string_view payload) {
+bool FileMetaCache::insert_persistent_cache(const FileMetaCacheContext& context,
+                                            std::string_view payload, int64_t* write_time) {
+    DCHECK(write_time != nullptr);
+    *write_time = 0;
     if (!config::enable_external_file_meta_disk_cache ||
         payload.size() >
                 static_cast<size_t>(config::external_file_meta_disk_cache_max_entry_bytes)) {
         return false;
     }
 
-    const std::string disk_cache_key = get_disk_cache_key(format, key);
+    MonotonicStopWatch watch;
+    watch.start();
+    auto stop_watch = [&]() { *write_time = watch.elapsed_time(); };
+
+    const std::string disk_cache_key = get_persistent_cache_key(context.format, context.key);
     const auto hash = io::BlockFileCache::hash(disk_cache_key);
     io::BlockFileCache* cache = get_block_file_cache(hash);
     if (cache == nullptr) {
+        stop_watch();
         return false;
     }
 
-    const std::string value = build_disk_cache_value(format, modification_time, file_size, payload);
+    const std::string value = build_disk_cache_value(context.format, context.modification_time,
+                                                     context.file_size, payload);
     io::ReadStatistics stats;
-    io::CacheContext context = build_meta_cache_context();
-    context.stats = &stats;
-    auto holder = cache->get_or_set(hash, 0, value.size(), context);
+    io::CacheContext cache_context = build_meta_cache_context();
+    cache_context.stats = &stats;
+    auto holder = cache->get_or_set(hash, 0, value.size(), cache_context);
     for (const auto& block : holder.file_blocks) {
         auto state = block->state();
         if (state == io::FileBlock::State::DOWNLOADING && !block->is_downloader()) {
@@ -244,11 +280,13 @@ bool FileMetaCache::insert_disk_cache(FileMetaCacheFormat format, const std::str
         }
         if (state != io::FileBlock::State::EMPTY) {
             VLOG_DEBUG << "insert file meta disk cache failed: file block is not writable";
+            stop_watch();
             return false;
         }
 
         if (block->get_or_set_downloader() != io::FileBlock::get_caller_id()) {
             VLOG_DEBUG << "insert file meta disk cache failed: file block has another downloader";
+            stop_watch();
             return false;
         }
         const auto& range = block->range();
@@ -256,14 +294,17 @@ bool FileMetaCache::insert_disk_cache(FileMetaCacheFormat format, const std::str
         Status status = block->append(Slice(value.data() + range.left, range.size()));
         if (!status.ok()) {
             VLOG_DEBUG << "insert file meta disk cache failed: " << status;
+            stop_watch();
             return false;
         }
         status = block->finalize();
         if (!status.ok()) {
             VLOG_DEBUG << "insert file meta disk cache failed: " << status;
+            stop_watch();
             return false;
         }
     }
+    stop_watch();
     return true;
 }
 

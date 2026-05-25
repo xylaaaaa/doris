@@ -5152,13 +5152,23 @@ TEST_F(BlockFileCacheTest, file_meta_disk_cache_initializes_without_data_file_ca
     doris::FileMetaCache meta_cache(config::max_external_file_meta_cache_num);
     const std::string meta_key =
             doris::FileMetaCache::get_key("s3://bucket/test.parquet", 123, 456);
+    const doris::FileMetaCacheContext meta_context {.format = doris::FileMetaCacheFormat::PARQUET,
+                                                    .key = meta_key,
+                                                    .modification_time = 123,
+                                                    .file_size = 456};
     const std::string payload = "serialized footer payload";
-    ASSERT_TRUE(meta_cache.insert_disk_cache(doris::FileMetaCacheFormat::PARQUET, meta_key, 123,
-                                             456, std::string_view(payload)));
+    auto cached_payload = std::make_unique<std::string>(payload);
+    doris::ObjLRUCache::CacheHandle cache_handle;
+    const auto insert_result = meta_cache.insert(meta_context, cached_payload, &cache_handle,
+                                                 std::string_view(payload));
+    ASSERT_TRUE(insert_result.persisted_inserted);
 
+    doris::FileMetaCache meta_cache_after_l1_miss(config::max_external_file_meta_cache_num);
     std::string output;
-    ASSERT_TRUE(meta_cache.lookup_disk_cache(doris::FileMetaCacheFormat::PARQUET, meta_key, 123,
-                                             456, &output));
+    doris::ObjLRUCache::CacheHandle lookup_handle;
+    const auto lookup_result =
+            meta_cache_after_l1_miss.lookup(meta_context, &lookup_handle, &output);
+    ASSERT_EQ(lookup_result.state, doris::FileMetaCacheLookupState::PERSISTED_HIT);
     EXPECT_EQ(output, payload);
     ASSERT_GT(cache->get_stats_unsafe()["meta_queue_curr_size"], 0);
 }

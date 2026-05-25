@@ -38,6 +38,30 @@ enum class FileMetaCacheFormat : uint8_t {
     ORC = 2,
 };
 
+struct FileMetaCacheContext {
+    FileMetaCacheFormat format;
+    const std::string& key;
+    int64_t modification_time = 0;
+    int64_t file_size = 0;
+};
+
+enum class FileMetaCacheLookupState {
+    MEMORY_HIT,
+    PERSISTED_HIT,
+    MISS,
+};
+
+struct FileMetaCacheLookupResult {
+    FileMetaCacheLookupState state = FileMetaCacheLookupState::MISS;
+    int64_t persisted_read_time = 0;
+};
+
+struct FileMetaCacheInsertResult {
+    bool memory_inserted = false;
+    bool persisted_inserted = false;
+    int64_t persisted_write_time = 0;
+};
+
 // A file meta cache depends on a LRU cache.
 // Such as parsed parquet footer.
 // The capacity will limit the number of cache entries in cache.
@@ -80,16 +104,28 @@ public:
 
     bool should_enable_for_reader() const;
 
-    static std::string get_disk_cache_key(FileMetaCacheFormat format,
-                                          std::string_view file_meta_cache_key);
+    FileMetaCacheLookupResult lookup(const FileMetaCacheContext& context,
+                                     ObjLRUCache::CacheHandle* handle,
+                                     std::string* serialized_meta);
 
-    bool lookup_disk_cache(FileMetaCacheFormat format, const std::string& key,
-                           int64_t modification_time, int64_t file_size, std::string* payload);
-
-    bool insert_disk_cache(FileMetaCacheFormat format, const std::string& key,
-                           int64_t modification_time, int64_t file_size, std::string_view payload);
+    template <typename T>
+    FileMetaCacheInsertResult insert(const FileMetaCacheContext& context, std::unique_ptr<T>& value,
+                                     ObjLRUCache::CacheHandle* handle,
+                                     std::string_view serialized_meta) {
+        FileMetaCacheInsertResult result;
+        result.persisted_inserted =
+                insert_persistent_cache(context, serialized_meta, &result.persisted_write_time);
+        result.memory_inserted = insert(context.key, value, handle);
+        return result;
+    }
 
 private:
+    static std::string get_persistent_cache_key(FileMetaCacheFormat format,
+                                                std::string_view file_meta_cache_key);
+    bool lookup_persistent_cache(const FileMetaCacheContext& context, std::string* payload,
+                                 int64_t* read_time);
+    bool insert_persistent_cache(const FileMetaCacheContext& context, std::string_view payload,
+                                 int64_t* write_time);
     io::BlockFileCache* get_block_file_cache(const io::UInt128Wrapper& hash) const;
 
     ObjLRUCache _cache;
