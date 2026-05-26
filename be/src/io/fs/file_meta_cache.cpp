@@ -189,10 +189,6 @@ std::string FileMetaCache::get_key(io::FileReaderSPtr file_reader,
             _file_description.file_size == -1 ? file_reader->size() : _file_description.file_size);
 }
 
-bool FileMetaCache::should_enable_for_reader() const {
-    return config::enable_external_file_meta_disk_cache;
-}
-
 std::string FileMetaCache::get_persistent_cache_key(FileMetaCacheFormat format,
                                                     std::string_view file_meta_cache_key) {
     std::string key;

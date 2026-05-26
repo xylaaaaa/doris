@@ -26,6 +26,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "common/config.h"
 #include "common/factory_creator.h"
 #include "common/global_types.h"
 #include "common/status.h"
@@ -325,8 +326,6 @@ private:
                                        : _local_state->get_push_down_agg_type();
     }
 
-    bool _should_enable_file_meta_cache() {
-        return ExecEnv::GetInstance()->file_meta_cache()->should_enable_for_reader();
-    }
+    bool _should_enable_file_meta_cache() { return config::enable_external_file_meta_disk_cache; }
 };
 } // namespace doris

@@ -110,8 +110,6 @@ public:
 
     bool enabled() const { return _cache.enabled(); }
 
-    bool should_enable_for_reader() const;
-
     FileMetaCacheLookupResult lookup(const FileMetaCacheContext& context,
                                      ObjLRUCache::CacheHandle* handle, std::string* serialized_meta,
                                      FileMetaCacheProfile* profile = nullptr);
