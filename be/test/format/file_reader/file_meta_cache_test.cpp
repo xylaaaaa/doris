@@ -208,20 +208,18 @@ TEST(FileMetaCacheTest, InsertAndLookupWithIntValue) {
     EXPECT_EQ(*cached_val2, 12345);
 }
 
-TEST(FileMetaCacheTest, ReaderPolicyIsControlledByDiskCacheSwitch) {
+TEST(FileMetaCacheTest, ExternalFileMetaDiskCacheSwitchIsStartupOnly) {
     const bool old_enable_external_file_meta_disk_cache =
             config::enable_external_file_meta_disk_cache;
     Defer defer {[&] {
         config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
     }};
 
-    FileMetaCache cache(config::max_external_file_meta_cache_num);
-
     config::enable_external_file_meta_disk_cache = false;
-    EXPECT_FALSE(cache.should_enable_for_reader());
-
-    config::enable_external_file_meta_disk_cache = true;
-    EXPECT_TRUE(cache.should_enable_for_reader());
+    Status status = config::set_config("enable_external_file_meta_disk_cache", "true");
+    EXPECT_FALSE(status.ok());
+    EXPECT_THAT(status.to_string(), testing::HasSubstr("not support to modify"));
+    EXPECT_FALSE(config::enable_external_file_meta_disk_cache);
 }
 
 TEST(FileMetaCacheTest, LookupUpdatesMemoryHitProfile) {
