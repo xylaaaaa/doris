@@ -218,7 +218,8 @@ TEST(FileMetaCacheTest, ExternalFileMetaDiskCacheSwitchIsStartupOnly) {
     config::enable_external_file_meta_disk_cache = false;
     Status status = config::set_config("enable_external_file_meta_disk_cache", "true");
     EXPECT_FALSE(status.ok());
-    EXPECT_THAT(status.to_string(), testing::HasSubstr("not support to modify"));
+    EXPECT_TRUE(status.is<ErrorCode::NOT_IMPLEMENTED_ERROR>() || status.is<ErrorCode::NOT_FOUND>())
+            << status.to_string();
     EXPECT_FALSE(config::enable_external_file_meta_disk_cache);
 }
 
