@@ -88,6 +88,9 @@ public:
     static std::string get_key(io::FileReaderSPtr file_reader,
                                const io::FileDescription& _file_description);
 
+    static bool is_persistent_cache_enabled();
+    static bool is_persistent_cache_payload_size_allowed(uint64_t payload_size);
+
     bool lookup(const std::string& key, ObjLRUCache::CacheHandle* handle) {
         return _cache.lookup({key}, handle);
     }

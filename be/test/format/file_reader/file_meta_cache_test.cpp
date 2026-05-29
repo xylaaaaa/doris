@@ -449,4 +449,65 @@ TEST_F(FileMetaCacheDiskTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
     EXPECT_EQ(output, refreshed_payload);
 }
 
+TEST_F(FileMetaCacheDiskTest, NegativeMaxEntryBytesDisablesPersistentCache) {
+    std::filesystem::path cache_dir =
+            std::filesystem::current_path() / "file_meta_disk_cache_negative_max_entry_test";
+    if (std::filesystem::exists(cache_dir)) {
+        std::filesystem::remove_all(cache_dir);
+    }
+    std::filesystem::create_directories(cache_dir);
+    ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
+    const bool old_enable_external_file_meta_disk_cache =
+            config::enable_external_file_meta_disk_cache;
+    const int64_t old_external_file_meta_disk_cache_max_entry_bytes =
+            config::external_file_meta_disk_cache_max_entry_bytes;
+    Defer defer {[&] {
+        config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
+        config::external_file_meta_disk_cache_max_entry_bytes =
+                old_external_file_meta_disk_cache_max_entry_bytes;
+        std::filesystem::remove_all(cache_dir);
+    }};
+    config::enable_external_file_meta_disk_cache = true;
+    config::external_file_meta_disk_cache_max_entry_bytes = -1;
+
+    io::FileCacheSettings settings;
+    settings.capacity = 1024 * 1024;
+    settings.max_file_block_size = 1024;
+    settings.index_queue_size = 1024 * 1024;
+    settings.index_queue_elements = 1024;
+    io::BlockFileCache block_cache(cache_dir.string(), settings);
+    ASSERT_TRUE(block_cache.initialize().ok());
+    for (int i = 0; i < 5000; ++i) {
+        if (block_cache.get_async_open_success()) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(block_cache.get_async_open_success());
+
+    FileMetaCache cache(config::max_external_file_meta_cache_num, &block_cache);
+    const std::string meta_key = FileMetaCache::get_key("s3://bucket/negative.parquet", 123, 456);
+    const FileMetaCacheContext meta_context {.format = FileMetaCacheFormat::PARQUET,
+                                             .key = meta_key,
+                                             .modification_time = 123,
+                                             .file_size = 456};
+    const std::string payload = "serialized footer payload";
+    auto cached_payload = std::make_unique<std::string>(payload);
+    ObjLRUCache::CacheHandle cache_handle;
+    int64_t write_disk_cache = 0;
+    FileMetaCacheProfile insert_profile {.write_disk_cache = &write_disk_cache};
+
+    const auto insert_result = cache.insert(meta_context, cached_payload, &cache_handle,
+                                            std::string_view(payload), &insert_profile);
+    EXPECT_FALSE(insert_result.persisted_inserted);
+    EXPECT_EQ(write_disk_cache, 0);
+
+    FileMetaCache cache_after_l1_miss(config::max_external_file_meta_cache_num, &block_cache);
+    std::string output;
+    ObjLRUCache::CacheHandle lookup_handle;
+    const auto lookup_result = cache_after_l1_miss.lookup(meta_context, &lookup_handle, &output);
+    EXPECT_EQ(lookup_result.state, FileMetaCacheLookupState::MISS);
+    EXPECT_TRUE(output.empty());
+}
+
 } // namespace doris

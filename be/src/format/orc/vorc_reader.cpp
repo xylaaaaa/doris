@@ -457,12 +457,28 @@ Status OrcReader::_create_file_reader() {
         } else {
             _statistics.file_footer_read_calls++;
             RETURN_IF_ERROR(create_orc_reader());
-            auto footer_ptr = std::make_unique<std::string>(_reader->getSerializedFileTail());
-            const auto insert_result =
-                    _meta_cache->insert(file_meta_cache_context, footer_ptr, &_meta_cache_handle,
-                                        *footer_ptr, &file_meta_cache_profile);
-            if (insert_result.memory_inserted) {
-                DCHECK(_meta_cache_handle.valid());
+            const uint64_t serialized_tail_size_estimate = _reader->getFileFooterLength() +
+                                                           _reader->getFilePostscriptLength() +
+                                                           _reader->getStripeStatisticsLength();
+            const bool should_insert_persistent_cache =
+                    FileMetaCache::is_persistent_cache_payload_size_allowed(
+                            serialized_tail_size_estimate);
+            // ORC uses the serialized tail as the L1 value too, so build it when either
+            // L1 memory cache or L2 persistent cache can accept it.
+            if (should_insert_persistent_cache || _meta_cache->enabled()) {
+                auto footer_ptr = std::make_unique<std::string>(_reader->getSerializedFileTail());
+                const bool memory_inserted =
+                        should_insert_persistent_cache
+                                ? _meta_cache
+                                          ->insert(file_meta_cache_context, footer_ptr,
+                                                   &_meta_cache_handle, *footer_ptr,
+                                                   &file_meta_cache_profile)
+                                          .memory_inserted
+                                : _meta_cache->insert(file_meta_cache_key, footer_ptr,
+                                                      &_meta_cache_handle);
+                if (memory_inserted) {
+                    DCHECK(_meta_cache_handle.valid());
+                }
             }
         }
     }

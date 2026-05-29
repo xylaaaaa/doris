@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 #include "common/config.h"
 #include "common/logging.h"
@@ -189,6 +190,17 @@ std::string FileMetaCache::get_key(io::FileReaderSPtr file_reader,
             _file_description.file_size == -1 ? file_reader->size() : _file_description.file_size);
 }
 
+bool FileMetaCache::is_persistent_cache_enabled() {
+    const int64_t max_entry_bytes = config::external_file_meta_disk_cache_max_entry_bytes;
+    return config::enable_external_file_meta_disk_cache && max_entry_bytes > 0;
+}
+
+bool FileMetaCache::is_persistent_cache_payload_size_allowed(uint64_t payload_size) {
+    const int64_t max_entry_bytes = config::external_file_meta_disk_cache_max_entry_bytes;
+    return config::enable_external_file_meta_disk_cache && max_entry_bytes > 0 &&
+           std::cmp_less_equal(payload_size, max_entry_bytes);
+}
+
 std::string FileMetaCache::get_persistent_cache_key(FileMetaCacheFormat format,
                                                     std::string_view file_meta_cache_key) {
     std::string key;
@@ -224,7 +236,7 @@ FileMetaCacheLookupResult FileMetaCache::lookup(const FileMetaCacheContext& cont
             update_profile_counter(profile->hit_disk_cache);
             update_profile_counter(profile->read_disk_cache_time, persisted_read_time);
         }
-    } else if (config::enable_external_file_meta_disk_cache && profile != nullptr) {
+    } else if (is_persistent_cache_enabled() && profile != nullptr) {
         update_profile_counter(profile->miss_disk_cache);
     }
     return result;
@@ -236,7 +248,7 @@ bool FileMetaCache::lookup_persistent_cache(const FileMetaCacheContext& context,
     DCHECK(read_time != nullptr);
     payload->clear();
     *read_time = 0;
-    if (!config::enable_external_file_meta_disk_cache) {
+    if (!is_persistent_cache_enabled()) {
         return false;
     }
 
@@ -273,10 +285,9 @@ bool FileMetaCache::lookup_persistent_cache(const FileMetaCacheContext& context,
     if (!status.ok()) {
         return invalidate_entry(status);
     }
-    const auto max_entry_bytes =
-            static_cast<uint64_t>(config::external_file_meta_disk_cache_max_entry_bytes);
     if (parsed.format != context.format || parsed.modification_time != context.modification_time ||
-        parsed.file_size != context.file_size || parsed.payload_size > max_entry_bytes) {
+        parsed.file_size != context.file_size ||
+        !is_persistent_cache_payload_size_allowed(parsed.payload_size)) {
         return invalidate_entry(Status::NotFound("file meta disk cache header mismatch"));
     }
 
@@ -304,9 +315,7 @@ bool FileMetaCache::insert_persistent_cache(const FileMetaCacheContext& context,
                                             std::string_view payload, int64_t* write_time) {
     DCHECK(write_time != nullptr);
     *write_time = 0;
-    if (!config::enable_external_file_meta_disk_cache ||
-        payload.size() >
-                static_cast<size_t>(config::external_file_meta_disk_cache_max_entry_bytes)) {
+    if (!is_persistent_cache_payload_size_allowed(static_cast<uint64_t>(payload.size()))) {
         return false;
     }
 
