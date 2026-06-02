@@ -43,6 +43,7 @@ struct FileMetaCacheContext {
     const std::string& key;
     int64_t modification_time = 0;
     int64_t file_size = 0;
+    bool enable_memory_cache = true;
 };
 
 enum class FileMetaCacheLookupState {
@@ -134,7 +135,9 @@ public:
                 *profile->write_disk_cache_time += persisted_write_time;
             }
         }
-        result.memory_inserted = insert(context.key, value, handle);
+        if (context.enable_memory_cache) {
+            result.memory_inserted = insert(context.key, value, handle);
+        }
         return result;
     }
 

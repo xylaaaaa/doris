@@ -87,10 +87,12 @@ protected:
 
     std::unique_ptr<GenericReader> _create_equality_reader(
             const TFileRangeDesc& delete_desc) final {
-        return ParquetReader::create_unique(this->get_profile(), this->get_scan_params(),
-                                            delete_desc, READ_DELETE_FILE_BATCH_SIZE,
-                                            &this->get_state()->timezone_obj(), this->get_io_ctx(),
-                                            this->get_state(), this->_meta_cache);
+        auto reader = ParquetReader::create_unique(
+                this->get_profile(), this->get_scan_params(), delete_desc,
+                READ_DELETE_FILE_BATCH_SIZE, &this->get_state()->timezone_obj(), this->get_io_ctx(),
+                this->get_state(), this->_meta_cache);
+        reader->set_enable_file_meta_memory_cache(this->_enable_file_meta_memory_cache);
+        return reader;
     }
 
     static ColumnIdResult _create_column_ids(const FieldDescriptor* field_desc,
@@ -124,10 +126,12 @@ protected:
 
     std::unique_ptr<GenericReader> _create_equality_reader(
             const TFileRangeDesc& delete_desc) override {
-        return OrcReader::create_unique(this->get_profile(), this->get_state(),
-                                        this->get_scan_params(), delete_desc,
-                                        READ_DELETE_FILE_BATCH_SIZE, this->get_state()->timezone(),
-                                        this->get_io_ctx(), this->_meta_cache);
+        auto reader = OrcReader::create_unique(
+                this->get_profile(), this->get_state(), this->get_scan_params(), delete_desc,
+                READ_DELETE_FILE_BATCH_SIZE, this->get_state()->timezone(), this->get_io_ctx(),
+                this->_meta_cache);
+        reader->set_enable_file_meta_memory_cache(this->_enable_file_meta_memory_cache);
+        return reader;
     }
 
     static ColumnIdResult _create_column_ids(const orc::Type* orc_type,

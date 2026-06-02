@@ -433,7 +433,8 @@ Status OrcReader::_create_file_reader() {
                 .format = FileMetaCacheFormat::ORC,
                 .key = file_meta_cache_key,
                 .modification_time = _file_description.mtime,
-                .file_size = file_size};
+                .file_size = file_size,
+                .enable_memory_cache = _enable_file_meta_memory_cache};
         FileMetaCacheProfile file_meta_cache_profile {
                 .hit_cache = &_statistics.file_footer_hit_cache,
                 .hit_memory_cache = &_statistics.file_footer_hit_memory_cache,
@@ -453,7 +454,9 @@ Status OrcReader::_create_file_reader() {
             auto footer_ptr = std::make_unique<std::string>(std::move(footer_payload));
             options.setSerializedFileTail(*footer_ptr);
             RETURN_IF_ERROR(create_orc_reader());
-            _meta_cache->insert(file_meta_cache_key, footer_ptr, &_meta_cache_handle);
+            if (file_meta_cache_context.enable_memory_cache) {
+                _meta_cache->insert(file_meta_cache_key, footer_ptr, &_meta_cache_handle);
+            }
         } else {
             _statistics.file_footer_read_calls++;
             RETURN_IF_ERROR(create_orc_reader());
@@ -465,17 +468,20 @@ Status OrcReader::_create_file_reader() {
                             serialized_tail_size_estimate);
             // ORC uses the serialized tail as the L1 value too, so build it when either
             // L1 memory cache or L2 persistent cache can accept it.
-            if (should_insert_persistent_cache || _meta_cache->enabled()) {
+            if (should_insert_persistent_cache ||
+                (file_meta_cache_context.enable_memory_cache && _meta_cache->enabled())) {
                 auto footer_ptr = std::make_unique<std::string>(_reader->getSerializedFileTail());
-                const bool memory_inserted =
-                        should_insert_persistent_cache
-                                ? _meta_cache
-                                          ->insert(file_meta_cache_context, footer_ptr,
-                                                   &_meta_cache_handle, *footer_ptr,
-                                                   &file_meta_cache_profile)
-                                          .memory_inserted
-                                : _meta_cache->insert(file_meta_cache_key, footer_ptr,
-                                                      &_meta_cache_handle);
+                bool memory_inserted = false;
+                if (should_insert_persistent_cache) {
+                    memory_inserted = _meta_cache
+                                              ->insert(file_meta_cache_context, footer_ptr,
+                                                       &_meta_cache_handle, *footer_ptr,
+                                                       &file_meta_cache_profile)
+                                              .memory_inserted;
+                } else if (file_meta_cache_context.enable_memory_cache) {
+                    memory_inserted = _meta_cache->insert(file_meta_cache_key, footer_ptr,
+                                                          &_meta_cache_handle);
+                }
                 if (memory_inserted) {
                     DCHECK(_meta_cache_handle.valid());
                 }

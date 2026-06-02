@@ -1000,6 +1000,19 @@ std::shared_ptr<segment_v2::RowIdColumnIteratorV2> FileScanner::_create_row_id_c
                                                    BackendOptions::get_backend_id(), file_id);
 }
 
+bool FileScanner::_should_enable_file_meta_cache() const {
+    return _should_enable_file_meta_cache(_should_enable_file_meta_memory_cache());
+}
+
+bool FileScanner::_should_enable_file_meta_cache(bool enable_file_meta_memory_cache) const {
+    return enable_file_meta_memory_cache || config::enable_external_file_meta_disk_cache;
+}
+
+bool FileScanner::_should_enable_file_meta_memory_cache() const {
+    return ExecEnv::GetInstance()->file_meta_cache()->enabled() &&
+           _split_source->num_scan_ranges() < config::max_external_file_meta_cache_num / 3;
+}
+
 void FileScanner::_fill_base_init_context(ReaderInitContext* ctx) {
     ctx->column_descs = &_column_descs;
     ctx->col_name_to_block_idx = &_src_block_name_to_idx;
@@ -1160,25 +1173,29 @@ Status FileScanner::_get_next_reader() {
             break;
         }
         case TFileFormatType::FORMAT_PARQUET: {
-            auto file_meta_cache_ptr = _should_enable_file_meta_cache()
+            const bool enable_file_meta_memory_cache = _should_enable_file_meta_memory_cache();
+            auto file_meta_cache_ptr = _should_enable_file_meta_cache(enable_file_meta_memory_cache)
                                                ? ExecEnv::GetInstance()->file_meta_cache()
                                                : nullptr;
             if (push_down_predicates) {
                 RETURN_IF_ERROR(_process_late_arrival_conjuncts());
             }
-            RETURN_IF_ERROR(_init_parquet_reader(file_meta_cache_ptr));
+            RETURN_IF_ERROR(_init_parquet_reader(file_meta_cache_ptr, nullptr,
+                                                 enable_file_meta_memory_cache));
 
             need_to_get_parsed_schema = true;
             break;
         }
         case TFileFormatType::FORMAT_ORC: {
-            auto file_meta_cache_ptr = _should_enable_file_meta_cache()
+            const bool enable_file_meta_memory_cache = _should_enable_file_meta_memory_cache();
+            auto file_meta_cache_ptr = _should_enable_file_meta_cache(enable_file_meta_memory_cache)
                                                ? ExecEnv::GetInstance()->file_meta_cache()
                                                : nullptr;
             if (push_down_predicates) {
                 RETURN_IF_ERROR(_process_late_arrival_conjuncts());
             }
-            RETURN_IF_ERROR(_init_orc_reader(file_meta_cache_ptr));
+            RETURN_IF_ERROR(
+                    _init_orc_reader(file_meta_cache_ptr, nullptr, enable_file_meta_memory_cache));
 
             need_to_get_parsed_schema = true;
             break;
@@ -1354,7 +1371,8 @@ Status FileScanner::_get_next_reader() {
 }
 
 Status FileScanner::_init_parquet_reader(FileMetaCache* file_meta_cache_ptr,
-                                         std::unique_ptr<ParquetReader> parquet_reader) {
+                                         std::unique_ptr<ParquetReader> parquet_reader,
+                                         bool enable_file_meta_memory_cache) {
     const TFileRangeDesc& range = _current_range;
     Status init_status = Status::OK();
 
@@ -1378,6 +1396,7 @@ Status FileScanner::_init_parquet_reader(FileMetaCache* file_meta_cache_ptr,
         std::unique_ptr<IcebergParquetReader> iceberg_reader = IcebergParquetReader::create_unique(
                 _kv_cache, _profile, *_params, range, _state->batch_size(), &_state->timezone_obj(),
                 _io_ctx.get(), _state, file_meta_cache_ptr);
+        iceberg_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         iceberg_reader->set_create_row_id_column_iterator_func(
                 [this]() -> std::shared_ptr<segment_v2::RowIdColumnIteratorV2> {
                     return _create_row_id_column_iterator();
@@ -1390,6 +1409,7 @@ Status FileScanner::_init_parquet_reader(FileMetaCache* file_meta_cache_ptr,
         auto paimon_reader = PaimonParquetReader::create_unique(
                 _profile, *_params, range, _state->batch_size(), &_state->timezone_obj(), _kv_cache,
                 _io_ctx.get(), _state, file_meta_cache_ptr);
+        paimon_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         init_status = static_cast<GenericReader*>(paimon_reader.get())->init_reader(&pctx);
         _cur_reader = std::move(paimon_reader);
     } else if (range.__isset.table_format_params &&
@@ -1398,6 +1418,7 @@ Status FileScanner::_init_parquet_reader(FileMetaCache* file_meta_cache_ptr,
         auto hudi_reader = HudiParquetReader::create_unique(
                 _profile, *_params, range, _state->batch_size(), &_state->timezone_obj(),
                 _io_ctx.get(), _state, file_meta_cache_ptr);
+        hudi_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         init_status = static_cast<GenericReader*>(hudi_reader.get())->init_reader(&pctx);
         _cur_reader = std::move(hudi_reader);
     } else if (range.table_format_params.table_format_type == "hive") {
@@ -1405,6 +1426,7 @@ Status FileScanner::_init_parquet_reader(FileMetaCache* file_meta_cache_ptr,
                 _profile, *_params, range, _state->batch_size(), &_state->timezone_obj(),
                 _io_ctx.get(), _state, &_is_file_slot, file_meta_cache_ptr,
                 _state->query_options().enable_parquet_lazy_mat);
+        hive_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         hive_reader->set_create_row_id_column_iterator_func(
                 [this]() -> std::shared_ptr<segment_v2::RowIdColumnIteratorV2> {
                     return _create_row_id_column_iterator();
@@ -1418,6 +1440,7 @@ Status FileScanner::_init_parquet_reader(FileMetaCache* file_meta_cache_ptr,
                     _io_ctx.get(), _state, file_meta_cache_ptr,
                     _state->query_options().enable_parquet_lazy_mat);
         }
+        parquet_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         parquet_reader->set_create_row_id_column_iterator_func(
                 [this]() -> std::shared_ptr<segment_v2::RowIdColumnIteratorV2> {
                     return _create_row_id_column_iterator();
@@ -1431,6 +1454,7 @@ Status FileScanner::_init_parquet_reader(FileMetaCache* file_meta_cache_ptr,
                     _io_ctx.get(), _state, file_meta_cache_ptr,
                     _state->query_options().enable_parquet_lazy_mat);
         }
+        parquet_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         init_status = static_cast<GenericReader*>(parquet_reader.get())->init_reader(&pctx);
         _cur_reader = std::move(parquet_reader);
     }
@@ -1439,7 +1463,8 @@ Status FileScanner::_init_parquet_reader(FileMetaCache* file_meta_cache_ptr,
 }
 
 Status FileScanner::_init_orc_reader(FileMetaCache* file_meta_cache_ptr,
-                                     std::unique_ptr<OrcReader> orc_reader) {
+                                     std::unique_ptr<OrcReader> orc_reader,
+                                     bool enable_file_meta_memory_cache) {
     const TFileRangeDesc& range = _current_range;
     Status init_status = Status::OK();
 
@@ -1456,6 +1481,7 @@ Status FileScanner::_init_orc_reader(FileMetaCache* file_meta_cache_ptr,
         auto tran_orc_reader = TransactionalHiveReader::create_unique(
                 _profile, _state, *_params, range, _state->batch_size(), _state->timezone(),
                 _io_ctx.get(), file_meta_cache_ptr);
+        tran_orc_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         tran_orc_reader->set_create_row_id_column_iterator_func(
                 [this]() -> std::shared_ptr<segment_v2::RowIdColumnIteratorV2> {
                     return _create_row_id_column_iterator();
@@ -1469,6 +1495,7 @@ Status FileScanner::_init_orc_reader(FileMetaCache* file_meta_cache_ptr,
         std::unique_ptr<IcebergOrcReader> iceberg_reader = IcebergOrcReader::create_unique(
                 _kv_cache, _profile, _state, *_params, range, _state->batch_size(),
                 _state->timezone(), _io_ctx.get(), file_meta_cache_ptr);
+        iceberg_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         iceberg_reader->set_create_row_id_column_iterator_func(
                 [this]() -> std::shared_ptr<segment_v2::RowIdColumnIteratorV2> {
                     return _create_row_id_column_iterator();
@@ -1482,6 +1509,7 @@ Status FileScanner::_init_orc_reader(FileMetaCache* file_meta_cache_ptr,
         auto paimon_reader = PaimonOrcReader::create_unique(
                 _profile, _state, *_params, range, _state->batch_size(), _state->timezone(),
                 _kv_cache, _io_ctx.get(), file_meta_cache_ptr);
+        paimon_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         init_status = static_cast<GenericReader*>(paimon_reader.get())->init_reader(&octx);
 
         _cur_reader = std::move(paimon_reader);
@@ -1491,6 +1519,7 @@ Status FileScanner::_init_orc_reader(FileMetaCache* file_meta_cache_ptr,
         auto hudi_reader = HudiOrcReader::create_unique(_profile, _state, *_params, range,
                                                         _state->batch_size(), _state->timezone(),
                                                         _io_ctx.get(), file_meta_cache_ptr);
+        hudi_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         init_status = static_cast<GenericReader*>(hudi_reader.get())->init_reader(&octx);
 
         _cur_reader = std::move(hudi_reader);
@@ -1500,6 +1529,7 @@ Status FileScanner::_init_orc_reader(FileMetaCache* file_meta_cache_ptr,
                 _profile, _state, *_params, range, _state->batch_size(), _state->timezone(),
                 _io_ctx.get(), &_is_file_slot, file_meta_cache_ptr,
                 _state->query_options().enable_orc_lazy_mat);
+        hive_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         hive_reader->set_create_row_id_column_iterator_func(
                 [this]() -> std::shared_ptr<segment_v2::RowIdColumnIteratorV2> {
                     return _create_row_id_column_iterator();
@@ -1515,6 +1545,7 @@ Status FileScanner::_init_orc_reader(FileMetaCache* file_meta_cache_ptr,
                                                   _io_ctx.get(), file_meta_cache_ptr,
                                                   _state->query_options().enable_orc_lazy_mat);
         }
+        orc_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         orc_reader->set_create_row_id_column_iterator_func(
                 [this]() -> std::shared_ptr<segment_v2::RowIdColumnIteratorV2> {
                     return _create_row_id_column_iterator();
@@ -1528,6 +1559,7 @@ Status FileScanner::_init_orc_reader(FileMetaCache* file_meta_cache_ptr,
                                                   _io_ctx.get(), file_meta_cache_ptr,
                                                   _state->query_options().enable_orc_lazy_mat);
         }
+        orc_reader->set_enable_file_meta_memory_cache(enable_file_meta_memory_cache);
         init_status = static_cast<GenericReader*>(orc_reader.get())->init_reader(&octx);
         _cur_reader = std::move(orc_reader);
     }
@@ -1620,6 +1652,7 @@ Status FileScanner::read_lines_from_range(const TFileRangeDesc& range,
     auto file_meta_cache_ptr = external_info.enable_file_meta_cache
                                        ? ExecEnv::GetInstance()->file_meta_cache()
                                        : nullptr;
+    const bool enable_file_meta_memory_cache = _should_enable_file_meta_memory_cache();
 
     RETURN_IF_ERROR(scope_timer_run(
             [&]() -> Status {
@@ -1628,8 +1661,9 @@ Status FileScanner::read_lines_from_range(const TFileRangeDesc& range,
                     std::unique_ptr<ParquetReader> parquet_reader = ParquetReader::create_unique(
                             _profile, *_params, range, 1, &_state->timezone_obj(), _io_ctx.get(),
                             _state, file_meta_cache_ptr, false);
-                    RETURN_IF_ERROR(
-                            _init_parquet_reader(file_meta_cache_ptr, std::move(parquet_reader)));
+                    RETURN_IF_ERROR(_init_parquet_reader(file_meta_cache_ptr,
+                                                         std::move(parquet_reader),
+                                                         enable_file_meta_memory_cache));
                     // _init_parquet_reader may create a new table-format specific reader
                     // (e.g., HiveParquetReader) that replaces the original parquet_reader.
                     // We need to re-apply read_by_rows to the actual _cur_reader.
@@ -1640,7 +1674,8 @@ Status FileScanner::read_lines_from_range(const TFileRangeDesc& range,
                     std::unique_ptr<OrcReader> orc_reader = OrcReader::create_unique(
                             _profile, _state, *_params, range, 1, _state->timezone(), _io_ctx.get(),
                             file_meta_cache_ptr, false);
-                    RETURN_IF_ERROR(_init_orc_reader(file_meta_cache_ptr, std::move(orc_reader)));
+                    RETURN_IF_ERROR(_init_orc_reader(file_meta_cache_ptr, std::move(orc_reader),
+                                                     enable_file_meta_memory_cache));
                     // Same as above: re-apply read_by_rows to the actual _cur_reader.
                     RETURN_IF_ERROR(_cur_reader->read_by_rows(row_ids));
                     break;

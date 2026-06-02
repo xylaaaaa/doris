@@ -283,9 +283,11 @@ private:
     Status _generate_truncate_columns(bool need_to_get_parsed_schema);
     Status _set_fill_or_truncate_columns(bool need_to_get_parsed_schema);
     Status _init_orc_reader(FileMetaCache* file_meta_cache_ptr,
-                            std::unique_ptr<OrcReader> orc_reader = nullptr);
+                            std::unique_ptr<OrcReader> orc_reader = nullptr,
+                            bool enable_file_meta_memory_cache = true);
     Status _init_parquet_reader(FileMetaCache* file_meta_cache_ptr,
-                                std::unique_ptr<ParquetReader> parquet_reader = nullptr);
+                                std::unique_ptr<ParquetReader> parquet_reader = nullptr,
+                                bool enable_file_meta_memory_cache = true);
     std::shared_ptr<segment_v2::RowIdColumnIteratorV2> _create_row_id_column_iterator();
 
     TFileFormatType::type _get_current_format_type() {
@@ -326,6 +328,8 @@ private:
                                        : _local_state->get_push_down_agg_type();
     }
 
-    bool _should_enable_file_meta_cache() { return config::enable_external_file_meta_disk_cache; }
+    bool _should_enable_file_meta_cache() const;
+    bool _should_enable_file_meta_cache(bool enable_file_meta_memory_cache) const;
+    bool _should_enable_file_meta_memory_cache() const;
 };
 } // namespace doris

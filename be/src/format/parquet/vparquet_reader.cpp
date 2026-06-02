@@ -365,7 +365,8 @@ Status ParquetReader::_open_file() {
                     .format = FileMetaCacheFormat::PARQUET,
                     .key = file_meta_cache_key,
                     .modification_time = _file_description.mtime,
-                    .file_size = file_size};
+                    .file_size = file_size,
+                    .enable_memory_cache = _enable_file_meta_memory_cache};
             FileMetaCacheProfile file_meta_cache_profile {
                     .hit_cache = &_reader_statistics.file_footer_hit_cache,
                     .hit_memory_cache = &_reader_statistics.file_footer_hit_memory_cache,
@@ -389,7 +390,8 @@ Status ParquetReader::_open_file() {
                 _file_metadata_ptr = std::make_unique<FileMetaData>(t_metadata, metadata_size);
                 RETURN_IF_ERROR(_file_metadata_ptr->init_schema(enable_mapping_varbinary,
                                                                 enable_mapping_timestamp_tz));
-                if (_meta_cache->insert(file_meta_cache_key, _file_metadata_ptr,
+                if (file_meta_cache_context.enable_memory_cache &&
+                    _meta_cache->insert(file_meta_cache_key, _file_metadata_ptr,
                                         &_meta_cache_handle)) {
                     _file_metadata = _meta_cache_handle.data<FileMetaData>();
                 } else {
@@ -407,15 +409,17 @@ Status ParquetReader::_open_file() {
                     ThriftSerializer serializer(true, static_cast<int>(meta_size));
                     RETURN_IF_ERROR(serializer.serialize(&thrift_metadata, &footer_payload));
                 }
-                const bool memory_inserted =
-                        should_insert_persistent_cache
-                                ? _meta_cache
-                                          ->insert(file_meta_cache_context, _file_metadata_ptr,
-                                                   &_meta_cache_handle, footer_payload,
-                                                   &file_meta_cache_profile)
-                                          .memory_inserted
-                                : _meta_cache->insert(file_meta_cache_key, _file_metadata_ptr,
-                                                      &_meta_cache_handle);
+                bool memory_inserted = false;
+                if (should_insert_persistent_cache) {
+                    memory_inserted = _meta_cache
+                                              ->insert(file_meta_cache_context, _file_metadata_ptr,
+                                                       &_meta_cache_handle, footer_payload,
+                                                       &file_meta_cache_profile)
+                                              .memory_inserted;
+                } else if (file_meta_cache_context.enable_memory_cache) {
+                    memory_inserted = _meta_cache->insert(file_meta_cache_key, _file_metadata_ptr,
+                                                          &_meta_cache_handle);
+                }
                 if (memory_inserted) {
                     _file_metadata = _meta_cache_handle.data<FileMetaData>();
                 } else {

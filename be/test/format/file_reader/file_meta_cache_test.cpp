@@ -223,6 +223,10 @@ TEST(FileMetaCacheTest, ExternalFileMetaDiskCacheSwitchIsStartupOnly) {
     EXPECT_FALSE(config::enable_external_file_meta_disk_cache);
 }
 
+TEST(FileMetaCacheTest, ExternalFileMetaDiskCacheIsEnabledByDefault) {
+    EXPECT_TRUE(config::enable_external_file_meta_disk_cache);
+}
+
 TEST(FileMetaCacheTest, LookupUpdatesMemoryHitProfile) {
     FileMetaCache cache(config::max_external_file_meta_cache_num);
     const std::string meta_key = FileMetaCache::get_key("s3://bucket/memory.parquet", 123, 456);
@@ -261,6 +265,64 @@ TEST(FileMetaCacheTest, LookupUpdatesMemoryHitProfile) {
     EXPECT_EQ(write_disk_cache, 0);
     EXPECT_EQ(read_disk_cache_time, 0);
     EXPECT_EQ(write_disk_cache_time, 0);
+}
+
+TEST_F(FileMetaCacheDiskTest, DiskCacheWorksWhenMemoryCacheAdmissionIsDisabled) {
+    std::filesystem::path cache_dir =
+            std::filesystem::current_path() / "file_meta_disk_cache_without_memory_test";
+    if (std::filesystem::exists(cache_dir)) {
+        std::filesystem::remove_all(cache_dir);
+    }
+    std::filesystem::create_directories(cache_dir);
+    ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
+    const bool old_enable_external_file_meta_disk_cache =
+            config::enable_external_file_meta_disk_cache;
+    Defer defer {[&] {
+        config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
+        std::filesystem::remove_all(cache_dir);
+    }};
+    config::enable_external_file_meta_disk_cache = true;
+
+    io::FileCacheSettings settings;
+    settings.capacity = 1024 * 1024;
+    settings.max_file_block_size = 16;
+    settings.index_queue_size = 1024 * 1024;
+    settings.index_queue_elements = 1024;
+    io::BlockFileCache block_cache(cache_dir.string(), settings);
+    ASSERT_TRUE(block_cache.initialize().ok());
+    for (int i = 0; i < 5000; ++i) {
+        if (block_cache.get_async_open_success()) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(block_cache.get_async_open_success());
+
+    FileMetaCache cache(config::max_external_file_meta_cache_num, &block_cache);
+    const std::string meta_key =
+            FileMetaCache::get_key("s3://bucket/without-memory.parquet", 123, 456);
+    const FileMetaCacheContext meta_context {.format = FileMetaCacheFormat::PARQUET,
+                                             .key = meta_key,
+                                             .modification_time = 123,
+                                             .file_size = 456,
+                                             .enable_memory_cache = false};
+    const std::string payload = "serialized footer payload";
+    auto cached_payload = std::make_unique<std::string>(payload);
+    ObjLRUCache::CacheHandle cache_handle;
+
+    const auto insert_result = cache.insert(meta_context, cached_payload, &cache_handle, payload);
+    EXPECT_TRUE(insert_result.persisted_inserted);
+    EXPECT_FALSE(insert_result.memory_inserted);
+
+    ObjLRUCache::CacheHandle memory_lookup_handle;
+    EXPECT_FALSE(cache.lookup(meta_key, &memory_lookup_handle));
+
+    std::string output;
+    ObjLRUCache::CacheHandle lookup_handle;
+    const auto lookup_result = cache.lookup(meta_context, &lookup_handle, &output);
+    EXPECT_EQ(lookup_result.state, FileMetaCacheLookupState::PERSISTED_HIT);
+    EXPECT_EQ(output, payload);
+    EXPECT_FALSE(lookup_handle.valid());
 }
 
 TEST_F(FileMetaCacheDiskTest, ReadReturnsPayloadWrittenThroughIndexQueue) {

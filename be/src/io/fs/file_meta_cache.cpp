@@ -218,7 +218,7 @@ FileMetaCacheLookupResult FileMetaCache::lookup(const FileMetaCacheContext& cont
                                                 FileMetaCacheProfile* profile) {
     DCHECK(handle != nullptr);
     DCHECK(serialized_meta != nullptr);
-    if (lookup(context.key, handle)) {
+    if (context.enable_memory_cache && lookup(context.key, handle)) {
         serialized_meta->clear();
         if (profile != nullptr) {
             update_profile_counter(profile->hit_cache);
