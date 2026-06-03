@@ -469,7 +469,18 @@ DEFINE_mInt32(ordered_data_compaction_min_segment_size, "10485760");
 // This config can be set to limit thread number in compaction thread pool.
 DEFINE_mInt32(max_base_compaction_threads, "4");
 DEFINE_mInt32(max_cumu_compaction_threads, "-1");
-DEFINE_mInt32(max_single_replica_compaction_threads, "-1");
+
+// Binlog Compaction
+DEFINE_mInt64(binlog_compaction_wait_timesec_after_visible, "600");
+DEFINE_mInt64(binlog_compaction_goal_size_mbytes, "128");
+DEFINE_mInt32(binlog_compaction_task_num_per_disk, "4");
+DEFINE_mInt32(binlog_compaction_file_count_threshold, "100");
+DEFINE_mInt32(binlog_level_compaction_max_deltas, "2000");
+DEFINE_mInt64(binlog_compaction_time_threshold_seconds, "3600");
+DEFINE_mInt32(binlog_compaction_permits_percent, "30");
+DEFINE_Validator(binlog_compaction_permits_percent,
+                 [](const int config) -> bool { return config >= 1 && config <= 80; });
+DEFINE_mInt32(max_binlog_compaction_threads, "-1");
 
 DEFINE_Bool(enable_base_compaction_idle_sched, "true");
 DEFINE_mInt64(base_compaction_min_rowset_num, "5");
@@ -517,9 +528,6 @@ DEFINE_mInt64(total_permits_for_compaction_score, "1000000");
 
 // sleep interval in ms after generated compaction tasks
 DEFINE_mInt32(generate_compaction_tasks_interval_ms, "100");
-
-// sleep interval in second after update replica infos
-DEFINE_mInt32(update_replica_infos_interval_seconds, "60");
 
 // Compaction task number per disk.
 // Must be greater than 2, because Base compaction and Cumulative compaction have at least one thread each.
@@ -1193,7 +1201,7 @@ DEFINE_Bool(enable_file_cache, "false");
 // Both will use the directory "memory" on the disk instead of the real RAM.
 DEFINE_String(file_cache_path, "[{\"path\":\"${DORIS_HOME}/file_cache\"}]");
 DEFINE_Int64(file_cache_each_block_size, "1048576"); // 1MB
-DEFINE_Bool(enable_external_file_meta_disk_cache, "false");
+DEFINE_Bool(enable_external_file_meta_disk_cache, "true");
 DEFINE_mInt64(external_file_meta_disk_cache_max_entry_bytes, "67108864"); // 64MB
 
 DEFINE_Bool(clear_file_cache, "false");
@@ -1207,7 +1215,7 @@ DEFINE_mInt32(file_cache_evict_in_advance_interval_ms, "1000");
 DEFINE_mInt64(file_cache_evict_in_advance_batch_bytes, "31457280"); // 30MB
 DEFINE_mInt64(file_cache_evict_in_advance_recycle_keys_num_threshold, "1000");
 
-DEFINE_mBool(enable_read_cache_file_directly, "false");
+DEFINE_mBool(enable_read_cache_file_directly, "true");
 DEFINE_mBool(file_cache_enable_evict_from_other_queue_by_size, "true");
 // If true, evict the ttl cache using LRU when full.
 // Otherwise, only expiration can evict ttl and new data won't add to cache when full.
@@ -1237,6 +1245,7 @@ DEFINE_mInt64(file_cache_remove_block_qps_limit, "1000");
 DEFINE_mInt64(file_cache_background_gc_interval_ms, "100");
 DEFINE_mInt64(file_cache_background_block_lru_update_interval_ms, "5000");
 DEFINE_mInt64(file_cache_background_block_lru_update_qps_limit, "1000");
+DEFINE_mBool(enable_file_cache_async_touch_on_get_or_set, "false");
 DEFINE_mBool(enable_reader_dryrun_when_download_file_cache, "true");
 DEFINE_mInt64(file_cache_background_monitor_interval_ms, "5000");
 DEFINE_mInt64(file_cache_background_ttl_gc_interval_ms, "180000");
@@ -1589,8 +1598,6 @@ DEFINE_Validator(s3_client_http_scheme, [](const std::string& config) -> bool {
 });
 
 DEFINE_mBool(ignore_schema_change_check, "false");
-
-DEFINE_mInt64(string_overflow_size, "4294967295"); // std::numic_limits<uint32_t>::max()
 
 // The min thread num for BufferedReaderPrefetchThreadPool
 DEFINE_Int64(num_buffered_reader_prefetch_thread_pool_min_thread, "16");

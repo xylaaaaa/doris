@@ -363,6 +363,8 @@ public class DorisFE {
                 .desc("Specify the recovery truncate journal id, and journals greater than this id will be removed")
                 .build());
         options.addOption("c", "cluster_snapshot", true, "Specify the cluster snapshot json file");
+        options.addOption(Option.builder().longOpt(FeConstants.DROP_BACKENDS_KEY)
+                .desc("When this FE becomes MASTER, drop all backends from cluster metadata (destructive)").build());
 
         CommandLine cmd = null;
         try {
@@ -406,6 +408,9 @@ public class DorisFE {
                 System.exit(-1);
             }
             System.setProperty(FeConstants.RECOVERY_JOURNAL_ID_KEY, recoveryJournalId.trim());
+        }
+        if (cmd.hasOption(FeConstants.DROP_BACKENDS_KEY)) {
+            System.setProperty(FeConstants.DROP_BACKENDS_KEY, "true");
         }
         if (cmd.hasOption('b') || cmd.hasOption("bdb")) {
             if (cmd.hasOption('l') || cmd.hasOption("listdb")) {
@@ -634,8 +639,8 @@ public class DorisFE {
             return;
         }
 
-        Config.max_hive_partition_cache_num = Util.getRandomLong(0, 10, 10000);
-        Config.max_hive_partition_table_cache_num = Util.getRandomLong(0, 10, 10000);
+        Config.max_hive_partition_cache_num = Util.getRandomLong(0, 10, 10000, 100000);
+        Config.max_hive_partition_table_cache_num = Util.getRandomLong(0, 10, 1000, 10000);
         Config.external_cache_expire_time_seconds_after_access = Util.getRandomLong(0, 1, 10, 86400);
         Config.external_cache_refresh_time_minutes = Util.getRandomLong(1, 10);
         Config.max_external_cache_loader_thread_pool_size = Util.getRandomInt(1, 10, 64);

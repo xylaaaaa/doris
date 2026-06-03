@@ -539,7 +539,16 @@ DECLARE_mInt32(ordered_data_compaction_min_segment_size);
 // This config can be set to limit thread number in compaction thread pool.
 DECLARE_mInt32(max_base_compaction_threads);
 DECLARE_mInt32(max_cumu_compaction_threads);
-DECLARE_mInt32(max_single_replica_compaction_threads);
+
+// Binlog Compaction
+DECLARE_mInt64(binlog_compaction_wait_timesec_after_visible);
+DECLARE_mInt64(binlog_compaction_goal_size_mbytes);
+DECLARE_mInt32(binlog_compaction_task_num_per_disk);
+DECLARE_mInt32(binlog_compaction_file_count_threshold);
+DECLARE_mInt32(binlog_level_compaction_max_deltas);
+DECLARE_mInt64(binlog_compaction_time_threshold_seconds);
+DECLARE_mInt32(binlog_compaction_permits_percent);
+DECLARE_mInt32(max_binlog_compaction_threads);
 
 DECLARE_Bool(enable_base_compaction_idle_sched);
 DECLARE_mInt64(base_compaction_min_rowset_num);
@@ -586,8 +595,6 @@ DECLARE_mInt64(total_permits_for_compaction_score);
 
 // sleep interval in ms after generated compaction tasks
 DECLARE_mInt32(generate_compaction_tasks_interval_ms);
-// sleep interval in second after update replica infos
-DECLARE_mInt32(update_replica_infos_interval_seconds);
 
 // Compaction task number per disk.
 // Must be greater than 2, because Base compaction and Cumulative compaction have at least one thread each.
@@ -1278,6 +1285,7 @@ DECLARE_mInt64(file_cache_remove_block_qps_limit);
 DECLARE_mInt64(file_cache_background_gc_interval_ms);
 DECLARE_mInt64(file_cache_background_block_lru_update_interval_ms);
 DECLARE_mInt64(file_cache_background_block_lru_update_qps_limit);
+DECLARE_mBool(enable_file_cache_async_touch_on_get_or_set);
 DECLARE_mBool(enable_reader_dryrun_when_download_file_cache);
 DECLARE_mInt64(file_cache_background_monitor_interval_ms);
 DECLARE_mInt64(file_cache_background_ttl_gc_interval_ms);
@@ -1648,9 +1656,6 @@ DECLARE_mInt32(thrift_client_open_num_tries);
 DECLARE_String(s3_client_http_scheme);
 
 DECLARE_mBool(ignore_schema_change_check);
-
-/** Only use in fuzzy test **/
-DECLARE_mInt64(string_overflow_size);
 
 // The min thread num for BufferedReaderPrefetchThreadPool
 DECLARE_Int64(num_buffered_reader_prefetch_thread_pool_min_thread);

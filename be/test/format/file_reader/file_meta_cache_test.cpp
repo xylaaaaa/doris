@@ -223,8 +223,8 @@ TEST(FileMetaCacheTest, ExternalFileMetaDiskCacheSwitchIsStartupOnly) {
     EXPECT_FALSE(config::enable_external_file_meta_disk_cache);
 }
 
-TEST(FileMetaCacheTest, ExternalFileMetaDiskCacheIsDisabledByDefault) {
-    EXPECT_FALSE(config::enable_external_file_meta_disk_cache);
+TEST(FileMetaCacheTest, ExternalFileMetaDiskCacheIsEnabledByDefault) {
+    EXPECT_TRUE(config::enable_external_file_meta_disk_cache);
 }
 
 TEST(FileMetaCacheTest, LookupUpdatesMemoryHitProfile) {
