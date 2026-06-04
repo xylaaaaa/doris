@@ -162,6 +162,30 @@ TEST(FileMetaCacheTest, KeyGenerationFromFileReader) {
     std::string expected_key2 = FileMetaCache::get_key(file_name, 0, 300);
     EXPECT_EQ(key2, expected_key2);
 }
+
+TEST(FileMetaCacheTest, KeyGenerationIncludesFileSystemName) {
+    const std::string file_name = "/warehouse/default/table/data.orc";
+    constexpr int64_t mtime = 123456789;
+    constexpr int64_t file_size = 100;
+
+    io::FileDescription desc1;
+    desc1.mtime = mtime;
+    desc1.file_size = file_size;
+    desc1.fs_name = "hdfs://nameservice1";
+
+    io::FileDescription desc2;
+    desc2.mtime = mtime;
+    desc2.file_size = file_size;
+    desc2.fs_name = "hdfs://nameservice2";
+
+    auto reader = std::make_shared<MockFileReader>(file_name, file_size);
+
+    std::string key1 = FileMetaCache::get_key(reader, desc1);
+    std::string key2 = FileMetaCache::get_key(reader, desc2);
+
+    EXPECT_NE(key1, key2);
+}
+
 TEST(FileMetaCacheTest, KeyContentVerification) {
     std::string file_name = "/path/to/file";
     int64_t mtime = 0x0102030405060708;

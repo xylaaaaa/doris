@@ -811,6 +811,30 @@ TEST(TEST_VEXPR, LITERALTEST) {
     config::allow_zero_date = false;
 }
 
+TEST(TEST_VEXPR, VARBINARY_LITERAL_FROM_STRING_VIEW) {
+    using namespace doris;
+    const std::string binary_value("binary\0value-long-enough",
+                                   sizeof("binary\0value-long-enough") - 1);
+    const StringView varbinary_value(binary_value);
+    const Field field = Field::create_field<TYPE_VARBINARY>(varbinary_value);
+
+    const TExprNode node = create_texpr_node_from(field, TYPE_VARBINARY, 0, 0);
+    ASSERT_EQ(node.node_type, TExprNodeType::VARBINARY_LITERAL);
+    ASSERT_TRUE(node.__isset.varbinary_literal);
+    EXPECT_EQ(binary_value, node.varbinary_literal.value);
+
+    const auto data_type = DataTypeFactory::instance().create_data_type(TYPE_VARBINARY, false);
+    const Field round_trip_field = data_type->get_field(node);
+    const auto& round_trip_value = round_trip_field.get<TYPE_VARBINARY>();
+    EXPECT_EQ(binary_value.size(), round_trip_value.size());
+    EXPECT_EQ(0, memcmp(binary_value.data(), round_trip_value.data(), binary_value.size()));
+
+    const TExprNode direct_node = create_texpr_node_from(&varbinary_value, TYPE_VARBINARY, 0, 0);
+    ASSERT_EQ(direct_node.node_type, TExprNodeType::VARBINARY_LITERAL);
+    ASSERT_TRUE(direct_node.__isset.varbinary_literal);
+    EXPECT_EQ(binary_value, direct_node.varbinary_literal.value);
+}
+
 namespace doris {
 
 // A concrete VExpr that returns a column provided at construction time.
