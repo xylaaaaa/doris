@@ -39,7 +39,6 @@
 #include "core/data_type/data_type_ipv6.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/extended_types.h"
-#include "core/string_view.h"
 #include "core/types.h"
 #include "core/value/large_int_value.h"
 #include "core/value/timestamptz_value.h"
@@ -628,10 +627,10 @@ Status create_texpr_literal_node(const void* data, TExprNode* node, int precisio
         (*node).__set_node_type(TExprNodeType::TIMEV2_LITERAL);
         (*node).__set_type(create_type_desc(PrimitiveType::TYPE_TIMEV2, precision, scale));
     } else if constexpr (T == TYPE_VARBINARY) {
-        const auto* origin_value = reinterpret_cast<const StringView*>(data);
+        const auto* origin_value = reinterpret_cast<const std::string*>(data);
         (*node).__set_node_type(TExprNodeType::VARBINARY_LITERAL);
         TVarBinaryLiteral varbinary_literal;
-        varbinary_literal.__set_value(std::string(origin_value->data(), origin_value->size()));
+        varbinary_literal.__set_value(*origin_value);
         (*node).__set_varbinary_literal(varbinary_literal);
         (*node).__set_type(create_type_desc(PrimitiveType::TYPE_VARBINARY));
     } else {

@@ -180,10 +180,6 @@ TExprNode create_texpr_node_from(const void* data, const PrimitiveType& type, in
         THROW_IF_ERROR(create_texpr_literal_node<TYPE_TIMESTAMPTZ>(data, &node, precision, scale));
         break;
     }
-    case TYPE_VARBINARY: {
-        THROW_IF_ERROR(create_texpr_literal_node<TYPE_VARBINARY>(data, &node));
-        break;
-    }
     default:
         throw Exception(ErrorCode::INTERNAL_ERROR, "runtime filter meet invalid type {}",
                         int(type));
