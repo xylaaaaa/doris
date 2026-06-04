@@ -26,8 +26,10 @@
 #include "gtest/gtest.h"
 #include "io/cache/block_file_cache.h"
 #include "io/cache/fs_file_cache_storage.h"
+#include "io/file_factory.h"
 #include "io/fs/file_reader.h"
 #include "runtime/exec_env.h"
+#include "util/coding.h"
 #include "util/defer_op.h"
 
 namespace doris {
@@ -79,14 +81,10 @@ public:
 
 class MockFileReader : public io::FileReader {
 public:
-    MockFileReader(const std::string& file_name, size_t size)
-            : _file_name(file_name), _size(size) {}
+    MockFileReader(const std::string& file_name, size_t size) : _path(file_name), _size(size) {}
     ~MockFileReader() override = default;
 
-    const io::Path& path() const override {
-        static io::Path p(_file_name);
-        return p;
-    }
+    const io::Path& path() const override { return _path; }
 
     size_t size() const override { return _size; }
 
@@ -107,7 +105,7 @@ protected:
     }
 
 private:
-    std::string _file_name;
+    io::Path _path;
     size_t _size;
     bool _closed {false};
 };
@@ -126,7 +124,12 @@ TEST(FileMetaCacheTest, KeyGenerationFromParams) {
     std::string key3 = FileMetaCache::get_key(file_name, mtime + 1, file_size);
     EXPECT_NE(key1, key3);
 
-    // mtime == 0, use file_size
+    // Different file size should produce different key even when mtime is set.
+    std::string key_with_different_file_size =
+            FileMetaCache::get_key(file_name, mtime, file_size + 1);
+    EXPECT_NE(key1, key_with_different_file_size);
+
+    // mtime == 0 still includes file_size
     std::string key4 = FileMetaCache::get_key(file_name, 0, file_size);
     std::string key5 = FileMetaCache::get_key(file_name, 0, file_size);
     EXPECT_EQ(key4, key5);
@@ -193,20 +196,58 @@ TEST(FileMetaCacheTest, KeyContentVerification) {
 
     std::string key_with_mtime = FileMetaCache::get_key(file_name, mtime, file_size);
 
-    ASSERT_EQ(key_with_mtime.size(), file_name.size() + sizeof(int64_t));
+    ASSERT_EQ(key_with_mtime.size(), sizeof(uint64_t) + file_name.size() + sizeof(int64_t) * 2);
 
-    EXPECT_EQ(memcmp(key_with_mtime.data(), file_name.data(), file_name.size()), 0);
+    const auto* key_with_mtime_ptr = reinterpret_cast<const uint8_t*>(key_with_mtime.data());
+    EXPECT_EQ(decode_fixed64_le(key_with_mtime_ptr), file_name.size());
+    key_with_mtime_ptr += sizeof(uint64_t);
 
-    int64_t extracted_mtime = 0;
-    memcpy(&extracted_mtime, key_with_mtime.data() + file_name.size(), sizeof(int64_t));
-    EXPECT_EQ(extracted_mtime, mtime);
+    EXPECT_EQ(memcmp(key_with_mtime_ptr, file_name.data(), file_name.size()), 0);
+    key_with_mtime_ptr += file_name.size();
+
+    EXPECT_EQ(static_cast<int64_t>(decode_fixed64_le(key_with_mtime_ptr)), mtime);
+    key_with_mtime_ptr += sizeof(uint64_t);
+    EXPECT_EQ(static_cast<int64_t>(decode_fixed64_le(key_with_mtime_ptr)), file_size);
 
     std::string key_with_filesize = FileMetaCache::get_key(file_name, 0, file_size);
-    ASSERT_EQ(key_with_filesize.size(), file_name.size() + sizeof(int64_t));
-    EXPECT_EQ(memcmp(key_with_filesize.data(), file_name.data(), file_name.size()), 0);
-    int64_t extracted_filesize = 0;
-    memcpy(&extracted_filesize, key_with_filesize.data() + file_name.size(), sizeof(int64_t));
-    EXPECT_EQ(extracted_filesize, file_size);
+    ASSERT_EQ(key_with_filesize.size(), sizeof(uint64_t) + file_name.size() + sizeof(int64_t) * 2);
+    const auto* key_with_filesize_ptr = reinterpret_cast<const uint8_t*>(key_with_filesize.data());
+    EXPECT_EQ(decode_fixed64_le(key_with_filesize_ptr), file_name.size());
+    key_with_filesize_ptr += sizeof(uint64_t) + file_name.size();
+    EXPECT_EQ(static_cast<int64_t>(decode_fixed64_le(key_with_filesize_ptr)), 0);
+    key_with_filesize_ptr += sizeof(uint64_t);
+    EXPECT_EQ(static_cast<int64_t>(decode_fixed64_le(key_with_filesize_ptr)), file_size);
+}
+
+TEST(FileMetaCacheTest, HdfsFileCacheIdentityUsesEffectiveFileSystemName) {
+    io::FileSystemProperties properties;
+    properties.system_type = TFileType::FILE_HDFS;
+    properties.hdfs_params.__set_fs_name("hdfs://nameservice1");
+
+    io::FileDescription default_fs_file;
+    default_fs_file.path = "/warehouse/default/table/data.orc";
+    EXPECT_EQ(FileFactory::get_file_cache_identity(properties, default_fs_file),
+              "hdfs://nameservice1");
+
+    io::FileDescription uri_file;
+    uri_file.path = "hdfs://nameservice2/warehouse/default/table/data.orc";
+    EXPECT_EQ(FileFactory::get_file_cache_identity(properties, uri_file), "hdfs://nameservice2");
+}
+
+TEST(FileMetaCacheTest, S3FileCacheIdentityIncludesEndpoint) {
+    io::FileDescription file;
+    file.path = "s3://bucket/table/data.parquet";
+
+    io::FileSystemProperties properties1;
+    properties1.system_type = TFileType::FILE_S3;
+    properties1.properties["AWS_ENDPOINT"] = "http://minio-a:9000";
+    properties1.properties["AWS_REGION"] = "us-east-1";
+
+    io::FileSystemProperties properties2 = properties1;
+    properties2.properties["AWS_ENDPOINT"] = "http://minio-b:9000";
+
+    EXPECT_NE(FileFactory::get_file_cache_identity(properties1, file),
+              FileFactory::get_file_cache_identity(properties2, file));
 }
 
 TEST(FileMetaCacheTest, InsertAndLookupWithIntValue) {

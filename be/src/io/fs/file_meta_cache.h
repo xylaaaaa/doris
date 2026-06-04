@@ -83,7 +83,7 @@ public:
 
     ObjLRUCache& cache() { return _cache; }
 
-    static std::string get_key(const std::string file_name, int64_t modification_time,
+    static std::string get_key(const std::string& file_name, int64_t modification_time,
                                int64_t file_size);
 
     static std::string get_key(io::FileReaderSPtr file_reader,

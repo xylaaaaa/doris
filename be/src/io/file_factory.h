@@ -91,6 +91,11 @@ public:
     static Result<io::FileSystemSPtr> create_fs(const io::FSPropertiesRef& fs_properties,
                                                 const io::FileDescription& file_description);
 
+    static std::string get_fs_name(const io::FileDescription& file_description);
+
+    static std::string get_file_cache_identity(const io::FileSystemProperties& system_properties,
+                                               const io::FileDescription& file_description);
+
     /// Create FileWriter without FS
     static Result<io::FileWriterPtr> create_file_writer(
             TFileType::type type, ExecEnv* env,
@@ -127,8 +132,6 @@ public:
     }
 
 private:
-    static std::string _get_fs_name(const io::FileDescription& file_description);
-
     /// Create FileReader without FS
     static Result<io::FileReaderSPtr> _create_file_reader_internal(
             const io::FileSystemProperties& system_properties,

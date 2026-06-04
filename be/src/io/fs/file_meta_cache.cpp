@@ -169,17 +169,14 @@ Status read_cached_file_cache(io::BlockFileCache* cache, const io::UInt128Wrappe
 FileMetaCache::FileMetaCache(int64_t capacity, io::BlockFileCache* block_file_cache)
         : _cache(capacity), _block_file_cache(block_file_cache) {}
 
-std::string FileMetaCache::get_key(const std::string file_name, int64_t modification_time,
+std::string FileMetaCache::get_key(const std::string& file_name, int64_t modification_time,
                                    int64_t file_size) {
     std::string meta_cache_key;
-    meta_cache_key.resize(file_name.size() + sizeof(int64_t));
-
-    memcpy(meta_cache_key.data(), file_name.data(), file_name.size());
-    if (modification_time != 0) {
-        memcpy(meta_cache_key.data() + file_name.size(), &modification_time, sizeof(int64_t));
-    } else {
-        memcpy(meta_cache_key.data() + file_name.size(), &file_size, sizeof(int64_t));
-    }
+    meta_cache_key.reserve(sizeof(uint64_t) + file_name.size() + sizeof(int64_t) * 2);
+    put_fixed64_le(&meta_cache_key, file_name.size());
+    meta_cache_key.append(file_name);
+    put_fixed64_le(&meta_cache_key, static_cast<uint64_t>(modification_time));
+    put_fixed64_le(&meta_cache_key, static_cast<uint64_t>(file_size));
     return meta_cache_key;
 }
 
