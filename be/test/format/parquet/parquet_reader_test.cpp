@@ -212,6 +212,7 @@ public:
         scan_range.size = 1000;
         scan_range.__set_columns_from_path_keys({"part_col"});
         scan_range.__set_columns_from_path({"1"});
+        scan_range.__set_columns_from_path_is_null({false});
         auto q_options = TQueryOptions();
         q_options.__set_enable_adjust_conjunct_order_by_cost(true);
         RuntimeState runtime_state = RuntimeState(q_options, TQueryGlobals());
@@ -999,6 +1000,7 @@ TEST_F(ParquetReaderTest, only_partition_column) {
     scan_range.size = 1000;
     scan_range.__set_columns_from_path_keys({"part_col"});
     scan_range.__set_columns_from_path({"1"});
+    scan_range.__set_columns_from_path_is_null({false});
     auto q_options = TQueryOptions();
     q_options.__set_enable_adjust_conjunct_order_by_cost(true);
     RuntimeState runtime_state = RuntimeState(q_options, TQueryGlobals());
