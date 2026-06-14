@@ -99,6 +99,9 @@ public:
     // accordingly.
     size_t drain(size_t limit, std::vector<FileBlockSPtr>* output);
 
+    // Remove pending updates for all blocks under one cache key.
+    size_t remove(const UInt128Wrapper& hash);
+
     // Remove every pending block from the structure and reset the size.
     void clear();
 

@@ -43,12 +43,18 @@ public:
               _old_ttl_gc_interval_ms(config::file_cache_background_ttl_gc_interval_ms),
               _old_ttl_info_update_interval_ms(
                       config::file_cache_background_ttl_info_update_interval_ms),
-              _old_leak_scan_interval_seconds(config::file_cache_leak_scan_interval_seconds) {
+              _old_leak_scan_interval_seconds(config::file_cache_leak_scan_interval_seconds),
+              _old_block_lru_update_interval_ms(
+                      config::file_cache_background_block_lru_update_interval_ms),
+              _old_block_lru_update_qps_limit(
+                      config::file_cache_background_block_lru_update_qps_limit) {
         config::file_cache_enter_disk_resource_limit_mode_percent = 101;
         config::file_cache_exit_disk_resource_limit_mode_percent = 100;
         config::file_cache_background_ttl_gc_interval_ms = 1;
         config::file_cache_background_ttl_info_update_interval_ms = 1;
         config::file_cache_leak_scan_interval_seconds = 0;
+        config::file_cache_background_block_lru_update_interval_ms = 10;
+        config::file_cache_background_block_lru_update_qps_limit = 1000;
     }
 
     ~ScopedFileCacheDiskResourceLimitConfig() {
@@ -58,6 +64,10 @@ public:
         config::file_cache_background_ttl_info_update_interval_ms =
                 _old_ttl_info_update_interval_ms;
         config::file_cache_leak_scan_interval_seconds = _old_leak_scan_interval_seconds;
+        config::file_cache_background_block_lru_update_interval_ms =
+                _old_block_lru_update_interval_ms;
+        config::file_cache_background_block_lru_update_qps_limit =
+                _old_block_lru_update_qps_limit;
     }
 
 private:
@@ -66,7 +76,19 @@ private:
     int64_t _old_ttl_gc_interval_ms;
     int64_t _old_ttl_info_update_interval_ms;
     int64_t _old_leak_scan_interval_seconds;
+    int64_t _old_block_lru_update_interval_ms;
+    int64_t _old_block_lru_update_qps_limit;
 };
+
+bool wait_for_cache_async_open(io::BlockFileCache* block_cache) {
+    for (int i = 0; i < 5000; ++i) {
+        if (block_cache->get_async_open_success()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return block_cache->get_async_open_success();
+}
 
 class FileMetaCacheDiskTest : public testing::Test {
 public:
@@ -488,6 +510,90 @@ TEST_F(FileMetaCacheDiskTest, ReadReturnsPayloadWrittenThroughIndexQueue) {
             stale_meta_context, &refreshed_lookup_handle, &stale_output, &lookup_profile);
     EXPECT_EQ(refreshed_lookup_result.state, FileMetaCacheLookupState::PERSISTED_HIT);
     EXPECT_EQ(stale_output, refreshed_payload);
+}
+
+TEST_F(FileMetaCacheDiskTest, PersistentHitRefreshesIndexQueueLru) {
+    std::filesystem::path cache_dir =
+            std::filesystem::current_path() / "file_meta_disk_cache_lru_test";
+    if (std::filesystem::exists(cache_dir)) {
+        std::filesystem::remove_all(cache_dir);
+    }
+    std::filesystem::create_directories(cache_dir);
+    ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
+    const bool old_enable_external_file_meta_disk_cache =
+            config::enable_external_file_meta_disk_cache;
+    Defer defer {[&] {
+        config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
+        std::filesystem::remove_all(cache_dir);
+    }};
+    config::enable_external_file_meta_disk_cache = true;
+
+    io::FileCacheSettings settings;
+    settings.capacity = 96;
+    settings.max_file_block_size = 64;
+    settings.index_queue_size = 96;
+    settings.index_queue_elements = 1024;
+    io::BlockFileCache block_cache(cache_dir.string(), settings);
+    ASSERT_TRUE(block_cache.initialize().ok());
+    ASSERT_TRUE(wait_for_cache_async_open(&block_cache));
+
+    const std::string first_key = FileMetaCache::get_key("s3://bucket/lru-first.parquet", 123, 456);
+    const std::string second_key =
+            FileMetaCache::get_key("s3://bucket/lru-second.parquet", 123, 456);
+    const std::string third_key = FileMetaCache::get_key("s3://bucket/lru-third.parquet", 123, 456);
+    const FileMetaCacheContext first_context {.format = FileMetaCacheFormat::PARQUET,
+                                              .key = first_key,
+                                              .modification_time = 123,
+                                              .file_size = 456,
+                                              .enable_memory_cache = false};
+    const FileMetaCacheContext second_context {.format = FileMetaCacheFormat::PARQUET,
+                                               .key = second_key,
+                                               .modification_time = 123,
+                                               .file_size = 456,
+                                               .enable_memory_cache = false};
+    const FileMetaCacheContext third_context {.format = FileMetaCacheFormat::PARQUET,
+                                              .key = third_key,
+                                              .modification_time = 123,
+                                              .file_size = 456,
+                                              .enable_memory_cache = false};
+
+    auto insert_payload = [&](FileMetaCache& cache, const FileMetaCacheContext& context,
+                              std::string_view payload) {
+        auto cached_payload = std::make_unique<std::string>(payload);
+        ObjLRUCache::CacheHandle cache_handle;
+        const auto insert_result =
+                cache.insert(context, cached_payload, &cache_handle, payload);
+        ASSERT_TRUE(insert_result.persisted_inserted);
+    };
+
+    FileMetaCache cache(config::max_external_file_meta_cache_num, &block_cache);
+    insert_payload(cache, first_context, "payload1");
+    insert_payload(cache, second_context, "payload2");
+
+    FileMetaCache cache_after_l1_miss(config::max_external_file_meta_cache_num, &block_cache);
+    std::string output;
+    ObjLRUCache::CacheHandle lookup_handle;
+    const auto first_lookup_result =
+            cache_after_l1_miss.lookup(first_context, &lookup_handle, &output);
+    ASSERT_EQ(first_lookup_result.state, FileMetaCacheLookupState::PERSISTED_HIT);
+    ASSERT_EQ(output, "payload1");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    insert_payload(cache, third_context, "payload3");
+
+    FileMetaCache cache_after_eviction(config::max_external_file_meta_cache_num, &block_cache);
+    ObjLRUCache::CacheHandle first_lookup_after_eviction_handle;
+    const auto first_lookup_after_eviction_result = cache_after_eviction.lookup(
+            first_context, &first_lookup_after_eviction_handle, &output);
+    EXPECT_EQ(first_lookup_after_eviction_result.state, FileMetaCacheLookupState::PERSISTED_HIT);
+    EXPECT_EQ(output, "payload1");
+
+    std::string second_output;
+    ObjLRUCache::CacheHandle second_lookup_after_eviction_handle;
+    const auto second_lookup_after_eviction_result = cache_after_eviction.lookup(
+            second_context, &second_lookup_after_eviction_handle, &second_output);
+    EXPECT_EQ(second_lookup_after_eviction_result.state, FileMetaCacheLookupState::MISS);
+    EXPECT_TRUE(second_output.empty());
 }
 
 TEST_F(FileMetaCacheDiskTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {

@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstring>
 #include <utility>
+#include <vector>
 
 #include "common/config.h"
 #include "common/logging.h"
@@ -120,7 +121,8 @@ void update_profile_counter(int64_t* counter, int64_t value = 1) {
 }
 
 Status read_cached_file_cache(io::BlockFileCache* cache, const io::UInt128Wrapper& hash,
-                              size_t offset, Slice buffer) {
+                              size_t offset, Slice buffer,
+                              std::vector<io::FileBlockSPtr>* read_blocks = nullptr) {
     if (buffer.size == 0) {
         return Status::OK();
     }
@@ -155,6 +157,9 @@ Status read_cached_file_cache(io::BlockFileCache* cache, const io::UInt128Wrappe
         const size_t read_size = std::min(range.right, right) - current_pos + 1;
         const size_t read_offset = current_pos - range.left;
         RETURN_IF_ERROR(block->read(Slice(buffer.data + written_size, read_size), read_offset));
+        if (read_blocks != nullptr) {
+            read_blocks->push_back(block);
+        }
         written_size += read_size;
         current_pos += read_size;
     }
@@ -271,8 +276,10 @@ bool FileMetaCache::lookup_persistent_cache(const FileMetaCacheContext& context,
         return false;
     }
 
+    std::vector<io::FileBlockSPtr> read_blocks;
     auto invalidate_entry = [&](const Status& status) {
         payload->clear();
+        read_blocks.clear();
         cache->remove_if_cached(hash);
         VLOG_DEBUG << "lookup file meta disk cache failed: " << status;
         stop_watch();
@@ -280,7 +287,8 @@ bool FileMetaCache::lookup_persistent_cache(const FileMetaCacheContext& context,
     };
 
     std::string header(FILE_META_CACHE_DISK_HEADER_SIZE, '\0');
-    Status status = read_cached_file_cache(cache, hash, 0, Slice(header.data(), header.size()));
+    Status status =
+            read_cached_file_cache(cache, hash, 0, Slice(header.data(), header.size()), &read_blocks);
     if (!status.ok()) {
         VLOG_DEBUG << "lookup file meta disk cache failed: " << status;
         stop_watch();
@@ -301,7 +309,7 @@ bool FileMetaCache::lookup_persistent_cache(const FileMetaCacheContext& context,
     payload->resize(parsed.payload_size);
     if (parsed.payload_size > 0) {
         status = read_cached_file_cache(cache, hash, FILE_META_CACHE_DISK_HEADER_SIZE,
-                                        Slice(payload->data(), payload->size()));
+                                        Slice(payload->data(), payload->size()), &read_blocks);
         if (!status.ok()) {
             payload->clear();
             VLOG_DEBUG << "lookup file meta disk cache failed: " << status;
@@ -314,6 +322,9 @@ bool FileMetaCache::lookup_persistent_cache(const FileMetaCacheContext& context,
         return invalidate_entry(Status::NotFound("file meta disk cache checksum mismatch"));
     }
 
+    for (auto& block : read_blocks) {
+        cache->add_need_update_lru_block(std::move(block));
+    }
     stop_watch();
     return true;
 }

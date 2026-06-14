@@ -145,6 +145,31 @@ size_t NeedUpdateLRUBlocks::drain(size_t limit, std::vector<FileBlockSPtr>* outp
     return drained;
 }
 
+size_t NeedUpdateLRUBlocks::remove(const UInt128Wrapper& hash) {
+    size_t removed = 0;
+    try {
+        for (auto& shard : _shards) {
+            std::lock_guard lock(shard.mutex);
+            for (auto it = shard.entries.begin(); it != shard.entries.end();) {
+                if (it->second->get_hash_value() == hash) {
+                    it = shard.entries.erase(it);
+                    ++removed;
+                } else {
+                    ++it;
+                }
+            }
+        }
+        if (removed > 0) {
+            _size.fetch_sub(removed, std::memory_order_relaxed);
+        }
+    } catch (const std::exception& e) {
+        LOG(WARNING) << "Failed to remove LRU update blocks: " << e.what();
+    } catch (...) {
+        LOG(WARNING) << "Failed to remove LRU update blocks: unknown error";
+    }
+    return removed;
+}
+
 // Remove every pending block, guarding against unexpected exceptions.
 void NeedUpdateLRUBlocks::clear() {
     try {
@@ -1239,18 +1264,24 @@ void BlockFileCache::try_evict_in_advance(size_t size, std::lock_guard<std::mute
 void BlockFileCache::remove_if_cached(const UInt128Wrapper& file_key) {
     std::string reason = "remove_if_cached";
     SCOPED_CACHE_LOCK(_mutex, this);
-    auto iter = _files.find(file_key);
-    std::vector<FileBlockCell*> to_remove;
-    if (iter != _files.end()) {
-        for (auto& [_, cell] : iter->second) {
-            if (cell.releasable()) {
-                to_remove.push_back(&cell);
-            } else {
-                cell.file_block->set_deleting();
+    if (_need_update_lru_blocks.remove(file_key) > 0) {
+        *_need_update_lru_blocks_length_recorder << _need_update_lru_blocks.size();
+    }
+    bool is_ttl_file = remove_if_ttl_file_blocks(file_key, true, cache_lock, true);
+    if (!is_ttl_file) {
+        auto iter = _files.find(file_key);
+        std::vector<FileBlockCell*> to_remove;
+        if (iter != _files.end()) {
+            for (auto& [_, cell] : iter->second) {
+                if (cell.releasable()) {
+                    to_remove.push_back(&cell);
+                } else {
+                    cell.file_block->set_deleting();
+                }
             }
         }
+        remove_file_blocks(to_remove, cache_lock, true, reason);
     }
-    remove_file_blocks(to_remove, cache_lock, true, reason);
 }
 
 // the async version of remove_if_cached, for background operations
@@ -1259,21 +1290,26 @@ void BlockFileCache::remove_if_cached(const UInt128Wrapper& file_key) {
 void BlockFileCache::remove_if_cached_async(const UInt128Wrapper& file_key) {
     std::string reason = "remove_if_cached_async";
     SCOPED_CACHE_LOCK(_mutex, this);
-
-    auto iter = _files.find(file_key);
-    std::vector<FileBlockCell*> to_remove;
-    if (iter != _files.end()) {
-        for (auto& [_, cell] : iter->second) {
-            *_gc_evict_bytes_metrics << cell.size();
-            *_gc_evict_count_metrics << 1;
-            if (cell.releasable()) {
-                to_remove.push_back(&cell);
-            } else {
-                cell.file_block->set_deleting();
+    if (_need_update_lru_blocks.remove(file_key) > 0) {
+        *_need_update_lru_blocks_length_recorder << _need_update_lru_blocks.size();
+    }
+    bool is_ttl_file = remove_if_ttl_file_blocks(file_key, true, cache_lock, /*sync*/ false);
+    if (!is_ttl_file) {
+        auto iter = _files.find(file_key);
+        std::vector<FileBlockCell*> to_remove;
+        if (iter != _files.end()) {
+            for (auto& [_, cell] : iter->second) {
+                *_gc_evict_bytes_metrics << cell.size();
+                *_gc_evict_count_metrics << 1;
+                if (cell.releasable()) {
+                    to_remove.push_back(&cell);
+                } else {
+                    cell.file_block->set_deleting();
+                }
             }
         }
+        remove_file_blocks(to_remove, cache_lock, false, reason);
     }
-    remove_file_blocks(to_remove, cache_lock, false, reason);
 }
 
 std::vector<FileCacheType> BlockFileCache::get_other_cache_type_without_ttl(
