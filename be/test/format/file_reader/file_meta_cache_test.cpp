@@ -66,8 +66,7 @@ public:
         config::file_cache_leak_scan_interval_seconds = _old_leak_scan_interval_seconds;
         config::file_cache_background_block_lru_update_interval_ms =
                 _old_block_lru_update_interval_ms;
-        config::file_cache_background_block_lru_update_qps_limit =
-                _old_block_lru_update_qps_limit;
+        config::file_cache_background_block_lru_update_qps_limit = _old_block_lru_update_qps_limit;
     }
 
 private:
@@ -561,8 +560,7 @@ TEST_F(FileMetaCacheDiskTest, PersistentHitRefreshesIndexQueueLru) {
                               std::string_view payload) {
         auto cached_payload = std::make_unique<std::string>(payload);
         ObjLRUCache::CacheHandle cache_handle;
-        const auto insert_result =
-                cache.insert(context, cached_payload, &cache_handle, payload);
+        const auto insert_result = cache.insert(context, cached_payload, &cache_handle, payload);
         ASSERT_TRUE(insert_result.persisted_inserted);
     };
 

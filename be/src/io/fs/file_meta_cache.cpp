@@ -287,8 +287,8 @@ bool FileMetaCache::lookup_persistent_cache(const FileMetaCacheContext& context,
     };
 
     std::string header(FILE_META_CACHE_DISK_HEADER_SIZE, '\0');
-    Status status =
-            read_cached_file_cache(cache, hash, 0, Slice(header.data(), header.size()), &read_blocks);
+    Status status = read_cached_file_cache(cache, hash, 0, Slice(header.data(), header.size()),
+                                           &read_blocks);
     if (!status.ok()) {
         VLOG_DEBUG << "lookup file meta disk cache failed: " << status;
         stop_watch();
