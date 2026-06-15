@@ -680,6 +680,51 @@ TEST_F(FileMetaCacheDiskTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
     EXPECT_EQ(output, refreshed_payload);
 }
 
+TEST_F(FileMetaCacheDiskTest, FailedMultiBlockInsertRemovesPartialEntry) {
+    std::filesystem::path cache_dir =
+            std::filesystem::current_path() / "file_meta_disk_cache_partial_insert_test";
+    if (std::filesystem::exists(cache_dir)) {
+        std::filesystem::remove_all(cache_dir);
+    }
+    std::filesystem::create_directories(cache_dir);
+    ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
+    const bool old_enable_external_file_meta_disk_cache =
+            config::enable_external_file_meta_disk_cache;
+    Defer defer {[&] {
+        config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
+        std::filesystem::remove_all(cache_dir);
+    }};
+    config::enable_external_file_meta_disk_cache = true;
+
+    io::FileCacheSettings settings;
+    settings.capacity = 64;
+    settings.max_file_block_size = 64;
+    settings.index_queue_size = 64;
+    settings.index_queue_elements = 1024;
+    io::BlockFileCache block_cache(cache_dir.string(), settings);
+    ASSERT_TRUE(block_cache.initialize().ok());
+    ASSERT_TRUE(wait_for_cache_async_open(&block_cache));
+
+    FileMetaCache cache(config::max_external_file_meta_cache_num, &block_cache);
+    const std::string meta_key = FileMetaCache::get_key("s3://bucket/partial.parquet", 123, 456);
+    const FileMetaCacheContext meta_context {.format = FileMetaCacheFormat::PARQUET,
+                                             .key = meta_key,
+                                             .modification_time = 123,
+                                             .file_size = 456,
+                                             .enable_memory_cache = false};
+    const std::string payload(128, 'x');
+    auto cached_payload = std::make_unique<std::string>(payload);
+    ObjLRUCache::CacheHandle cache_handle;
+
+    const auto insert_result =
+            cache.insert(meta_context, cached_payload, &cache_handle, std::string_view(payload));
+    ASSERT_FALSE(insert_result.persisted_inserted);
+
+    const auto hash = io::BlockFileCache::hash(
+            FileMetaCache::get_persistent_cache_key(FileMetaCacheFormat::PARQUET, meta_key));
+    EXPECT_TRUE(block_cache.get_blocks_by_key(hash).empty());
+}
+
 TEST_F(FileMetaCacheDiskTest, NegativeMaxEntryBytesDisablesPersistentCache) {
     std::filesystem::path cache_dir =
             std::filesystem::current_path() / "file_meta_disk_cache_negative_max_entry_test";
