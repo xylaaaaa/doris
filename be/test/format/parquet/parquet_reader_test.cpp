@@ -410,6 +410,24 @@ TEST_F(ParquetReaderTest, file_footer_disk_cache_time_counters_exist) {
     ASSERT_EQ(profile.get_counter("FileFooterWriteDiskCacheTime")->type(), TUnit::TIME_NS);
 }
 
+TEST_F(ParquetReaderTest, init_file_description_preserves_fs_name) {
+    RuntimeProfile profile("test_profile");
+    TFileScanRangeParams scan_params;
+    scan_params.__set_file_type(TFileType::FILE_S3);
+    scan_params.properties["AWS_ENDPOINT"] = "https://s3.us-west-2.amazonaws.com";
+    scan_params.properties["AWS_REGION"] = "us-west-2";
+
+    TFileRangeDesc scan_range;
+    scan_range.path = "s3://bucket/path/file.parquet";
+    scan_range.__set_fs_name("s3://original-fs-name");
+
+    cctz::time_zone ctz;
+    TimezoneUtils::find_cctz_time_zone(TimezoneUtils::default_time_zone, ctz);
+    ParquetReader reader(&profile, scan_params, scan_range, 992, &ctz, nullptr, nullptr, &cache);
+
+    EXPECT_EQ(reader._file_description.fs_name, "s3://original-fs-name");
+}
+
 TEST_F(ParquetReaderTest, uuid_varbinary) {
     TDescriptorTable t_desc_table;
     TTableDescriptor t_table_desc;

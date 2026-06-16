@@ -245,6 +245,23 @@ TEST_F(OrcReaderTest, file_footer_disk_cache_time_counters_exist) {
     ASSERT_EQ(profile.get_counter("FileFooterWriteDiskCacheTime")->type(), TUnit::TIME_NS);
 }
 
+TEST_F(OrcReaderTest, init_file_description_preserves_fs_name) {
+    RuntimeProfile profile("test_profile");
+    TFileScanRangeParams params;
+    params.__set_file_type(TFileType::FILE_S3);
+    params.properties["AWS_ENDPOINT"] = "https://s3.us-west-2.amazonaws.com";
+    params.properties["AWS_REGION"] = "us-west-2";
+
+    TFileRangeDesc range;
+    range.path = "s3://bucket/path/file.orc";
+    range.__set_fs_name("s3://original-fs-name");
+
+    OrcReader reader(&profile, nullptr, params, range, 64, "UTC",
+                     static_cast<io::IOContext*>(nullptr), &cache, true);
+
+    EXPECT_EQ(reader._file_description.fs_name, "s3://original-fs-name");
+}
+
 TEST_F(OrcReaderTest, set_batch_size_without_row_reader_is_safe) {
     TFileScanRangeParams params;
     TFileRangeDesc range;

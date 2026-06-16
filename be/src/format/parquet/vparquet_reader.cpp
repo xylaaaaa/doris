@@ -367,8 +367,11 @@ Status ParquetReader::_open_file() {
             // parse magic number & parse meta data
             _reader_statistics.file_footer_read_calls += 1;
         } else {
-            const auto& file_meta_cache_key =
-                    FileMetaCache::get_key(_tracing_file_reader, _file_description);
+            io::FileDescription file_meta_cache_description = _file_description;
+            file_meta_cache_description.fs_name =
+                    FileFactory::get_file_cache_identity(_system_properties, _file_description);
+            const std::string file_meta_cache_key =
+                    FileMetaCache::get_key(_tracing_file_reader, file_meta_cache_description);
             const int64_t file_size = _file_description.file_size == -1
                                               ? _tracing_file_reader->size()
                                               : _file_description.file_size;
@@ -476,8 +479,6 @@ void ParquetReader::_init_file_description() {
     if (_scan_range.__isset.fs_name) {
         _file_description.fs_name = _scan_range.fs_name;
     }
-    _file_description.fs_name =
-            FileFactory::get_file_cache_identity(_system_properties, _file_description);
     if (_scan_range.__isset.file_cache_admission) {
         _file_description.file_cache_admission = _scan_range.file_cache_admission;
     }

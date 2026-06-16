@@ -456,9 +456,12 @@ Status OrcReader::_create_file_reader() {
         _statistics.file_footer_read_calls++;
         RETURN_IF_ERROR(create_orc_reader());
     } else {
+        io::FileDescription file_meta_cache_description = _file_description;
+        file_meta_cache_description.fs_name =
+                FileFactory::get_file_cache_identity(_system_properties, _file_description);
         auto inner_file_reader = _file_input_stream->get_inner_reader();
-        const auto& file_meta_cache_key =
-                FileMetaCache::get_key(inner_file_reader, _file_description);
+        const std::string file_meta_cache_key =
+                FileMetaCache::get_key(inner_file_reader, file_meta_cache_description);
 
         // Local variables can be required because setSerializedFileTail is an assignment operation, not a reference.
         ObjLRUCache::CacheHandle _meta_cache_handle;
@@ -1615,8 +1618,6 @@ void OrcReader::_init_file_description() {
     if (_scan_range.__isset.fs_name) {
         _file_description.fs_name = _scan_range.fs_name;
     }
-    _file_description.fs_name =
-            FileFactory::get_file_cache_identity(_system_properties, _file_description);
     if (_scan_range.__isset.file_cache_admission) {
         _file_description.file_cache_admission = _scan_range.file_cache_admission;
     }
