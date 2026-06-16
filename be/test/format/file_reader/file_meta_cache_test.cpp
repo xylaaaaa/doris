@@ -17,6 +17,8 @@
 
 #include "io/fs/file_meta_cache.h"
 
+#include <crc32c/crc32c.h>
+
 #include <filesystem>
 #include <fstream>
 #include <vector>
@@ -34,6 +36,8 @@
 
 namespace doris {
 namespace {
+
+constexpr size_t FILE_META_CACHE_DISK_HEADER_SIZE_FOR_TEST = 4 + 1 + 1 + 2 + 8 + 8 + 8 + 4;
 
 class ScopedFileCacheDiskResourceLimitConfig {
 public:
@@ -87,6 +91,23 @@ bool wait_for_cache_async_open(io::BlockFileCache* block_cache) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return block_cache->get_async_open_success();
+}
+
+std::string build_disk_cache_value_for_test(FileMetaCacheFormat format, int64_t modification_time,
+                                            int64_t file_size, std::string_view payload) {
+    std::string value;
+    value.reserve(FILE_META_CACHE_DISK_HEADER_SIZE_FOR_TEST + payload.size());
+    value.append("DFMC", 4);
+    value.push_back(1);
+    value.push_back(static_cast<char>(format));
+    value.push_back(0);
+    value.push_back(0);
+    put_fixed64_le(&value, static_cast<uint64_t>(file_size));
+    put_fixed64_le(&value, static_cast<uint64_t>(modification_time));
+    put_fixed64_le(&value, static_cast<uint64_t>(payload.size()));
+    put_fixed32_le(&value, crc32c::Crc32c(payload.data(), payload.size()));
+    value.append(payload.data(), payload.size());
+    return value;
 }
 
 class FileMetaCacheDiskTest : public testing::Test {
@@ -722,6 +743,89 @@ TEST_F(FileMetaCacheDiskTest, FailedMultiBlockInsertRemovesPartialEntry) {
 
     const auto hash = io::BlockFileCache::hash(
             FileMetaCache::get_persistent_cache_key(FileMetaCacheFormat::PARQUET, meta_key));
+    EXPECT_TRUE(block_cache.get_blocks_by_key(hash).empty());
+}
+
+TEST_F(FileMetaCacheDiskTest, LookupRemovesPartialEntryAfterPayloadReadFailure) {
+    std::filesystem::path cache_dir =
+            std::filesystem::current_path() / "file_meta_disk_cache_partial_lookup_test";
+    if (std::filesystem::exists(cache_dir)) {
+        std::filesystem::remove_all(cache_dir);
+    }
+    std::filesystem::create_directories(cache_dir);
+    ScopedFileCacheDiskResourceLimitConfig disk_resource_limit_config;
+    const bool old_enable_external_file_meta_disk_cache =
+            config::enable_external_file_meta_disk_cache;
+    Defer defer {[&] {
+        config::enable_external_file_meta_disk_cache = old_enable_external_file_meta_disk_cache;
+        std::filesystem::remove_all(cache_dir);
+    }};
+    config::enable_external_file_meta_disk_cache = true;
+
+    io::FileCacheSettings settings;
+    settings.capacity = 64;
+    settings.max_file_block_size = 64;
+    settings.index_queue_size = 64;
+    settings.index_queue_elements = 1024;
+    io::BlockFileCache block_cache(cache_dir.string(), settings);
+    ASSERT_TRUE(block_cache.initialize().ok());
+    ASSERT_TRUE(wait_for_cache_async_open(&block_cache));
+
+    const std::string meta_key =
+            FileMetaCache::get_key("s3://bucket/partial-lookup.parquet", 123, 456);
+    const FileMetaCacheContext meta_context {.format = FileMetaCacheFormat::PARQUET,
+                                             .key = meta_key,
+                                             .modification_time = 123,
+                                             .file_size = 456,
+                                             .enable_memory_cache = false};
+    const std::string payload(128, 'x');
+    const std::string value = build_disk_cache_value_for_test(FileMetaCacheFormat::PARQUET,
+                                                              meta_context.modification_time,
+                                                              meta_context.file_size, payload);
+    const auto hash = io::BlockFileCache::hash(
+            FileMetaCache::get_persistent_cache_key(FileMetaCacheFormat::PARQUET, meta_key));
+
+    {
+        io::ReadStatistics stats;
+        io::CacheContext cache_context;
+        cache_context.cache_type = io::FileCacheType::INDEX;
+        cache_context.query_id = TUniqueId();
+        cache_context.expiration_time = 0;
+        cache_context.is_cold_data = false;
+        cache_context.is_warmup = false;
+        cache_context.stats = &stats;
+        auto holder = block_cache.get_or_set(hash, 0, value.size(), cache_context);
+
+        bool downloaded_prefix = false;
+        bool saw_uncached_suffix = false;
+        for (const auto& block : holder.file_blocks) {
+            const auto state = block->state();
+            if (state == io::FileBlock::State::SKIP_CACHE) {
+                saw_uncached_suffix = true;
+                continue;
+            }
+            ASSERT_EQ(state, io::FileBlock::State::EMPTY);
+            ASSERT_FALSE(downloaded_prefix);
+            ASSERT_EQ(block->range().left, 0);
+            ASSERT_EQ(block->get_or_set_downloader(), io::FileBlock::get_caller_id());
+            const auto& range = block->range();
+            Status status = block->append(Slice(value.data() + range.left, range.size()));
+            ASSERT_TRUE(status.ok()) << status;
+            status = block->finalize();
+            ASSERT_TRUE(status.ok()) << status;
+            downloaded_prefix = true;
+        }
+        ASSERT_TRUE(downloaded_prefix);
+        ASSERT_TRUE(saw_uncached_suffix);
+    }
+    ASSERT_EQ(block_cache.get_blocks_by_key(hash).size(), 1);
+
+    FileMetaCache cache(config::max_external_file_meta_cache_num, &block_cache);
+    std::string output;
+    ObjLRUCache::CacheHandle lookup_handle;
+    const auto lookup_result = cache.lookup(meta_context, &lookup_handle, &output);
+    EXPECT_EQ(lookup_result.state, FileMetaCacheLookupState::MISS);
+    EXPECT_TRUE(output.empty());
     EXPECT_TRUE(block_cache.get_blocks_by_key(hash).empty());
 }
 

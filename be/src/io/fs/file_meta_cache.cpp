@@ -311,10 +311,7 @@ bool FileMetaCache::lookup_persistent_cache(const FileMetaCacheContext& context,
         status = read_cached_file_cache(cache, hash, FILE_META_CACHE_DISK_HEADER_SIZE,
                                         Slice(payload->data(), payload->size()), &read_blocks);
         if (!status.ok()) {
-            payload->clear();
-            VLOG_DEBUG << "lookup file meta disk cache failed: " << status;
-            stop_watch();
-            return false;
+            return invalidate_entry(status);
         }
     }
     const uint32_t checksum = crc32c::Crc32c(payload->data(), payload->size());
