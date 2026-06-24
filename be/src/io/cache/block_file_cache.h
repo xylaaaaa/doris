@@ -241,7 +241,7 @@ public:
     FileBlocksHolder get_or_set(const UInt128Wrapper& hash, size_t offset, size_t size,
                                 CacheContext& context);
 
-    // Write a complete value for one cache key, hiding per-block downloader
+    // Replace a complete value for one cache key, hiding per-block downloader
     // ownership and partial-entry cleanup from callers.
     Status set(const UInt128Wrapper& hash, std::string_view value, CacheContext& context);
 

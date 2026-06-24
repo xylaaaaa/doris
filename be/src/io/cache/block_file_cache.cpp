@@ -978,72 +978,107 @@ Status BlockFileCache::set(const UInt128Wrapper& hash, std::string_view value,
         return Status::InvalidArgument("cannot cache empty value for hash={}", hash.to_string());
     }
 
-    auto holder = get_or_set(hash, 0, value.size(), context);
-    auto remove_partial_entry = [&](const Status& status) {
-        {
-            // Run holder cleanup before removing any finalized blocks under this hash.
-            FileBlocksHolder partial_holder(std::move(holder));
+    auto remove_replace_blockers = [&]() -> Status {
+        std::vector<FileBlockSPtr> to_remove;
+        SCOPED_CACHE_LOCK(_mutex, this);
+        auto iter = _files.find(hash);
+        if (iter == _files.end()) {
+            return Status::OK();
         }
-        remove_if_cached(hash);
-        return status;
+
+        for (auto& [_, cell] : iter->second) {
+            FileBlock* block = cell.file_block.get();
+            std::lock_guard block_lock(block->_mutex);
+            const auto state = block->state_unlock(block_lock);
+            if (state == FileBlock::State::DOWNLOADING) {
+                return Status::InternalError("file block is still downloading, hash={}, offset={}",
+                                             hash.to_string(), block->offset());
+            }
+
+            const bool cache_only = cell.file_block.use_count() == 1;
+            const bool cache_and_cached_reader =
+                    cell.file_block.use_count() == 2 && block->_owned_by_cached_reader;
+            const bool cache_and_pending_lru =
+                    cell.file_block.use_count() == 2 && _need_update_lru_blocks.contains(block);
+            if (!cache_only && !cache_and_cached_reader && !cache_and_pending_lru) {
+                return Status::InternalError(
+                        "file block is still referenced, hash={}, offset={}, use_count={}",
+                        hash.to_string(), block->offset(), cell.file_block.use_count());
+            }
+            to_remove.emplace_back(cell.file_block);
+        }
+
+        for (const auto& block : to_remove) {
+            std::lock_guard block_lock(block->_mutex);
+            DCHECK(block->state_unlock(block_lock) != FileBlock::State::DOWNLOADING);
+            remove(block, cache_lock, block_lock, true);
+        }
+        return Status::OK();
     };
 
-    bool removed_deleting_blocks = false;
-    for (const auto& block : holder.file_blocks) {
-        if (!block->is_deleting()) {
+    constexpr size_t MAX_REPLACE_ATTEMPTS = 3;
+    Status last_status = Status::InternalError("failed to replace cache entry, hash={}",
+                                               hash.to_string());
+    for (size_t attempt = 0; attempt < MAX_REPLACE_ATTEMPTS; ++attempt) {
+        remove_if_cached(hash);
+        last_status = remove_replace_blockers();
+        if (!last_status.ok()) {
             continue;
         }
 
-        SCOPED_CACHE_LOCK(_mutex, this);
-        auto* cell = get_cell(block->get_hash_value(), block->offset(), cache_lock);
-        if (!cell || cell->file_block.get() != block.get()) {
-            removed_deleting_blocks = true;
+        auto holder = get_or_set(hash, 0, value.size(), context);
+        auto remove_partial_entry = [&](const Status& status) {
+            {
+                // Run holder cleanup before removing any finalized blocks under this hash.
+                FileBlocksHolder partial_holder(std::move(holder));
+            }
+            remove_if_cached(hash);
+            return status;
+        };
+
+        bool retry = false;
+        for (const auto& block : holder.file_blocks) {
+            auto state = block->state();
+            if (state == FileBlock::State::EMPTY) {
+                continue;
+            }
+            last_status = remove_partial_entry(Status::InternalError(
+                    "file block is not writable after replace cleanup, hash={}, offset={}, state={}",
+                    hash.to_string(), block->offset(), FileBlock::state_to_string(state)));
+            retry = true;
+            break;
+        }
+        if (retry) {
             continue;
         }
 
-        std::lock_guard block_lock(block->_mutex);
-        const bool only_owned_by_set = block.use_count() == 2;
-        const bool only_owned_by_set_and_pending_lru =
-                block.use_count() == 3 && _need_update_lru_blocks.contains(block.get());
-        if (!only_owned_by_set && !only_owned_by_set_and_pending_lru) {
-            return remove_partial_entry(Status::InternalError("file block is deleting"));
-        }
-        DCHECK(block->state_unlock(block_lock) != FileBlock::State::DOWNLOADING);
-        remove(block, cache_lock, block_lock, true);
-        removed_deleting_blocks = true;
-    }
-    if (removed_deleting_blocks) {
-        holder.file_blocks.clear();
-        return set(hash, value, context);
-    }
+        for (const auto& block : holder.file_blocks) {
+            auto state = block->state();
+            if (state != FileBlock::State::EMPTY) {
+                return remove_partial_entry(Status::InternalError(
+                        "file block is not writable, hash={}, offset={}, state={}",
+                        hash.to_string(), block->offset(), FileBlock::state_to_string(state)));
+            }
 
-    for (const auto& block : holder.file_blocks) {
-        auto state = block->state();
-        if (state == FileBlock::State::DOWNLOADING && !block->is_downloader()) {
-            state = block->wait();
+            if (block->get_or_set_downloader() != FileBlock::get_caller_id()) {
+                return remove_partial_entry(
+                        Status::InternalError("file block has another downloader"));
+            }
+            const auto& range = block->range();
+            DCHECK_LT(range.right, value.size());
+            Status status = block->append(Slice(value.data() + range.left, range.size()));
+            if (!status.ok()) {
+                return remove_partial_entry(status);
+            }
+            status = block->finalize();
+            if (!status.ok()) {
+                return remove_partial_entry(status);
+            }
         }
-        if (state == FileBlock::State::DOWNLOADED) {
-            continue;
-        }
-        if (state != FileBlock::State::EMPTY) {
-            return remove_partial_entry(Status::InternalError("file block is not writable"));
-        }
-
-        if (block->get_or_set_downloader() != FileBlock::get_caller_id()) {
-            return remove_partial_entry(Status::InternalError("file block has another downloader"));
-        }
-        const auto& range = block->range();
-        DCHECK_LT(range.right, value.size());
-        Status status = block->append(Slice(value.data() + range.left, range.size()));
-        if (!status.ok()) {
-            return remove_partial_entry(status);
-        }
-        status = block->finalize();
-        if (!status.ok()) {
-            return remove_partial_entry(status);
-        }
+        return Status::OK();
     }
-    return Status::OK();
+    remove_if_cached(hash);
+    return last_status;
 }
 
 FileBlockCell* BlockFileCache::add_cell(const UInt128Wrapper& hash, const CacheContext& context,

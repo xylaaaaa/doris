@@ -801,6 +801,89 @@ TEST_F(FileMetaCacheDiskTest, BlockFileCacheSetWritesCompleteValue) {
     EXPECT_EQ(cached_value, value);
 }
 
+TEST_F(FileMetaCacheDiskTest, BlockFileCacheSetReplacesExistingValue) {
+    io::FileCacheSettings settings;
+    settings.capacity = 1024 * 1024;
+    settings.index_queue_size = 1024 * 1024;
+    settings.index_queue_elements = 1024;
+    settings.max_file_block_size = 8;
+    settings.max_query_cache_size = 1024 * 1024;
+    settings.storage = "memory";
+    io::BlockFileCache block_cache("file_meta_block_cache_replace_test", settings);
+    ASSERT_TRUE(block_cache.initialize().ok());
+
+    io::ReadStatistics stats;
+    io::CacheContext cache_context;
+    cache_context.cache_type = io::FileCacheType::INDEX;
+    cache_context.query_id = TUniqueId();
+    cache_context.expiration_time = 0;
+    cache_context.is_cold_data = false;
+    cache_context.is_warmup = false;
+    cache_context.stats = &stats;
+
+    const std::string disk_cache_key = "file_meta_cache:set-replace";
+    const auto hash = io::BlockFileCache::hash(disk_cache_key);
+
+    auto set_and_expect_cached_value = [&](std::string_view value) {
+        Status status = block_cache.set(hash, value, cache_context);
+        ASSERT_TRUE(status.ok()) << status;
+
+        std::string cached_value;
+        status = read_block_cache_value_for_test(&block_cache, hash, &cached_value);
+        ASSERT_TRUE(status.ok()) << status;
+        EXPECT_EQ(cached_value, value);
+    };
+
+    set_and_expect_cached_value("abc");
+    set_and_expect_cached_value("123456");
+    set_and_expect_cached_value("xyz");
+    set_and_expect_cached_value("UVW");
+}
+
+TEST_F(FileMetaCacheDiskTest, BlockFileCacheSetReplacesPendingLruBlocks) {
+    io::FileCacheSettings settings;
+    settings.capacity = 1024 * 1024;
+    settings.index_queue_size = 1024 * 1024;
+    settings.index_queue_elements = 1024;
+    settings.max_file_block_size = 4;
+    settings.max_query_cache_size = 1024 * 1024;
+    settings.storage = "memory";
+    io::BlockFileCache block_cache("file_meta_block_cache_replace_pending_lru_test", settings);
+    ASSERT_TRUE(block_cache.initialize().ok());
+
+    io::ReadStatistics stats;
+    io::CacheContext cache_context;
+    cache_context.cache_type = io::FileCacheType::INDEX;
+    cache_context.query_id = TUniqueId();
+    cache_context.expiration_time = 0;
+    cache_context.is_cold_data = false;
+    cache_context.is_warmup = false;
+    cache_context.stats = &stats;
+
+    const std::string disk_cache_key = "file_meta_cache:set-replace-pending-lru";
+    const auto hash = io::BlockFileCache::hash(disk_cache_key);
+    const std::string old_value = "abcdefghijklmnop";
+    Status status = block_cache.set(hash, old_value, cache_context);
+    ASSERT_TRUE(status.ok()) << status;
+
+    {
+        auto holder = block_cache.get_or_set(hash, 0, old_value.size(), cache_context);
+        ASSERT_GT(holder.file_blocks.size(), 1);
+        for (auto& block : holder.file_blocks) {
+            block_cache.add_need_update_lru_block(block);
+        }
+    }
+
+    const std::string new_value = "xy";
+    status = block_cache.set(hash, new_value, cache_context);
+    ASSERT_TRUE(status.ok()) << status;
+
+    std::string cached_value;
+    status = read_block_cache_value_for_test(&block_cache, hash, &cached_value);
+    ASSERT_TRUE(status.ok()) << status;
+    EXPECT_EQ(cached_value, new_value);
+}
+
 TEST_F(FileMetaCacheDiskTest, LookupRemovesPartialEntryAfterPayloadReadFailure) {
     std::filesystem::path cache_dir =
             std::filesystem::current_path() / "file_meta_disk_cache_partial_lookup_test";
