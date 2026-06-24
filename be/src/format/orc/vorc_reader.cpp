@@ -458,7 +458,7 @@ Status OrcReader::_create_file_reader() {
     } else {
         io::FileDescription file_meta_cache_description = _file_description;
         file_meta_cache_description.fs_name =
-                FileFactory::get_file_cache_identity(_system_properties, _file_description);
+                FileFactory::get_file_system_identity(_system_properties, _file_description);
         auto inner_file_reader = _file_input_stream->get_inner_reader();
         const std::string file_meta_cache_key =
                 FileMetaCache::get_key(inner_file_reader, file_meta_cache_description);

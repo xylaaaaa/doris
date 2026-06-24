@@ -285,22 +285,22 @@ TEST(FileMetaCacheTest, KeyContentVerification) {
     EXPECT_EQ(static_cast<int64_t>(decode_fixed64_le(key_with_filesize_ptr)), file_size);
 }
 
-TEST(FileMetaCacheTest, HdfsFileCacheIdentityUsesEffectiveFileSystemName) {
+TEST(FileMetaCacheTest, HdfsFileSystemIdentityUsesEffectiveFileSystemName) {
     io::FileSystemProperties properties;
     properties.system_type = TFileType::FILE_HDFS;
     properties.hdfs_params.__set_fs_name("hdfs://nameservice1");
 
     io::FileDescription default_fs_file;
     default_fs_file.path = "/warehouse/default/table/data.orc";
-    EXPECT_EQ(FileFactory::get_file_cache_identity(properties, default_fs_file),
+    EXPECT_EQ(FileFactory::get_file_system_identity(properties, default_fs_file),
               "hdfs://nameservice1");
 
     io::FileDescription uri_file;
     uri_file.path = "hdfs://nameservice2/warehouse/default/table/data.orc";
-    EXPECT_EQ(FileFactory::get_file_cache_identity(properties, uri_file), "hdfs://nameservice2");
+    EXPECT_EQ(FileFactory::get_file_system_identity(properties, uri_file), "hdfs://nameservice2");
 }
 
-TEST(FileMetaCacheTest, S3FileCacheIdentityIncludesEndpoint) {
+TEST(FileMetaCacheTest, S3FileSystemIdentityIncludesEndpoint) {
     io::FileDescription file;
     file.path = "s3://bucket/table/data.parquet";
 
@@ -312,8 +312,8 @@ TEST(FileMetaCacheTest, S3FileCacheIdentityIncludesEndpoint) {
     io::FileSystemProperties properties2 = properties1;
     properties2.properties["AWS_ENDPOINT"] = "http://minio-b:9000";
 
-    EXPECT_NE(FileFactory::get_file_cache_identity(properties1, file),
-              FileFactory::get_file_cache_identity(properties2, file));
+    EXPECT_NE(FileFactory::get_file_system_identity(properties1, file),
+              FileFactory::get_file_system_identity(properties2, file));
 }
 
 TEST(FileMetaCacheTest, InsertAndLookupWithIntValue) {

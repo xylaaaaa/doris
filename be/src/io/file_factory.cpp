@@ -173,8 +173,8 @@ std::string FileFactory::get_fs_name(const io::FileDescription& file_description
     return fs_name;
 }
 
-std::string FileFactory::get_file_cache_identity(const io::FileSystemProperties& system_properties,
-                                                 const io::FileDescription& file_description) {
+std::string FileFactory::get_file_system_identity(const io::FileSystemProperties& system_properties,
+                                                  const io::FileDescription& file_description) {
     switch (system_properties.system_type) {
     case TFileType::FILE_HDFS: {
         io::FileDescription identity_description = file_description;
@@ -281,7 +281,7 @@ Result<io::FileReaderSPtr> FileFactory::_create_file_reader_internal(
         std::shared_ptr<io::HdfsHandler> handler;
         // FIXME(plat1ko): Explain the difference between `system_properties.hdfs_params.fs_name`
         // and `file_description.fs_name`, it's so confused.
-        const std::string fs_name = get_file_cache_identity(system_properties, file_description);
+        const std::string fs_name = get_file_system_identity(system_properties, file_description);
         RETURN_IF_ERROR_RESULT(ExecEnv::GetInstance()->hdfs_mgr()->get_or_create_fs(
                 system_properties.hdfs_params, fs_name, &handler));
         return io::HdfsFileReader::create(file_description.path, handler->hdfs_fs, fs_name,

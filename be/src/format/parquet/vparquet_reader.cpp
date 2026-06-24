@@ -369,7 +369,7 @@ Status ParquetReader::_open_file() {
         } else {
             io::FileDescription file_meta_cache_description = _file_description;
             file_meta_cache_description.fs_name =
-                    FileFactory::get_file_cache_identity(_system_properties, _file_description);
+                    FileFactory::get_file_system_identity(_system_properties, _file_description);
             const std::string file_meta_cache_key =
                     FileMetaCache::get_key(_tracing_file_reader, file_meta_cache_description);
             const int64_t file_size = _file_description.file_size == -1

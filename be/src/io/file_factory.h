@@ -93,8 +93,8 @@ public:
 
     static std::string get_fs_name(const io::FileDescription& file_description);
 
-    static std::string get_file_cache_identity(const io::FileSystemProperties& system_properties,
-                                               const io::FileDescription& file_description);
+    static std::string get_file_system_identity(const io::FileSystemProperties& system_properties,
+                                                const io::FileDescription& file_description);
 
     /// Create FileWriter without FS
     static Result<io::FileWriterPtr> create_file_writer(
