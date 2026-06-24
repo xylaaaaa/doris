@@ -110,6 +110,28 @@ std::string build_disk_cache_value_for_test(FileMetaCacheFormat format, int64_t 
     return value;
 }
 
+Status read_block_cache_value_for_test(io::BlockFileCache* block_cache,
+                                       const io::UInt128Wrapper& hash, std::string* value) {
+    value->clear();
+    auto blocks = block_cache->get_blocks_by_key(hash);
+    if (blocks.empty()) {
+        return Status::NotFound("block cache value not found");
+    }
+
+    size_t current_pos = 0;
+    for (const auto& [_, block] : blocks) {
+        const auto& range = block->range();
+        if (range.left != current_pos) {
+            return Status::NotFound("block cache value has holes");
+        }
+        std::string block_value(range.size(), '\0');
+        RETURN_IF_ERROR(block->read(Slice(block_value.data(), block_value.size()), 0));
+        value->append(block_value);
+        current_pos = range.right + 1;
+    }
+    return Status::OK();
+}
+
 class FileMetaCacheDiskTest : public testing::Test {
 public:
     static void SetUpTestSuite() {
@@ -744,6 +766,39 @@ TEST_F(FileMetaCacheDiskTest, FailedMultiBlockInsertRemovesPartialEntry) {
     const auto hash = io::BlockFileCache::hash(
             FileMetaCache::get_persistent_cache_key(FileMetaCacheFormat::PARQUET, meta_key));
     EXPECT_TRUE(block_cache.get_blocks_by_key(hash).empty());
+}
+
+TEST_F(FileMetaCacheDiskTest, BlockFileCacheSetWritesCompleteValue) {
+    io::FileCacheSettings settings;
+    settings.capacity = 1024 * 1024;
+    settings.index_queue_size = 1024 * 1024;
+    settings.index_queue_elements = 1024;
+    settings.max_file_block_size = 8;
+    settings.max_query_cache_size = 1024 * 1024;
+    settings.storage = "memory";
+    io::BlockFileCache block_cache("file_meta_block_cache_set_test", settings);
+    ASSERT_TRUE(block_cache.initialize().ok());
+
+    io::ReadStatistics stats;
+    io::CacheContext cache_context;
+    cache_context.cache_type = io::FileCacheType::INDEX;
+    cache_context.query_id = TUniqueId();
+    cache_context.expiration_time = 0;
+    cache_context.is_cold_data = false;
+    cache_context.is_warmup = false;
+    cache_context.stats = &stats;
+
+    const std::string disk_cache_key = "file_meta_cache:set-interface";
+    const auto hash = io::BlockFileCache::hash(disk_cache_key);
+    const std::string value = "serialized file meta cache value across blocks";
+
+    Status status = block_cache.set(hash, value, cache_context);
+    ASSERT_TRUE(status.ok()) << status;
+
+    std::string cached_value;
+    status = read_block_cache_value_for_test(&block_cache, hash, &cached_value);
+    ASSERT_TRUE(status.ok()) << status;
+    EXPECT_EQ(cached_value, value);
 }
 
 TEST_F(FileMetaCacheDiskTest, LookupRemovesPartialEntryAfterPayloadReadFailure) {

@@ -19,6 +19,8 @@
 
 #include <memory>
 #include <mutex>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "io/cache/block_file_cache.h"
@@ -40,6 +42,32 @@ void insert_blocks(NeedUpdateLRUBlocks* pending, int count, int start_idx = 0) {
         ASSERT_TRUE(pending->insert(create_block(start_idx + i)))
                 << "Block " << (start_idx + i) << " should be inserted";
     }
+}
+
+FileCacheSettings create_memory_cache_settings() {
+    FileCacheSettings settings;
+    settings.capacity = 1024 * 1024;
+    settings.query_queue_size = 1024 * 1024;
+    settings.query_queue_elements = 10;
+    settings.max_file_block_size = 1024;
+    settings.max_query_cache_size = 1024 * 1024;
+    settings.storage = "memory";
+    return settings;
+}
+
+CacheContext create_cache_context(ReadStatistics* stats) {
+    CacheContext context;
+    context.stats = stats;
+    context.cache_type = FileCacheType::NORMAL;
+    context.query_id = TUniqueId();
+    return context;
+}
+
+void download_into_memory(const FileBlockSPtr& file_block, std::string_view value) {
+    ASSERT_EQ(value.size(), file_block->range().size());
+    ASSERT_EQ(file_block->get_or_set_downloader(), FileBlock::get_caller_id());
+    ASSERT_TRUE(file_block->append(Slice(value.data(), value.size())).ok());
+    ASSERT_TRUE(file_block->finalize().ok());
 }
 
 } // namespace
@@ -110,15 +138,7 @@ TEST(NeedUpdateLRUBlocksTest, ClearIsIdempotent) {
 }
 
 TEST(NeedUpdateLRUBlocksTest, UpdateBlockLRUIgnoresNullAndCorruptedCellPointer) {
-    io::FileCacheSettings settings;
-    settings.capacity = 1024 * 1024;
-    settings.query_queue_size = 1024 * 1024;
-    settings.query_queue_elements = 10;
-    settings.max_file_block_size = 1024;
-    settings.max_query_cache_size = 1024 * 1024;
-    settings.storage = "memory";
-
-    io::BlockFileCache mgr("memory", settings);
+    io::BlockFileCache mgr("memory", create_memory_cache_settings());
 
     {
         std::lock_guard<std::mutex> cache_lock(mgr._mutex);
@@ -145,6 +165,81 @@ TEST(NeedUpdateLRUBlocksTest, UpdateBlockLRUIgnoresNullAndCorruptedCellPointer) 
         std::lock_guard<std::mutex> cache_lock(mgr._mutex);
         mgr.update_block_lru(block, cache_lock);
     }
+}
+
+TEST(NeedUpdateLRUBlocksTest, RemoveIfCachedDoesNotScanPendingLruUpdates) {
+    io::BlockFileCache mgr("memory", create_memory_cache_settings());
+    ASSERT_TRUE(mgr.initialize().ok());
+
+    ReadStatistics stats;
+    auto context = create_cache_context(&stats);
+    const auto hash = io::BlockFileCache::hash("remove_if_cached_keeps_pending_lru_updates");
+    FileBlockSPtr block;
+    {
+        auto holder = mgr.get_or_set(hash, 0, 1, context);
+        ASSERT_EQ(1u, holder.file_blocks.size());
+        block = holder.file_blocks.front();
+        download_into_memory(block, "x");
+        EXPECT_TRUE(mgr._need_update_lru_blocks.insert(block));
+    }
+    ASSERT_EQ(1u, mgr.get_blocks_by_key(hash).size());
+    EXPECT_EQ(1u, mgr.need_update_lru_blocks_size_unsafe());
+
+    mgr.remove_if_cached(hash);
+
+    EXPECT_EQ(1u, mgr.need_update_lru_blocks_size_unsafe())
+            << "remove_if_cached should not scan the pending LRU update queue";
+    EXPECT_EQ(1u, mgr.get_blocks_by_key(hash).size())
+            << "the pending LRU update still keeps the deleted block alive";
+
+    std::vector<FileBlockSPtr> drained;
+    EXPECT_EQ(1u, mgr._need_update_lru_blocks.drain(1, &drained));
+    ASSERT_EQ(1u, drained.size());
+    block.reset();
+    {
+        std::lock_guard<std::mutex> cache_lock(mgr._mutex);
+        mgr.update_block_lru(drained.front(), cache_lock);
+    }
+    EXPECT_TRUE(mgr.get_blocks_by_key(hash).empty())
+            << "drained pending LRU updates for deleting blocks should finish cache removal";
+}
+
+TEST(NeedUpdateLRUBlocksTest, RequeuesDeletingBlocksUntilExternalHoldersRelease) {
+    io::BlockFileCache mgr("memory", create_memory_cache_settings());
+    ASSERT_TRUE(mgr.initialize().ok());
+
+    ReadStatistics stats;
+    auto context = create_cache_context(&stats);
+    const auto hash = io::BlockFileCache::hash("deleting_lru_update_requeues_until_release");
+    std::vector<FileBlockSPtr> drained;
+    {
+        auto holder = mgr.get_or_set(hash, 0, 1, context);
+        ASSERT_EQ(1u, holder.file_blocks.size());
+        auto block = holder.file_blocks.front();
+        download_into_memory(block, "x");
+        ASSERT_TRUE(mgr._need_update_lru_blocks.insert(block));
+
+        mgr.remove_if_cached(hash);
+        ASSERT_EQ(1u, mgr._need_update_lru_blocks.drain(1, &drained));
+        ASSERT_EQ(1u, drained.size());
+        {
+            std::lock_guard<std::mutex> cache_lock(mgr._mutex);
+            mgr.update_block_lru(drained.front(), cache_lock);
+        }
+
+        EXPECT_EQ(1u, mgr.need_update_lru_blocks_size_unsafe())
+                << "deleting block should stay queued while a holder still owns it";
+        EXPECT_EQ(1u, mgr.get_blocks_by_key(hash).size());
+        drained.clear();
+    }
+
+    ASSERT_EQ(1u, mgr._need_update_lru_blocks.drain(1, &drained));
+    ASSERT_EQ(1u, drained.size());
+    {
+        std::lock_guard<std::mutex> cache_lock(mgr._mutex);
+        mgr.update_block_lru(drained.front(), cache_lock);
+    }
+    EXPECT_TRUE(mgr.get_blocks_by_key(hash).empty());
 }
 
 } // namespace doris::io

@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <exception>
 #include <fstream>
+#include <string_view>
 #include <unordered_set>
 
 #include "common/status.h"
@@ -145,29 +146,14 @@ size_t NeedUpdateLRUBlocks::drain(size_t limit, std::vector<FileBlockSPtr>* outp
     return drained;
 }
 
-size_t NeedUpdateLRUBlocks::remove(const UInt128Wrapper& hash) {
-    size_t removed = 0;
-    try {
-        for (auto& shard : _shards) {
-            std::lock_guard lock(shard.mutex);
-            for (auto it = shard.entries.begin(); it != shard.entries.end();) {
-                if (it->second->get_hash_value() == hash) {
-                    it = shard.entries.erase(it);
-                    ++removed;
-                } else {
-                    ++it;
-                }
-            }
-        }
-        if (removed > 0) {
-            _size.fetch_sub(removed, std::memory_order_relaxed);
-        }
-    } catch (const std::exception& e) {
-        LOG(WARNING) << "Failed to remove LRU update blocks: " << e.what();
-    } catch (...) {
-        LOG(WARNING) << "Failed to remove LRU update blocks: unknown error";
+bool NeedUpdateLRUBlocks::contains(FileBlock* block) {
+    if (block == nullptr) {
+        return false;
     }
-    return removed;
+
+    auto& shard = _shards[shard_index(block)];
+    std::lock_guard lock(shard.mutex);
+    return shard.entries.contains(block);
 }
 
 // Remove every pending block, guarding against unexpected exceptions.
@@ -577,7 +563,7 @@ Status BlockFileCache::initialize_unlocked(std::lock_guard<std::mutex>& cache_lo
     return Status::OK();
 }
 
-void BlockFileCache::update_block_lru(FileBlockSPtr block,
+void BlockFileCache::update_block_lru(const FileBlockSPtr& block,
                                       std::lock_guard<std::mutex>& cache_lock) {
     if (!block) {
         return;
@@ -585,6 +571,22 @@ void BlockFileCache::update_block_lru(FileBlockSPtr block,
 
     FileBlockCell* cell = get_cell(block->get_hash_value(), block->offset(), cache_lock);
     if (!cell || cell->file_block.get() != block.get()) {
+        return;
+    }
+
+    if (block->is_deleting()) {
+        {
+            std::lock_guard block_lock(block->_mutex);
+            if (block.use_count() == 2 && block->is_deleting()) {
+                DCHECK(block->state_unlock(block_lock) != FileBlock::State::DOWNLOADING);
+                remove(block, cache_lock, block_lock, false);
+                return;
+            }
+        }
+        // Do not drop deletion cleanup when the normal touch queue is full.
+        if (_need_update_lru_blocks.insert(block)) {
+            *_need_update_lru_blocks_length_recorder << _need_update_lru_blocks.size();
+        }
         return;
     }
 
@@ -970,6 +972,80 @@ FileBlocksHolder BlockFileCache::get_or_set(const UInt128Wrapper& hash, size_t o
     return FileBlocksHolder(std::move(file_blocks));
 }
 
+Status BlockFileCache::set(const UInt128Wrapper& hash, std::string_view value,
+                           CacheContext& context) {
+    if (value.empty()) {
+        return Status::InvalidArgument("cannot cache empty value for hash={}", hash.to_string());
+    }
+
+    auto holder = get_or_set(hash, 0, value.size(), context);
+    auto remove_partial_entry = [&](const Status& status) {
+        {
+            // Run holder cleanup before removing any finalized blocks under this hash.
+            FileBlocksHolder partial_holder(std::move(holder));
+        }
+        remove_if_cached(hash);
+        return status;
+    };
+
+    bool removed_deleting_blocks = false;
+    for (const auto& block : holder.file_blocks) {
+        if (!block->is_deleting()) {
+            continue;
+        }
+
+        SCOPED_CACHE_LOCK(_mutex, this);
+        auto* cell = get_cell(block->get_hash_value(), block->offset(), cache_lock);
+        if (!cell || cell->file_block.get() != block.get()) {
+            removed_deleting_blocks = true;
+            continue;
+        }
+
+        std::lock_guard block_lock(block->_mutex);
+        const bool only_owned_by_set = block.use_count() == 2;
+        const bool only_owned_by_set_and_pending_lru =
+                block.use_count() == 3 && _need_update_lru_blocks.contains(block.get());
+        if (!only_owned_by_set && !only_owned_by_set_and_pending_lru) {
+            return remove_partial_entry(Status::InternalError("file block is deleting"));
+        }
+        DCHECK(block->state_unlock(block_lock) != FileBlock::State::DOWNLOADING);
+        remove(block, cache_lock, block_lock, true);
+        removed_deleting_blocks = true;
+    }
+    if (removed_deleting_blocks) {
+        holder.file_blocks.clear();
+        return set(hash, value, context);
+    }
+
+    for (const auto& block : holder.file_blocks) {
+        auto state = block->state();
+        if (state == FileBlock::State::DOWNLOADING && !block->is_downloader()) {
+            state = block->wait();
+        }
+        if (state == FileBlock::State::DOWNLOADED) {
+            continue;
+        }
+        if (state != FileBlock::State::EMPTY) {
+            return remove_partial_entry(Status::InternalError("file block is not writable"));
+        }
+
+        if (block->get_or_set_downloader() != FileBlock::get_caller_id()) {
+            return remove_partial_entry(Status::InternalError("file block has another downloader"));
+        }
+        const auto& range = block->range();
+        DCHECK_LT(range.right, value.size());
+        Status status = block->append(Slice(value.data() + range.left, range.size()));
+        if (!status.ok()) {
+            return remove_partial_entry(status);
+        }
+        status = block->finalize();
+        if (!status.ok()) {
+            return remove_partial_entry(status);
+        }
+    }
+    return Status::OK();
+}
+
 FileBlockCell* BlockFileCache::add_cell(const UInt128Wrapper& hash, const CacheContext& context,
                                         size_t offset, size_t size, FileBlock::State state,
                                         std::lock_guard<std::mutex>& cache_lock) {
@@ -1264,9 +1340,6 @@ void BlockFileCache::try_evict_in_advance(size_t size, std::lock_guard<std::mute
 void BlockFileCache::remove_if_cached(const UInt128Wrapper& file_key) {
     std::string reason = "remove_if_cached";
     SCOPED_CACHE_LOCK(_mutex, this);
-    if (_need_update_lru_blocks.remove(file_key) > 0) {
-        *_need_update_lru_blocks_length_recorder << _need_update_lru_blocks.size();
-    }
     auto iter = _files.find(file_key);
     std::vector<FileBlockCell*> to_remove;
     if (iter != _files.end()) {
@@ -1287,9 +1360,6 @@ void BlockFileCache::remove_if_cached(const UInt128Wrapper& file_key) {
 void BlockFileCache::remove_if_cached_async(const UInt128Wrapper& file_key) {
     std::string reason = "remove_if_cached_async";
     SCOPED_CACHE_LOCK(_mutex, this);
-    if (_need_update_lru_blocks.remove(file_key) > 0) {
-        *_need_update_lru_blocks_length_recorder << _need_update_lru_blocks.size();
-    }
     auto iter = _files.find(file_key);
     std::vector<FileBlockCell*> to_remove;
     if (iter != _files.end()) {

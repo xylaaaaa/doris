@@ -351,42 +351,11 @@ bool FileMetaCache::insert_persistent_cache(const FileMetaCacheContext& context,
     io::ReadStatistics stats;
     io::CacheContext cache_context = build_meta_cache_context();
     cache_context.stats = &stats;
-    auto holder = cache->get_or_set(hash, 0, value.size(), cache_context);
-    auto remove_partial_entry = [&](const std::string& message) {
-        VLOG_DEBUG << "insert file meta disk cache failed: " << message;
-        {
-            // Run FileBlocksHolder cleanup before removing finalized blocks under this hash.
-            io::FileBlocksHolder partial_holder(std::move(holder));
-        }
-        cache->remove_if_cached(hash);
+    Status status = cache->set(hash, value, cache_context);
+    if (!status.ok()) {
+        VLOG_DEBUG << "insert file meta disk cache failed: " << status;
         stop_watch();
         return false;
-    };
-    for (const auto& block : holder.file_blocks) {
-        auto state = block->state();
-        if (state == io::FileBlock::State::DOWNLOADING && !block->is_downloader()) {
-            state = block->wait();
-        }
-        if (state == io::FileBlock::State::DOWNLOADED) {
-            continue;
-        }
-        if (state != io::FileBlock::State::EMPTY) {
-            return remove_partial_entry("file block is not writable");
-        }
-
-        if (block->get_or_set_downloader() != io::FileBlock::get_caller_id()) {
-            return remove_partial_entry("file block has another downloader");
-        }
-        const auto& range = block->range();
-        DCHECK_LT(range.right, value.size());
-        Status status = block->append(Slice(value.data() + range.left, range.size()));
-        if (!status.ok()) {
-            return remove_partial_entry(status.to_string());
-        }
-        status = block->finalize();
-        if (!status.ok()) {
-            return remove_partial_entry(status.to_string());
-        }
     }
     stop_watch();
     return true;

@@ -29,6 +29,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -99,8 +100,8 @@ public:
     // accordingly.
     size_t drain(size_t limit, std::vector<FileBlockSPtr>* output);
 
-    // Remove pending updates for all blocks under one cache key.
-    size_t remove(const UInt128Wrapper& hash);
+    // Check a single raw block pointer in its owning shard without scanning the queue.
+    bool contains(FileBlock* block);
 
     // Remove every pending block from the structure and reset the size.
     void clear();
@@ -239,6 +240,10 @@ public:
          */
     FileBlocksHolder get_or_set(const UInt128Wrapper& hash, size_t offset, size_t size,
                                 CacheContext& context);
+
+    // Write a complete value for one cache key, hiding per-block downloader
+    // ownership and partial-entry cleanup from callers.
+    Status set(const UInt128Wrapper& hash, std::string_view value, CacheContext& context);
 
     /**
      * record blocks read directly by CachedRemoteFileReader
@@ -421,7 +426,7 @@ private:
 
     Status initialize_unlocked(std::lock_guard<std::mutex>& cache_lock);
 
-    void update_block_lru(FileBlockSPtr block, std::lock_guard<std::mutex>& cache_lock);
+    void update_block_lru(const FileBlockSPtr& block, std::lock_guard<std::mutex>& cache_lock);
 
     void use_cell(const FileBlockCell& cell, FileBlocks* result, bool not_need_move,
                   std::lock_guard<std::mutex>& cache_lock);
