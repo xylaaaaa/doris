@@ -61,3 +61,9 @@ message BlockMetaPb {
     optional uint64 ttl = 3;
 }
 
+message FileMetaCacheDiskEntryPb {
+    optional uint32 format = 1;
+    optional int64 modification_time = 2;
+    optional int64 file_size = 3;
+    optional bytes payload = 4;
+}

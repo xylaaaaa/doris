@@ -18,10 +18,11 @@
 #include "io/fs/file_meta_cache.h"
 
 #include <crc32c/crc32c.h>
+#include <gen_cpp/file_cache.pb.h>
 #include <gen_cpp/Types_types.h>
 
 #include <algorithm>
-#include <cstring>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -38,9 +39,10 @@
 namespace doris {
 namespace {
 
-constexpr std::string_view FILE_META_CACHE_DISK_MAGIC = "DFMC";
 constexpr uint8_t FILE_META_CACHE_DISK_VERSION = 1;
-constexpr size_t FILE_META_CACHE_DISK_HEADER_SIZE = 4 + 1 + 1 + 2 + 8 + 8 + 8 + 4;
+constexpr size_t FILE_META_CACHE_DISK_ENVELOPE_HEADER_SIZE = 1 + sizeof(uint64_t);
+constexpr size_t FILE_META_CACHE_DISK_CHECKSUM_SIZE = sizeof(uint32_t);
+constexpr uint64_t FILE_META_CACHE_DISK_PROTO_OVERHEAD_LIMIT = 128;
 
 std::string_view format_name(FileMetaCacheFormat format) {
     switch (format) {
@@ -53,55 +55,59 @@ std::string_view format_name(FileMetaCacheFormat format) {
     return "unknown";
 }
 
-struct FileMetaCacheDiskHeader {
-    FileMetaCacheFormat format;
-    int64_t modification_time = 0;
-    int64_t file_size = 0;
-    uint64_t payload_size = 0;
-    uint32_t checksum = 0;
-};
-
-Status parse_disk_cache_header(std::string_view header, FileMetaCacheDiskHeader* parsed) {
-    DCHECK(header.size() == FILE_META_CACHE_DISK_HEADER_SIZE);
-    if (std::memcmp(header.data(), FILE_META_CACHE_DISK_MAGIC.data(),
-                    FILE_META_CACHE_DISK_MAGIC.size()) != 0) {
-        return Status::NotFound("file meta disk cache magic mismatch");
-    }
-
-    const auto* ptr =
-            reinterpret_cast<const uint8_t*>(header.data() + FILE_META_CACHE_DISK_MAGIC.size());
+Status parse_disk_cache_envelope_header(std::string_view header, uint64_t* proto_size) {
+    DCHECK(header.size() == FILE_META_CACHE_DISK_ENVELOPE_HEADER_SIZE);
+    const auto* ptr = reinterpret_cast<const uint8_t*>(header.data());
     const uint8_t version = *ptr++;
     if (version != FILE_META_CACHE_DISK_VERSION) {
         return Status::NotFound("file meta disk cache version mismatch");
     }
 
-    parsed->format = static_cast<FileMetaCacheFormat>(*ptr++);
-    ptr += 2;
-    parsed->file_size = static_cast<int64_t>(decode_fixed64_le(ptr));
-    ptr += sizeof(uint64_t);
-    parsed->modification_time = static_cast<int64_t>(decode_fixed64_le(ptr));
-    ptr += sizeof(uint64_t);
-    parsed->payload_size = decode_fixed64_le(ptr);
-    ptr += sizeof(uint64_t);
-    parsed->checksum = decode_fixed32_le(ptr);
+    *proto_size = decode_fixed64_le(ptr);
     return Status::OK();
 }
 
-std::string build_disk_cache_value(FileMetaCacheFormat format, int64_t modification_time,
-                                   int64_t file_size, std::string_view payload) {
-    std::string value;
-    value.reserve(FILE_META_CACHE_DISK_HEADER_SIZE + payload.size());
-    value.append(FILE_META_CACHE_DISK_MAGIC.data(), FILE_META_CACHE_DISK_MAGIC.size());
-    value.push_back(static_cast<char>(FILE_META_CACHE_DISK_VERSION));
-    value.push_back(static_cast<char>(format));
-    value.push_back(0);
-    value.push_back(0);
-    put_fixed64_le(&value, static_cast<uint64_t>(file_size));
-    put_fixed64_le(&value, static_cast<uint64_t>(modification_time));
-    put_fixed64_le(&value, payload.size());
-    put_fixed32_le(&value, crc32c::Crc32c(payload.data(), payload.size()));
-    value.append(payload.data(), payload.size());
-    return value;
+Status parse_disk_cache_format(uint32_t format, FileMetaCacheFormat* parsed) {
+    if (format == static_cast<uint32_t>(FileMetaCacheFormat::PARQUET)) {
+        *parsed = FileMetaCacheFormat::PARQUET;
+        return Status::OK();
+    }
+    if (format == static_cast<uint32_t>(FileMetaCacheFormat::ORC)) {
+        *parsed = FileMetaCacheFormat::ORC;
+        return Status::OK();
+    }
+    return Status::NotFound("file meta disk cache format mismatch");
+}
+
+bool is_persistent_cache_proto_size_allowed(uint64_t proto_size) {
+    const int64_t max_entry_bytes = config::external_file_meta_disk_cache_max_entry_bytes;
+    return max_entry_bytes > 0 && proto_size > 0 &&
+           proto_size <= static_cast<uint64_t>(std::numeric_limits<int>::max()) &&
+           std::cmp_less_equal(proto_size, static_cast<uint64_t>(max_entry_bytes) +
+                                                   FILE_META_CACHE_DISK_PROTO_OVERHEAD_LIMIT);
+}
+
+Status build_disk_cache_value(FileMetaCacheFormat format, int64_t modification_time,
+                              int64_t file_size, std::string_view payload, std::string* value) {
+    io::cache::FileMetaCacheDiskEntryPb entry;
+    entry.set_format(static_cast<uint32_t>(format));
+    entry.set_modification_time(modification_time);
+    entry.set_file_size(file_size);
+    entry.set_payload(payload.data(), payload.size());
+
+    std::string serialized_entry;
+    if (!entry.SerializeToString(&serialized_entry)) {
+        return Status::InternalError("failed to serialize file meta disk cache entry");
+    }
+
+    value->clear();
+    value->reserve(FILE_META_CACHE_DISK_ENVELOPE_HEADER_SIZE + serialized_entry.size() +
+                   FILE_META_CACHE_DISK_CHECKSUM_SIZE);
+    value->push_back(static_cast<char>(FILE_META_CACHE_DISK_VERSION));
+    put_fixed64_le(value, serialized_entry.size());
+    value->append(serialized_entry);
+    put_fixed32_le(value, crc32c::Crc32c(serialized_entry.data(), serialized_entry.size()));
+    return Status::OK();
 }
 
 io::CacheContext build_meta_cache_context() {
@@ -286,38 +292,56 @@ bool FileMetaCache::lookup_persistent_cache(const FileMetaCacheContext& context,
         return false;
     };
 
-    std::string header(FILE_META_CACHE_DISK_HEADER_SIZE, '\0');
-    Status status = read_cached_file_cache(cache, hash, 0, Slice(header.data(), header.size()),
-                                           &read_blocks);
+    std::string envelope_header(FILE_META_CACHE_DISK_ENVELOPE_HEADER_SIZE, '\0');
+    Status status = read_cached_file_cache(
+            cache, hash, 0, Slice(envelope_header.data(), envelope_header.size()), &read_blocks);
     if (!status.ok()) {
         VLOG_DEBUG << "lookup file meta disk cache failed: " << status;
         stop_watch();
         return false;
     }
 
-    FileMetaCacheDiskHeader parsed;
-    status = parse_disk_cache_header(header, &parsed);
+    uint64_t proto_size = 0;
+    status = parse_disk_cache_envelope_header(envelope_header, &proto_size);
     if (!status.ok()) {
         return invalidate_entry(status);
     }
-    if (parsed.format != context.format || parsed.modification_time != context.modification_time ||
-        parsed.file_size != context.file_size ||
-        !is_persistent_cache_payload_size_allowed(parsed.payload_size)) {
-        return invalidate_entry(Status::NotFound("file meta disk cache header mismatch"));
+    if (!is_persistent_cache_proto_size_allowed(proto_size)) {
+        return invalidate_entry(Status::NotFound("file meta disk cache proto size is invalid"));
     }
 
-    payload->resize(parsed.payload_size);
-    if (parsed.payload_size > 0) {
-        status = read_cached_file_cache(cache, hash, FILE_META_CACHE_DISK_HEADER_SIZE,
-                                        Slice(payload->data(), payload->size()), &read_blocks);
-        if (!status.ok()) {
-            return invalidate_entry(status);
-        }
+    std::string proto_and_checksum(proto_size + FILE_META_CACHE_DISK_CHECKSUM_SIZE, '\0');
+    status = read_cached_file_cache(cache, hash, FILE_META_CACHE_DISK_ENVELOPE_HEADER_SIZE,
+                                    Slice(proto_and_checksum.data(), proto_and_checksum.size()),
+                                    &read_blocks);
+    if (!status.ok()) {
+        return invalidate_entry(status);
     }
-    const uint32_t checksum = crc32c::Crc32c(payload->data(), payload->size());
-    if (checksum != parsed.checksum) {
+
+    const auto* checksum_ptr =
+            reinterpret_cast<const uint8_t*>(proto_and_checksum.data() + proto_size);
+    const uint32_t checksum = decode_fixed32_le(checksum_ptr);
+    if (checksum != crc32c::Crc32c(proto_and_checksum.data(), proto_size)) {
         return invalidate_entry(Status::NotFound("file meta disk cache checksum mismatch"));
     }
+
+    io::cache::FileMetaCacheDiskEntryPb entry;
+    if (!entry.ParseFromArray(proto_and_checksum.data(), static_cast<int>(proto_size))) {
+        return invalidate_entry(Status::NotFound("file meta disk cache protobuf parse failed"));
+    }
+    FileMetaCacheFormat parsed_format;
+    status = parse_disk_cache_format(entry.format(), &parsed_format);
+    if (!status.ok()) {
+        return invalidate_entry(status);
+    }
+    if (!entry.has_format() || !entry.has_modification_time() || !entry.has_file_size() ||
+        !entry.has_payload() || parsed_format != context.format ||
+        entry.modification_time() != context.modification_time ||
+        entry.file_size() != context.file_size ||
+        !is_persistent_cache_payload_size_allowed(entry.payload().size())) {
+        return invalidate_entry(Status::NotFound("file meta disk cache entry mismatch"));
+    }
+    payload->assign(entry.payload());
 
     for (auto& block : read_blocks) {
         cache->add_need_update_lru_block(std::move(block));
@@ -346,12 +370,18 @@ bool FileMetaCache::insert_persistent_cache(const FileMetaCacheContext& context,
         return false;
     }
 
-    const std::string value = build_disk_cache_value(context.format, context.modification_time,
-                                                     context.file_size, payload);
+    std::string value;
+    Status status = build_disk_cache_value(context.format, context.modification_time,
+                                           context.file_size, payload, &value);
+    if (!status.ok()) {
+        VLOG_DEBUG << "insert file meta disk cache failed: " << status;
+        stop_watch();
+        return false;
+    }
     io::ReadStatistics stats;
     io::CacheContext cache_context = build_meta_cache_context();
     cache_context.stats = &stats;
-    Status status = cache->set(hash, value, cache_context);
+    status = cache->set(hash, value, cache_context);
     if (!status.ok()) {
         VLOG_DEBUG << "insert file meta disk cache failed: " << status;
         stop_watch();
