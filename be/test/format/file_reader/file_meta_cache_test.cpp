@@ -752,9 +752,8 @@ TEST_F(FileMetaCacheDiskTest, InvalidEntryCanBeRefreshedAfterChecksumMismatch) {
             cache.insert(meta_context, cached_payload, &cache_handle, std::string_view(payload));
     ASSERT_TRUE(insert_result.persisted_inserted);
 
-    const std::string disk_cache_value =
-            build_disk_cache_value_for_test(meta_context.format, meta_context.modification_time,
-                                            meta_context.file_size, payload);
+    const std::string disk_cache_value = build_disk_cache_value_for_test(
+            meta_context.format, meta_context.modification_time, meta_context.file_size, payload);
     constexpr size_t proto_offset = 1 + sizeof(uint64_t);
     std::vector<std::filesystem::path> cache_files;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(cache_dir)) {

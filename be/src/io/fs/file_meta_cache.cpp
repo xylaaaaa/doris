@@ -18,8 +18,8 @@
 #include "io/fs/file_meta_cache.h"
 
 #include <crc32c/crc32c.h>
-#include <gen_cpp/file_cache.pb.h>
 #include <gen_cpp/Types_types.h>
+#include <gen_cpp/file_cache.pb.h>
 
 #include <algorithm>
 #include <limits>

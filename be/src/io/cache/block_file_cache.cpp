@@ -1017,8 +1017,8 @@ Status BlockFileCache::set(const UInt128Wrapper& hash, std::string_view value,
     };
 
     constexpr size_t MAX_REPLACE_ATTEMPTS = 3;
-    Status last_status = Status::InternalError("failed to replace cache entry, hash={}",
-                                               hash.to_string());
+    Status last_status =
+            Status::InternalError("failed to replace cache entry, hash={}", hash.to_string());
     for (size_t attempt = 0; attempt < MAX_REPLACE_ATTEMPTS; ++attempt) {
         remove_if_cached(hash);
         last_status = remove_replace_blockers();
@@ -1043,7 +1043,8 @@ Status BlockFileCache::set(const UInt128Wrapper& hash, std::string_view value,
                 continue;
             }
             last_status = remove_partial_entry(Status::InternalError(
-                    "file block is not writable after replace cleanup, hash={}, offset={}, state={}",
+                    "file block is not writable after replace cleanup, hash={}, offset={}, "
+                    "state={}",
                     hash.to_string(), block->offset(), FileBlock::state_to_string(state)));
             retry = true;
             break;
