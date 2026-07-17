@@ -18,6 +18,11 @@
 Diagnostics:
   UnusedIncludes: Strict
 
+CompileFlags:
+  CompilationDatabase: be/build_Release/
+
+---
+
 If:
   PathMatch: be/test/.*
 
