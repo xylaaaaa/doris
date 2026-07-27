@@ -448,6 +448,112 @@ dbt-doris 是否需要把它变成 Config、SQL 或连接行为
 这样比较的目标不是追求功能数量相同，而是找出哪些成熟 Adapter 设计能够帮助
 dbt 用户正确使用 Doris。
 
+### 6.3 各 Adapter 的详细功能清单
+
+为了方便串讲时查阅，下面把六个 Adapter 的主要公开能力按功能域列出来。
+这里既包含基础能力，也包含数据库专属能力；它是功能清单，不再重复判断
+dbt-doris 是否已经支持，对应关系仍以第 6.1 节为准。
+
+#### 6.3.1 StarRocks
+
+依据：[dbt-starrocks 官方仓库](https://github.com/StarRocks/dbt-starrocks)、
+[dbt 官方 StarRocks 配置说明](https://docs.getdbt.com/reference/resource-configs/starrocks-configs)。
+
+| 功能域 | 公开能力 | 关键边界 |
+| --- | --- | --- |
+| 基础工作流 | Table、View、Incremental、Source、Custom Data Test、Docs Generate | 官方仓库要求 StarRocks 2.5+，推荐 3.4.x；具体功能随 StarRocks 版本变化 |
+| 表模型 | `table_type` 可选 Primary、Duplicate、Unique，配合 `keys`；Primary 表还可配置 `order_by` | Primary Key Model 从 StarRocks 2.5 起支持 |
+| 分区与分布 | `distributed_by`、固定或自动 Bucket、Range/List/Expression Partition、索引和 Table Properties | Expression Partition 从 3.1 起支持；低版本对分布列有额外要求 |
+| 增量策略 | Default、Insert Overwrite、Dynamic Overwrite、Microbatch；Microbatch 支持 `event_time`、`begin`、`lookback` 和 `batch_size` | Dynamic Overwrite 和基于它的 Microbatch 要求 3.4+；普通 Microbatch 可使用 Insert Overwrite |
+| Materialized View | `materialized_view` 可配置分区、分布、Bucket、Properties 和 `refresh_method` | Materialized View Materialization 从 StarRocks 3.1 起支持 |
+| External Catalog | Profile 可选择 Catalog；External Catalog 中的表可声明为 Source | 文档示例把 `catalog.database` 合并写入 Source 的 `schema` |
+| View 生命周期 | 可选择 `CREATE OR REPLACE VIEW`；SQL 未变化时可跳过重建 | 跳过无变化 View 是为了避免使依赖的 Materialized View 失效 |
+| 异步任务 | `is_async` 可把 CTAS、Insert 和 Cache Select 等提交为任务；提供任务超时、轮询间隔和指数退避配置 | 是否可提交仍取决于 StarRocks 版本和具体 SQL |
+
+#### 6.3.2 ClickHouse
+
+依据：[ClickHouse Materialization 文档](https://clickhouse.com/docs/integrations/dbt/materializations)、
+[连接与通用配置](https://clickhouse.com/docs/integrations/connectors/data-ingestion/etl-tools/dbt/features-and-configurations)。
+
+| 功能域 | 公开能力 | 关键边界 |
+| --- | --- | --- |
+| 基础与高级物化 | View、Table、Incremental、Snapshot、Materialized View | Materialized View 是 ClickHouse 插入触发型对象，不等同于 Doris Async MV |
+| 表引擎与布局 | `engine`、`order_by`、`primary_key`、`partition_by`、TTL、Table Settings 和 Query Settings | 默认 Engine 为 `MergeTree()`；不同 Engine 支持的 DDL 和写入行为不同 |
+| 列级配置 | Contract 开启后可为列配置 Codec 和 TTL，并支持复杂 ClickHouse 类型 | 类型 Contract 要求精确匹配，不会把不同整数宽度视为兼容 |
+| 查询加速结构 | Table 支持 Data Skipping Index 和 Projection | Projection 也可配置到 Distributed Table 的本地表 |
+| 增量策略 | Legacy Default、Delete+Insert、Append、Microbatch，以及实验性的 Insert Overwrite | Microbatch 要求 dbt-core 1.9+；Insert Overwrite 依赖 `partition_by`，对 Distributed Materialization 尚不完整 |
+| Materialized View | `materialized_view` 把源表新写入的数据转换后写入 Target | 它处理新写入数据，不是周期性全量刷新对象 |
+| 实验性对象 | Dictionary、Distributed Table、Distributed Incremental | 官方明确标为 Experimental，Distributed Incremental 对各增量策略的支持并不完全相同 |
+| Contract 与 Constraint | 支持精确列类型 Contract；Constraint 主要限于整表 `CHECK` | Primary Key、Foreign Key、Unique 和列级 Check Constraint 不在其支持范围内 |
+| 连接与集群 | HTTP/Native Driver、TLS/HTTPS、证书校验和客户端证书、Retry、连接/收发 Timeout、压缩、`ON CLUSTER` | Cluster 配置是 Distributed Materialization 的前提；Retry 只针对可重试异常 |
+
+#### 6.3.3 Snowflake
+
+依据：[dbt 官方 Snowflake 配置说明](https://docs.getdbt.com/reference/resource-configs/snowflake-configs)。
+
+| 功能域 | 公开能力 | 关键边界 |
+| --- | --- | --- |
+| 模型与高级对象 | 标准 SQL Model、Dynamic Table、Snowpark Python Model、Iceberg Table；还可通过 dbt Package 管理 Semantic View | 各对象的 Config 并不完全通用，例如 Dynamic Table 只支持其声明的配置集合 |
+| 增量策略 | Merge、Append、Delete+Insert、Insert Overwrite、Microbatch | Snowflake Insert Overwrite 覆盖整表，不按分区覆盖；`overwrite_columns` 可控制写入列 |
+| Dynamic Table | `target_lag` 支持时间间隔或 `downstream`，并支持 `on_configuration_change` | 查询本身变化时通常需要 Full Refresh；Dynamic Table SQL 受 Snowflake 自身限制 |
+| 表物理属性 | `cluster_by`、Transient Table、Automatic Clustering；增量临时 Relation 可选择 View、Temporary 或 Transient | `cluster_by` 会同时影响建表结果排序和 Clustering Key；部分旧的 Automatic Clustering 配置已经没有实际作用 |
+| Python Model | 通过 Snowpark 执行，可声明 Python 版本、Package、Import、Secret 和 External Access Integration | 可用 Python/Package 受 Snowflake Snowpark 环境限制 |
+| 计算资源 | Profile 设置默认 Warehouse，Model、Snapshot 和 Data Test 可覆盖 Warehouse | 适合按任务大小分配计算资源，但会影响成本和构建时间 |
+| 查询追踪 | Profile 或 Model 可设置 Query Tag，执行前写入 Session，完成后恢复 | Materialization 中途失败时，Session Tag 可能未被恢复 |
+| 权限与安全 | `copy_grants`、Secure View | Dynamic Table 的 `copy_grants` 要求 dbt-snowflake 1.11+；Secure View 可能带来性能开销 |
+| Source Freshness | 可从 Snowflake `LAST_ALTERED` 元数据计算 Freshness | `LAST_ALTERED` 也会被 DDL 和后台元数据维护更新，不只代表数据变化 |
+
+#### 6.3.4 Databricks
+
+依据：[dbt 官方 Databricks 配置说明](https://docs.getdbt.com/reference/resource-configs/databricks-configs)。
+
+| 功能域 | 公开能力 | 关键边界 |
+| --- | --- | --- |
+| 模型与高级对象 | SQL Model、Python Model、Materialized View、Streaming Table | Materialized View 和 Streaming Table 要求 Unity Catalog 与 Serverless SQL Warehouse |
+| 增量策略 | Append、Insert Overwrite、Merge、Replace Where、Delete+Insert、Microbatch | 多项策略只适用于 Delta；Delete+Insert 从 1.11 起提供，Microbatch 基于 `event_time` 生成 Replace Where 条件 |
+| 表格式与位置 | Iceberg Table Format；Delta、Hudi、Parquet、ORC 等 File Format；`location_root` 可控制存储位置 | 不同格式支持的增量、Snapshot 和 Schema Evolution 能力不同 |
+| 分区与布局 | `partition_by`、Liquid Clustering、Auto Liquid Clustering、固定 Bucket、Table Properties 和 Compression | 部分 Materialization 不能同时配置 Liquid Clustering 和普通 Partition；部分能力有 Adapter 版本要求 |
+| Materialized View / Streaming Table | 支持 Partition、Liquid Clustering、Properties、Tag、Cron、固定间隔或上游更新触发，以及配置变化处理 | `every`、`on_update`、Tag、Row Filter 等能力有 1.11/1.12 版本要求；两类对象的变更处理并不完全相同 |
+| 治理 | 表/列 Tag、Column Mask、Row Filter、Query Tag | Row Filter 只支持部分 Materialization，并要求 Unity Catalog |
+| 计算资源 | SQL Model 可按 Model 选择 SQL Warehouse 或 Cluster；Python Model 可选择 All-Purpose、Job 或 Serverless 方式 | 未配置时使用 Profile 中 `http_path` 指向的默认 Compute |
+| Python Workflow | 可配置 Job Cluster、Retry、通知、前后置任务和 Workflow 权限 | 这些是 Python Workflow 提交能力，不代表普通 SQL Model 都具有同样的任务配置 |
+| 版本边界 | 新版 Incremental 使用 `INSERT BY NAME` 防止列顺序错位 | dbt-databricks 1.11 的 Incremental 要求 Databricks Runtime 12.2 LTS+ |
+
+#### 6.3.5 BigQuery
+
+依据：[dbt 官方 BigQuery 配置说明](https://docs.getdbt.com/reference/resource-configs/bigquery-configs)。
+
+| 功能域 | 公开能力 | 关键边界 |
+| --- | --- | --- |
+| 命名空间 | dbt `database` 对应 Project，`schema` 对应 Dataset，可跨 Project/Dataset 读写 | 权限、Region 和 Dataset Location 仍必须匹配 |
+| 模型与高级对象 | 标准 SQL Model、Materialized View、BigQuery DataFrames 或 Dataproc Python Model | Python Model 的执行方式、依赖和权限与普通 SQL Model 不同 |
+| 增量策略 | Merge、Insert Overwrite、Microbatch；还可启用 Change History | Merge 要求有效的 `unique_key`；Change History 是 BigQuery 表能力，不等同于 dbt Snapshot |
+| 分区覆盖 | Insert Overwrite 可静态指定分区，也可从临时表动态识别分区；`copy_partitions` 可调用 Copy Table API 替换分区 | Insert Overwrite 要求分区表；Copy Partitions 只适用于动态分区替换 |
+| 分区与集群 | 结构化 `partition_by` 描述字段、类型、粒度和整数 Range；支持 `require_partition_filter`、分区过期和 `cluster_by` | 分区粒度和可用数据类型由 BigQuery 限制 |
+| Materialized View | 支持自动刷新开关、刷新间隔、最大陈旧时间、分区、Cluster、过期、Label、Tag、KMS 和配置变化策略 | `max_staleness` 在官方页面仍标为 Preview；部分配置变化需要 Drop/Create |
+| 资源路由 | Target、Project 或 Model 可通过 `reservation` 选择 BigQuery Reservation | Model 配置优先级最高，最终仍受 GCP Reservation 权限约束 |
+| 治理与安全 | Table/View Label、Job Label、Resource Tag、列级 Policy Tag、KMS、Authorized View 和 `grant_access_to` | Job Label 通过 Query Comment 转换；Policy Tag 还要求列级 `persist_docs` 和 IAM 权限 |
+| 生命周期 | 支持表/分区过期时间 | 表过期优先于分区过期，过期后数据不可继续查询 |
+
+#### 6.3.6 Trino
+
+依据：[dbt 官方 Trino 配置说明](https://docs.getdbt.com/reference/resource-configs/trino-configs)、
+[dbt-trino 官方仓库](https://github.com/starburstdata/dbt-trino)。
+
+| 功能域 | 公开能力 | 关键边界 |
+| --- | --- | --- |
+| 多 Catalog | Profile 指定目标 Catalog 和 Schema，Relation 使用 `catalog.schema.table`；可跨不同 Connector 查询 | 能否创建、改名、删除、Merge 或刷新对象取决于目标 Connector |
+| 基础物化 | Table、View、Incremental、Materialized View、Seed、Snapshot | Materialized View、Snapshot 精度等能力仍取决于 Connector |
+| Table 生命周期 | `on_table_exists` 可选 Rename、Drop、Replace、Skip，Full Refresh 也复用这些模式 | Replace 需要 Connector 支持 `CREATE OR REPLACE`；AWS Glue 等环境可能不能 Rename |
+| View 安全 | `view_security` 可选 Definer 或 Invoker | Connector 不支持 View 时需要关闭 `views_enabled` 或改用 Table |
+| 增量策略 | Append、Delete+Insert、Merge，并支持 `on_schema_change` | Merge 和 Delete 能力由 Connector 决定；当前官方配置文档和主分支没有把 Microbatch 列为已支持策略 |
+| Hive 分区覆盖 | Hive Connector 可通过 Session Property 把本批涉及的已有分区设为 Overwrite | 这是 Connector Session Property 的行为，不是名为 `insert_overwrite` 的 dbt 增量策略 |
+| Materialized View | 后续每次 `dbt run` 执行 Refresh，可配置 Properties 和 Full Refresh | 目标 Connector 必须实现 Trino Materialized View 和 Refresh |
+| Connector Properties | Model 可传入文件格式、分区、Bucket 等 Table Properties | 同一个 Property 在不同 Connector 中可能不存在或语义不同 |
+| Session Property | Profile 可设置默认 Session Property，Model 可通过 Pre-hook 临时覆盖 | Model 级覆盖依靠 Hook，不是统一的 Model Config |
+| Seed | Prepared Statement 批量写入，默认批大小可通过宏调整 | 大量列和行可能触发 Python HTTP Header 长度限制 |
+| Grants 与 Contract | Grants 适用于 Starburst Enterprise、Starburst Galaxy 和 SQL-standard Hive；Contract 支持 `not_null` | 最终仍要求 Connector 和授权模式支持相应语法 |
+
 ## 7. dbt-doris 下一步重点补什么
 
 当前 dbt-doris 已经可以完成连接、Table/View、Seed、Test、Docs、基础
