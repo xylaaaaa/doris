@@ -6,20 +6,7 @@
 >
 > 适用范围：dbt-doris v1 / v2 Adapter 路线选型
 
-## 1. 结论
-
-**当前开发主线：dbt-doris v1。**
-
-现在选择 v1 的主要原因是：
-
-- dbt Core 2.0 仍处于 Alpha，正式发布日期仍为 `TBD`；
-- 官方可用的 v2 Adapter 仍全部处于 Preview 或 Beta，Doris 尚未进入矩阵；
-- v2 社区 Adapter 采用 `dbt-core` Rust 单仓库贡献模式，
-  前置条件包括 ADBC Driver、dbt Labs 的评审、CI 和版本发布；
-- v1 第三方 Adapter 的开发和独立发布机制成熟，
-  dbt Core v1.12 仍支持到 2027-07-15。
-
-## 2. 这里的 v1 和 v2 分别是什么
+## 1. 这里的 v1 和 v2 分别是什么
 
 本文中的 v1、v2 指 dbt Framework 的两代运行时。下面三种写法各有独立含义：
 
@@ -41,7 +28,7 @@ dbt v2 指新的 Rust Engine。它有两个发行形态：
 v2 采用新的 Adapter 代码组织、连接 Driver、执行基础设施和发布方式，
 Adapter 需要按新架构接入。
 
-## 3. v2 什么时候发布，目前是什么状态
+## 2. v2 什么时候发布，目前是什么状态
 
 “v2 已经发布”需要拆成几个时间点理解：
 
@@ -70,7 +57,7 @@ Fusion Adapter Preview 表示已支持范围内的功能稳定并具备生产使
 表中日期分别对应各个 Minor 版本。整个 v1 系列当前按各 Minor 版本
 分别计算生命周期，后续支持窗口以官方是否发布新的 v1.x 为准。
 
-## 4. 哪些产品已经有 v2 Adapter
+## 3. 哪些产品已经有 v2 Adapter
 
 [官方 Fusion 可用性矩阵](https://docs.getdbt.com/docs/fusion/fusion-availability)
 当前只列出六个 Adapter：
@@ -104,7 +91,7 @@ Doris 尚未进入官方列出的占位项。
 | 源码中存在占位或部分实现 | 已有继续贡献代码的基础，产品状态为待完善 |
 | 只有成熟 v1 Adapter | v2 接入方式为按新架构移植 |
 
-## 5. 当前选择 v1 的依据
+## 4. 当前选择 v1 的依据
 
 | 评估项 | 当前选择 v1 | 当前选择 v2 |
 | --- | --- | --- |
@@ -121,11 +108,11 @@ Doris 尚未进入官方列出的占位项。
 选择 v1 的代价是后续需要按 Rust 新架构移植 Adapter。可以复用的核心资产是
 Config 语义、Doris SQL、Macro 行为和兼容测试，Python 接入层进入重新实现范围。
 
-## 6. 官方提供的 v1 到 v2 迁移方法
+## 5. 官方提供的 v1 到 v2 迁移方法
 
 官方迁移方法分为“dbt 用户项目升级”和“数据库 Adapter 移植”两类。
 
-### 6.1 dbt 用户项目升级：有自动辅助工具
+### 5.1 dbt 用户项目升级：有自动辅助工具
 
 [官方 Upgrading to v2 指南](https://docs.getdbt.com/docs/dbt-versions/core-upgrade/upgrading-to-v2)
 提供了：
@@ -139,7 +126,7 @@ Config 语义、Doris SQL、Macro 行为和兼容测试，Python 接入层进入
 这些工具用于处理 Model、YAML、Macro、Package 和 Job 等**用户项目代码**。
 Doris v2 Adapter 的实现采用下一节的人工移植路线。
 
-### 6.2 Adapter 实现移植：官方人工指南
+### 5.2 Adapter 实现移植：官方人工指南
 
 官方已经发布
 [Contribute a dbt Core 2.0 adapter](https://docs.getdbt.com/guides/adapter-creation-v2?step=1)，
@@ -163,9 +150,9 @@ v2 的官方社区贡献方式是：
 
 > 按新架构手工移植 Adapter，并向 `dbt-core` 贡献实现。
 
-## 7. v1 Adapter 后续怎样移植到 v2
+## 6. v1 Adapter 后续怎样移植到 v2
 
-### 7.1 可以复用的资产
+### 6.1 可以复用的资产
 
 | v1 资产 | v2 中的去向 |
 | --- | --- |
@@ -178,7 +165,7 @@ v2 的官方社区贡献方式是：
 | Doris Config | 复用名称和行为设计；最终用户写法由 v2 的配置位置、Schema 注册和 Macro 读取 API 验证结果确定 |
 | Functional Test | 作为 v1/v2 行为等价的验收基线 |
 
-### 7.2 需要按 v2 重新接入的代码
+### 6.2 需要按 v2 重新接入的代码
 
 | v1 组件 | v2 的处理方式 |
 | --- | --- |
@@ -191,7 +178,7 @@ v2 的官方社区贡献方式是：
 先做 v1 可以沉淀 Doris SQL、Macro/Materialization 语义、Config 契约、
 元数据规则和测试。Python 类属于 v2 的重新接入范围。
 
-### 7.3 Doris Driver 的前置条件
+### 6.3 Doris Driver 的前置条件
 
 官方把 ADBC Driver 列为 v2 Adapter 的硬前置条件。
 v2 移植的第一项基础工作是准备可注册的 Doris ADBC Driver。
@@ -209,7 +196,7 @@ Driver，这是未来最值得验证的候选路线。迁移阶段需要验证�
 单独协调，通用机制仍在建设中。社区 Adapter CI 也由 dbt Labs Adapter
 团队协作完成。这些上游依赖构成当前开发 v2 的交付风险。
 
-## 8. 最终决策表
+## 7. 最终决策表
 
 | 问题 | 结论 |
 | --- | --- |
@@ -222,7 +209,7 @@ Driver，这是未来最值得验证的候选路线。迁移阶段需要验证�
 | Adapter 的官方迁移方法？ | 按官方人工指南将 Python Adapter 功能映射到 Rust 新架构，并向 `dbt-core` 贡献实现 |
 | v1 哪些工作可以复用？ | Doris SQL、Macro 行为、Config 契约、元数据规则和 Functional Test |
 
-## 9. 资料来源
+## 8. 资料来源
 
 dbt 官方资料：
 
