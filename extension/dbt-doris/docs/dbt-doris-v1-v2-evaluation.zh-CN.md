@@ -6,15 +6,7 @@
 >
 > 适用范围：dbt-doris v1 / v2 Adapter 路线选型
 
-## 1. 这里的 v1 和 v2 分别是什么
-
-本文中的 v1、v2 指 dbt Framework 的两代运行时。下面三种写法各有独立含义：
-
-| 写法 | 实际含义 |
-| --- | --- |
-| `dbt-doris==1.0.0` | Doris Adapter 自身版本 |
-| `config-version: 2` | `dbt_project.yml` 格式版本 |
-| YAML 中的 `version: 2` | Model、Source、Test 等属性文件格式 |
+## 1. dbt v1 和 v2 分别是什么
 
 dbt v1 指 Python 实现的 dbt Core 1.x，以及通过 Python Package
 独立安装的数据库 Adapter。当前 dbt-doris 就属于这条路线。
