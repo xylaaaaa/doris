@@ -15,17 +15,57 @@
 
 ## 0. 一句话结论
 
-这个任务要让用户可以在 dbt Model 中写：
+这个任务要让用户在 dbt Model 中只写 Config 和查询内容：
 
 ```sql
-{{ config(materialized='materialized_view') }}
+-- models/mv_daily_sales.sql
+
+{{ config(
+    materialized='materialized_view',
+    refresh_method='auto',
+    refresh_trigger='schedule'
+) }}
+
+select
+    order_date,
+    sum(pay_amount) as sales_amount
+from {{ ref('fact_orders') }}
+group by order_date
+```
+
+其中，Config 告诉 dbt“把结果构建成异步物化视图”，下面的 `SELECT` 定义
+“物化视图计算什么”。dbt-doris 负责把编译后的 `SELECT` 包装成类似下面的
+Doris DDL：
+
+```sql
+CREATE MATERIALIZED VIEW `mv_daily_sales`
+REFRESH AUTO
+ON SCHEDULE ...
+AS
+select
+    order_date,
+    sum(pay_amount) as sales_amount
+from `fact_orders`
+group by order_date;
+```
+
+Hook 是通过 `pre_hook` 或 `post_hook` 配置，在 Model 构建前或构建后额外执行的
+SQL。没有专用 Materialization 时，用户可能被迫使用下面这种临时绕法：
+
+```sql
+-- 仅用于说明 Hook 绕法，不是推荐写法
+
+{{ config(
+    pre_hook="DROP MATERIALIZED VIEW IF EXISTS mv_daily_sales",
+    post_hook="CREATE MATERIALIZED VIEW mv_daily_sales REFRESH AUTO ON MANUAL AS SELECT ..."
+) }}
 
 select ...
 ```
 
-然后由 dbt-doris 把 Model 编译成 Doris 的异步物化视图 DDL，管理对象的创建、
-识别、刷新、配置变化、重建和删除，而不是让用户在 Hook 中手写
-`CREATE MATERIALIZED VIEW`。
+这种方式要求用户自己拼接完整 DDL，并处理对象识别、重复运行、配置变化、重建和
+删除。#65967 的目标就是让这些工作由 dbt-doris 完成，用户只维护正常的 Config
+和 `SELECT`。
 
 这里支持的是 **Doris Async Materialized View**，不是 Doris Sync Materialized
 View，也不是把普通 dbt Table 改一个名字。
