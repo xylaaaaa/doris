@@ -245,65 +245,9 @@ dbt 的 Lineage 仍来自 Model 中的 `ref()`；Data Test、Docs 和下游 Mode
 
 dbt 不会自己模拟 Doris 的存储聚合，也不需要在编译阶段计算最终聚合结果。
 
-## 4. 为什么当前实现不能直接支持
+## 4. 对外 Config 设计
 
-当前 Table 构建主路径是：
-
-```text
-macros/materializations/table/table.sql
-        |
-        v
-doris__create_table_as(...)
-        |
-        v
-CREATE TABLE ... AS SELECT ...
-```
-
-相关实现文件：
-
-- `dbt/include/doris/macros/materializations/table/table.sql`
-- `dbt/include/doris/macros/materializations/table/create_table_as.sql`
-- `dbt/include/doris/macros/adapters/relation.sql`
-- `dbt/adapters/doris/impl.py`
-
-当前 `doris__create_table_as` 可以插入：
-
-- Duplicate Key；
-- 表注释；
-- Partition；
-- Distribution；
-- Properties。
-
-Incremental 的另一条路径还可以生成 Unique Key。
-
-但是当前列处理只是在开启 Contract 时，把查询结果写成：
-
-```sql
-select
-    cast(column_a as type_a),
-    cast(column_b as type_b)
-from (...)
-```
-
-它不是下面这种物理列定义：
-
-```sql
-column_a BIGINT SUM
-```
-
-所以只增加：
-
-```jinja
-{% macro doris__aggregate_key() %}
-  AGGREGATE KEY (...)
-{% endmacro %}
-```
-
-仍然不够，Doris 会发现 Value 列没有声明聚合函数。
-
-## 5. 对外 Config 设计
-
-### 5.1 推荐的新入口
+### 4.1 推荐的新入口
 
 建议统一为：
 
@@ -329,7 +273,7 @@ aggregate_functions:
 最后声明该模型独有的选项
 ```
 
-### 5.2 兼容现有配置
+### 4.2 兼容现有配置
 
 现有项目不能被强制迁移，建议使用下面的兼容规则：
 
@@ -345,7 +289,7 @@ aggregate_functions:
 第一阶段不删除 `duplicate_key` 或改变 Incremental 的 `unique_key` 语义。
 统一入口先服务于 Aggregate Key，并为后续整理另外两种模型提供迁移路径。
 
-### 5.3 必须在编译期校验的规则
+### 4.3 必须在编译期校验的规则
 
 Adapter 应在执行 DDL 前完成以下校验：
 
@@ -375,9 +319,9 @@ Doris 返回一条难以定位的建表失败。
 - 对复杂类型和版本边界交给 Doris 做最终校验；
 - 在错误信息中同时显示列名、数据类型和聚合函数。
 
-## 6. 具体需要修改哪些代码
+## 5. 具体需要修改哪些代码
 
-### 6.1 `dbt/adapters/doris/impl.py`
+### 5.1 `dbt/adapters/doris/impl.py`
 
 在 `DorisConfig` 中增加统一配置的类型声明：
 
@@ -400,7 +344,7 @@ class DorisConfig(AdapterConfig):
 不建议在这里执行数据库操作。配置互斥、列顺序和函数覆盖检查更适合放在一个
 统一的校验宏或纯 Python 校验函数中，并为它单独写 Unit Test。
 
-### 6.2 `dbt/include/doris/macros/adapters/relation.sql`
+### 5.2 `dbt/include/doris/macros/adapters/relation.sql`
 
 建议新增四类宏：
 
@@ -436,7 +380,7 @@ doris__aggregate_column_definitions()
 }
 ```
 
-### 6.3 `dbt/include/doris/macros/materializations/table/create_table_as.sql`
+### 5.3 `dbt/include/doris/macros/materializations/table/create_table_as.sql`
 
 保留现有 CTAS 宏供 Duplicate/Unique 等路径使用，另外增加两个宏：
 
@@ -464,7 +408,7 @@ INSERT INTO (...) SELECT ...
 现有 `doris__table_colume_type(sql)` 中的 Contract 校验和 CAST 投影可以抽成
 一个复用宏，让 CTAS 和 Aggregate INSERT 使用同一套列对齐逻辑。
 
-### 6.4 `dbt/include/doris/macros/materializations/table/table.sql`
+### 5.4 `dbt/include/doris/macros/materializations/table/table.sql`
 
 在构建中间表的位置增加表模型分支：
 
@@ -502,7 +446,7 @@ INSERT INTO (...) SELECT ...
 
 这样 Aggregate Key 能继续复用 Table Materialization 已有的替换语义。
 
-### 6.5 `dbt/include/doris/macros/adapters/columns.sql`
+### 5.5 `dbt/include/doris/macros/adapters/columns.sql`
 
 新增显式物理列定义的渲染逻辑。它与当前 Contract CAST 的用途不同：
 
@@ -522,7 +466,7 @@ INSERT INTO (...) SELECT ...
 默认值、NULL 属性和其他 Constraint 可以在已有 Contract 能力完善后统一接入，
 不应为 Aggregate Key 再创建一套相互独立的 Constraint 语义。
 
-### 6.6 `dbt/adapters/doris/doris_column_item.py`
+### 5.6 `dbt/adapters/doris/doris_column_item.py`
 
 如果继续复用当前 `DorisColumnItem`，应把“查询 CAST”和“DDL 列定义”拆成两个
 明确的方法，例如：
@@ -535,7 +479,7 @@ get_aggregate_column_definition(aggregate_function)
 不要继续使用 `get_table_column_constraint()` 同时表达两种不同 SQL 位置，
 否则后续接入 Default、Nullable 和 Column Constraint 时容易混淆。
 
-## 7. 为什么第一阶段不直接支持 Incremental
+## 6. 为什么第一阶段不直接支持 Incremental
 
 Aggregate Key 可以接收持续写入，但这不代表它天然满足 dbt Incremental
 的可重复执行语义。
@@ -566,9 +510,9 @@ Doris 按表定义正确执行了 `SUM`，但 dbt 任务因为重复处理同一
 如果 `table_type`、`keys` 或 `aggregate_functions` 发生变化，Incremental
 目标表也不能继续沿用，应要求 Full Refresh 或执行明确的重建流程。
 
-## 8. 可以参考其他 Adapter 的什么
+## 7. 可以参考其他 Adapter 的什么
 
-### 8.1 StarRocks：参考统一表模型入口
+### 7.1 StarRocks：参考统一表模型入口
 
 dbt-starrocks 公开使用：
 
@@ -584,7 +528,7 @@ keys: [...]
 `table_type` 说明也只列出 Primary、Duplicate 和 Unique。因此可以借鉴它的
 Config 结构，不能直接复制一个现成的 Aggregate Key 实现。
 
-### 8.2 ClickHouse：参考“数据库物理设计属于 Model Config”
+### 7.2 ClickHouse：参考“数据库物理设计属于 Model Config”
 
 dbt-clickhouse 允许 Model 配置：
 
@@ -606,7 +550,7 @@ partition_by: [...]
 ClickHouse 的 Aggregate State 与 Doris 的 Value 列聚合函数不是同一种语义，
 因此只能参考分层方式，不能直接复用其 SQL。
 
-### 8.3 对比结论
+### 7.3 对比结论
 
 | 产品 | 公开做法 | 对 dbt-doris 的启发 |
 | --- | --- | --- |
@@ -614,9 +558,9 @@ ClickHouse 的 Aggregate State 与 Doris 的 Value 列聚合函数不是同一�
 | ClickHouse | `engine + order_by + partition_by`，复杂聚合类型由 Model SQL 明确产生 | 原生物理设计进入 Config，精确 Schema 由 Model/Contract 配合 |
 | Doris 目标方案 | `table_type + keys + aggregate_functions` | 在统一入口上增加 Doris 独有的逐列聚合语义 |
 
-## 9. 测试应该怎样补
+## 8. 测试应该怎样补
 
-### 9.1 Unit Test
+### 8.1 Unit Test
 
 在 `test/unit/test_macro_behavior.py` 增加以下用例：
 
@@ -633,7 +577,7 @@ ClickHouse 的 Aggregate State 与 Doris 的 Value 列聚合函数不是同一�
 11. Aggregate Key 配置到 Incremental 时编译失败；
 12. 现有 Duplicate/Unique SQL 保持不变。
 
-### 9.2 Functional Test
+### 8.2 Functional Test
 
 建议新增：
 
@@ -656,7 +600,7 @@ test/functional/adapter/test_doris_aggregate_table.py
 控制时不适合依赖同一批数据的输入顺序做精确断言，可重点检查 DDL，或者为测试
 设计不同批次的确定性写入。
 
-### 9.3 回归检查
+### 8.3 回归检查
 
 实现完成后至少执行：
 
@@ -670,7 +614,7 @@ test/functional/adapter/test_doris_aggregate_table.py
 同时回归现有 Table、Incremental、Contract、Partition 和 Persist Docs
 测试，确认统一配置解析没有改变旧项目行为。
 
-## 10. 建议的实现顺序
+## 9. 建议的实现顺序
 
 ### 第一阶段：Table 主路径
 
@@ -701,7 +645,7 @@ test/functional/adapter/test_doris_aggregate_table.py
 4. 表模型或聚合函数变化时的 Full Refresh 提示；
 5. Schema Change 边界。
 
-## 11. 验收标准
+## 10. 验收标准
 
 第一阶段满足下面条件，才可以认为 dbt-doris 支持 Aggregate Key：
 
@@ -715,7 +659,7 @@ test/functional/adapter/test_doris_aggregate_table.py
 - 原有 Duplicate Key、Unique Key、Table 和 Incremental 行为不变；
 - 文档明确第一阶段不支持 Aggregate Incremental。
 
-## 12. 参考资料
+## 11. 参考资料
 
 - [Apache Doris Aggregate Model](https://doris.apache.org/docs/dev/table-design/data-model/aggregate/)
 - [Apache Doris CREATE TABLE](https://doris.apache.org/docs/4.x/sql-manual/sql-statements/table-and-view/table/CREATE-TABLE/)
@@ -724,7 +668,7 @@ test/functional/adapter/test_doris_aggregate_table.py
 - [dbt-starrocks](https://github.com/StarRocks/dbt-starrocks)
 - [dbt-clickhouse Materializations](https://clickhouse.com/docs/integrations/connectors/data-ingestion/etl-tools/dbt/materializations)
 
-## 13. 最后结论
+## 12. 最后结论
 
 Aggregate Key 在 dbt-doris 中不应该只是增加一段
 `AGGREGATE KEY (...)` SQL。
