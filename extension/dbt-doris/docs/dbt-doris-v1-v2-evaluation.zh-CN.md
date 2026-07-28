@@ -10,13 +10,6 @@
 
 **当前开发主线：dbt-doris v1。**
 
-采用顺序推进路线：
-
-1. 当前选择 v1 作为唯一开发主线；
-2. 期间跟踪 v2 的版本、Adapter 接入和 Driver 状态；
-3. v2 达到本文定义的迁移门槛后，结束 v1 功能开发；
-4. 集中资源将 Config、Doris SQL 语义和兼容测试顺序移植到 v2。
-
 现在选择 v1 的主要原因是：
 
 - dbt Core 2.0 仍处于 Alpha，正式发布日期仍为 `TBD`；
@@ -25,11 +18,6 @@
   前置条件包括 ADBC Driver、dbt Labs 的评审、CI 和版本发布；
 - v1 第三方 Adapter 的开发和独立发布机制成熟，
   dbt Core v1.12 仍支持到 2027-07-15。
-
-一句话概括：
-
-> 当前选择 v1；等 v2 的运行时、Doris Driver 和官方接入路径达到
-> 可交付条件后，将开发主线切换到 v2。
 
 ## 2. 这里的 v1 和 v2 分别是什么
 
@@ -82,9 +70,6 @@ Fusion Adapter Preview 表示已支持范围内的功能稳定并具备生产使
 表中日期分别对应各个 Minor 版本。整个 v1 系列当前按各 Minor 版本
 分别计算生命周期，后续支持窗口以官方是否发布新的 v1.x 为准。
 
-因此，选择 v1 需要持续跟踪最新受支持 Minor 版本，并在每个版本的
-支持窗口内重新评估 v2 的成熟度。
-
 ## 4. 哪些产品已经有 v2 Adapter
 
 [官方 Fusion 可用性矩阵](https://docs.getdbt.com/docs/fusion/fusion-availability)
@@ -135,14 +120,6 @@ Doris 尚未进入官方列出的占位项。
 
 选择 v1 的代价是后续需要按 Rust 新架构移植 Adapter。可以复用的核心资产是
 Config 语义、Doris SQL、Macro 行为和兼容测试，Python 接入层进入重新实现范围。
-
-选择结果按季度复核，重点关注：
-
-- Core 2.0 生命周期；
-- Doris 是否进入官方 Adapter 路线；
-- 社区 Adapter API、CI 和发布流程；
-- Doris ADBC Driver 的可用性和分发方式；
-- 最新 v1 Minor 版本及其支持期限。
 
 ## 6. 官方提供的 v1 到 v2 迁移方法
 
@@ -232,53 +209,11 @@ Driver，这是未来最值得验证的候选路线。迁移阶段需要验证�
 单独协调，通用机制仍在建设中。社区 Adapter CI 也由 dbt Labs Adapter
 团队协作完成。这些上游依赖构成当前开发 v2 的交付风险。
 
-## 8. 什么时候开始 v2，届时怎么切换
-
-### 8.1 开始 v2 移植的门槛
-
-满足以下条件后，再停止扩展 v1 并启动 v2：
-
-1. Core 2.0 和社区 Adapter 接口至少进入团队可以承诺兼容的稳定阶段，
-   例如 Beta、RC 或 GA；
-2. dbt Labs 明确接受 Doris Adapter 的贡献，并确认评审、CI、合入和
-   版本发布路径；
-3. 已存在可供 dbt Core v2 注册的 Doris ADBC Driver 候选，
-   并且安装和分发路径明确；
-4. v1 的基础功能、Config 契约和 Functional Test 已经稳定，可作为迁移基线；
-5. 团队有足够时间在当时使用的 v1 Minor 版本 EOL 前完成移植和用户迁移。
-
-Adapter 接口、Driver 和发布路径共同决定 v2 移植的启动时间，
-GA 生命周期作为稳定性判断依据之一。
-
-### 8.2 顺序迁移步骤
-
-达到门槛后按以下顺序推进：
-
-1. **冻结 v1 功能**：v1 进入维护模式，只处理严重缺陷；
-2. **验证 Driver**：确认 Doris ADBC 的连接、执行、元数据、错误和网络行为；
-3. **接入 v2 基础模块**：注册 `AdapterType` 和 Driver，接入 Profile、
-   Auth、Relation、Column、类型和元数据；
-4. **移植 Doris Macro**：移植 Table、View、Incremental、Seed、
-   Snapshot、Catalog 及 Doris Config；
-5. **做行为等价验证**：复用 v1 Functional Test，对比 Doris 对象、
-   数据结果、错误和 Artifact；
-6. **准备安装文档**：说明 `profiles.yml`、Driver 共享库的准确名称、
-   获取方式和安装位置；
-7. **走官方发布流程**：提交 `dbt-core` PR，由 dbt Labs Adapter
-   团队协作运行社区 CI，等待合入和发布；
-8. **迁移用户项目**：使用 `dbt-autofix`、`--use-v2-parser` 和官方升级指南
-   处理项目级兼容问题；
-9. **切换默认版本**：v2 达到基础能力等价且迁移、回退文档就绪后，
-   再把 v2 设为默认。
-
-迁移末期可以有一段短期 v1/v2 双运行来做验收和回退验证，
-该阶段的研发主线只有 v2。
-
-## 9. 最终决策表
+## 8. 最终决策表
 
 | 问题 | 结论 |
 | --- | --- |
-| 当前开发哪一版？ | v1。v2 达到迁移门槛后再切换开发主线 |
+| 当前开发哪一版？ | v1 |
 | v2 什么时候发布的？ | Fusion 于 2025-05-28 首次公开；Core 2.0 开源双发行路线于 2026-06-01 公布；截至 2026-07-28 Core 2.0 仍为 Alpha，GA 日期为 `TBD` |
 | 哪些产品已经有 v2？ | 官方可用矩阵只有 Snowflake、BigQuery、Databricks、Redshift、Spark 和 DuckDB，且都仍是 Preview/Beta |
 | Doris v2 当前状态？ | 尚未进入官方可用矩阵和官方列出的待完善占位项 |
@@ -286,9 +221,8 @@ GA 生命周期作为稳定性判断依据之一。
 | dbt 项目的官方迁移方法？ | 使用 `dbt-autofix`、`--use-v2-parser` 和官方兼容检查 |
 | Adapter 的官方迁移方法？ | 按官方人工指南将 Python Adapter 功能映射到 Rust 新架构，并向 `dbt-core` 贡献实现 |
 | v1 哪些工作可以复用？ | Doris SQL、Macro 行为、Config 契约、元数据规则和 Functional Test |
-| 什么时候转 v2？ | Core/Adapter 接口、Doris ADBC Driver、上游合入发布路径和 v1 行为基线均达到迁移门槛后，冻结 v1 再顺序移植 |
 
-## 10. 资料来源
+## 9. 资料来源
 
 dbt 官方资料：
 
