@@ -564,7 +564,7 @@ dbt 用户通常期望 Adapter 提供的标准能力。
 
 | 方向 | 当前基础 | 下一步重点 |
 | --- | --- | --- |
-| [Incremental](foundation/incremental.zh-CN.md) | 已有 Append、Unique Key Upsert 和自定义分区替换 | 统一策略名称和语义，接入 Doris 原生 Insert Overwrite，并补 Schema Change 和 Full Refresh 边界 |
+| [Incremental 实施方案](foundation/incremental.zh-CN.md) / [代码与完整实战](dbt-doris-incremental-code-guide.zh-CN.md) | 已有 Append、Unique Key Upsert 和自定义分区替换 | 统一策略名称和语义，接入 Doris 原生 Insert Overwrite，并补 Schema Change 和 Full Refresh 边界 |
 | [Snapshot](foundation/snapshot.zh-CN.md) | Check Strategy 主路径可用 | 补 Timestamp Strategy、稳定替换和异常恢复 |
 | [Test 与 Contract](foundation/tests-and-contracts.zh-CN.md) | 基础数据测试和用户 Unit Test 可运行，Contract 有基础列校验 | 扩大标准测试覆盖，完善类型、约束、失败记录和 Unit Test 兼容 |
 | [Docs 与 Freshness](foundation/docs-and-freshness.zh-CN.md) | Docs/Catalog 主路径和 `loaded_at_field` Freshness 可用 | 完善各类 Model 的说明持久化、元数据 Freshness 和 Catalog 查询 |
