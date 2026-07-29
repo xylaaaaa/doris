@@ -6,8 +6,8 @@
 | --- | --- |
 | 文档目的 | 解释 dbt Incremental 与 Doris Async Materialized View 的区别、优缺点和选型边界 |
 | 调研范围 | dbt Core、Apache Doris、StarRocks、BigQuery、Databricks、Snowflake、ClickHouse |
-| 本地实现基线 | `extension/dbt-doris`，检查日期 2026-07-28 |
-| 说明 | “目标能力”不代表 dbt-doris 当前已经支持，当前状态以第 9 节为准 |
+| 本地实现基线 | `extension/dbt-doris`，检查日期 2026-07-29 |
+| 说明 | “目标能力”不代表 dbt-doris 当前已经支持，当前状态以第 8 节为准 |
 
 ## 0. 一句话结论
 
@@ -24,13 +24,12 @@ Materialized View 是 dbt 部署视图定义和刷新配置，后续由 Doris �
 - 两者不是互斥关系。常见做法是先用 Incremental 维护标准业务表，再在其上建立
   Async MV 加速报表查询。
 
-## 1. 先把三个容易混淆的“增量”分开
+## 1. 先把两个容易混淆的“增量”分开
 
 | 名称 | 它是什么 | 谁决定本次处理什么数据 |
 | --- | --- | --- |
 | dbt Incremental Model | dbt 的一种 Materialization，最终对象是普通 Doris Table | Model 中的 `is_incremental()` 条件和 `incremental_strategy` |
 | Doris Async MV 的增量刷新 | 分区 Async MV 使用 `PARTITION BY` 和 `REFRESH AUTO` | Doris 根据底表分区版本判断哪些 MV 分区失效 |
-| Doris Sync MV | 写入底表时同步维护的索引型物化结构 | Doris 在底表写入过程中同步维护 |
 
 因此，Doris 文档中的 **Incremental Materialized View** 不是
 `materialized='incremental'`。它指的是能够按分区增量刷新的 **Async
@@ -183,9 +182,105 @@ Async MV:
 dbt 部署定义 -> Doris 观察底表变化 -> Doris 决定刷新范围并维护结果
 ```
 
-## 4. Incremental 的优缺点
+## 4. 什么时候选择 Incremental
 
-### 4.1 优点
+### 4.1 适用场景
+
+当目标是**维护一张有明确业务语义的普通表**，并且需要自己控制哪些数据更新、
+怎样更新时，优先选择 Incremental。
+
+典型场景包括：
+
+- 订单、客户、商品等明细表，需要按业务 Key 更新；
+- 订单取消、退款、状态变化等行级修正；
+- 需要自己定义迟到数据回看窗口；
+- 需要处理软删除、去重或复杂业务规则；
+- 下游系统必须直接依赖一张稳定的普通 Table；
+- 每次数据发布都要和其他 dbt Model、Test 放在同一个 Job 中完成。
+
+### 4.2 例子：维护每个订单的最新状态
+
+假设 `ods_orders` 会不断收到订单状态变化：
+
+```text
+10:00  order_id=1001, status=PAID
+10:05  order_id=1001, status=SHIPPED
+第二天 order_id=1001, status=REFUNDED
+```
+
+目标表 `fct_orders_latest` 要保证每个订单只有一行，并保留最新状态。这是业务模型
+维护问题，适合使用 Incremental：
+
+```sql
+-- models/fct_orders_latest.sql
+
+{{
+    config(
+        materialized='incremental',
+        incremental_strategy='insert_overwrite',
+        unique_key=['order_id']
+    )
+}}
+
+with changed_orders as (
+    select
+        order_id,
+        customer_id,
+        order_status,
+        pay_amount,
+        update_time
+    from {{ ref('ods_orders') }}
+
+    {% if is_incremental() %}
+    where update_time >= (
+        select date_sub(
+            coalesce(max(update_time), '1970-01-01 00:00:00'),
+            interval 2 day
+        )
+        from {{ this }}
+    )
+    {% endif %}
+),
+
+latest_orders as (
+    select
+        order_id,
+        customer_id,
+        order_status,
+        pay_amount,
+        update_time,
+        row_number() over (
+            partition by order_id
+            order by update_time desc
+        ) as row_num
+    from changed_orders
+)
+
+select
+    order_id,
+    customer_id,
+    order_status,
+    pay_amount,
+    update_time
+from latest_orders
+where row_num = 1
+```
+
+这里 dbt Model 明确决定：
+
+- 用 `update_time` 找本批可能变化的订单；
+- 回看两天以覆盖迟到更新；
+- 用 `row_number()` 取每个订单的最新记录；
+- 用 `order_id` 更新目标表中的旧订单；
+- 每次外部调度器执行 `dbt run` 后，目标表才发布新结果。
+
+Async MV 不适合代替这张表，因为这里关注的是业务 Key 更新、迟到数据规则和确定的
+发布结果，而不是重复查询的加速。
+
+> 当前 dbt-doris 的 `insert_overwrite` 实际使用 Doris Unique Key Upsert，名称与
+> 真正的 Insert Overwrite 语义不一致；上例按当前实现名称书写。
+
+### 4.3 优点
 
 1. **业务规则可控**
 
@@ -211,7 +306,7 @@ dbt 部署定义 -> Doris 观察底表变化 -> Doris 决定刷新范围并维�
 
    一次 dbt Job 可以串联多个 Model、Test 和下游依赖，成功后再统一发布数据。
 
-### 4.2 缺点
+### 4.4 缺点
 
 1. **增量正确性由开发者承担**
 
@@ -236,9 +331,98 @@ dbt 部署定义 -> Doris 观察底表变化 -> Doris 决定刷新范围并维�
    如果历史计算公式改变，只更新新数据无法修正旧结果，通常要重建整表或显式回刷
    历史分区。
 
-## 5. Async Materialized View 的优缺点
+## 5. 什么时候选择 Async Materialized View
 
-### 5.1 优点
+### 5.1 适用场景
+
+当标准业务表已经存在，目标是**减少重复计算并加速一类查询**，而且能够接受异步
+刷新延迟时，优先选择 Async MV。
+
+典型场景包括：
+
+- BI 看板反复执行相同或相近的聚合；
+- 多个查询重复 Join 同一组事实表和维表；
+- 按天或按小时分区的事实表，每次只变化少量分区；
+- 湖仓外表查询代价高，希望把结果物化到 Doris；
+- 希望由 Doris 管理 Schedule、分区失效和刷新任务；
+- 希望用户仍查询原始表，由 Doris 自动做透明查询改写。
+
+### 5.2 例子：加速每天的门店品类销售看板
+
+假设已经通过其他 dbt Model 得到稳定的：
+
+- `fct_orders`：按 `order_time` 每天分区的订单事实表；
+- `dim_shop`：门店维表；
+- `dim_category`：商品品类维表。
+
+看板每隔几分钟都会查询“每天、门店、品类的销售额”。原始查询需要反复扫描订单并
+Join 两张维表，但业务可以接受最多一小时的刷新延迟，因此适合建立 Async MV。
+
+下面是 dbt-doris 的**目标用户接口**，当前版本尚未实现：
+
+```sql
+-- models/mv_daily_shop_category_sales.sql
+
+{{
+    config(
+        materialized='materialized_view',
+        build_mode='immediate',
+        refresh_method='auto',
+        refresh_trigger='schedule',
+        refresh_schedule={
+            'every': 1,
+            'unit': 'hour'
+        },
+        partition_by={
+            'column': 'order_day'
+        },
+        distributed_by=['shop_id'],
+        buckets=8
+    )
+}}
+
+select
+    date_trunc(o.order_time, 'day') as order_day,
+    o.shop_id,
+    s.shop_name,
+    o.category_id,
+    c.category_name,
+    sum(o.pay_amount) as sales_amount,
+    count(*) as order_count
+from {{ ref('fct_orders') }} o
+join {{ ref('dim_shop') }} s
+    on o.shop_id = s.shop_id
+join {{ ref('dim_category') }} c
+    on o.category_id = c.category_id
+group by
+    date_trunc(o.order_time, 'day'),
+    o.shop_id,
+    s.shop_name,
+    o.category_id,
+    c.category_name
+```
+
+dbt-doris 负责把 Config 和编译后的查询转换成 Doris Async MV DDL；Doris 负责：
+
+```text
+fct_orders 某一天的分区发生变化
+  -> 标记对应的 MV 日期分区失效
+  -> 每小时刷新任务重算该 MV 分区
+  -> 后续看板查询使用预计算结果
+```
+
+在这个场景中：
+
+- 第一次 `dbt run` 用于部署 MV 定义和刷新策略；
+- SQL、分区或刷新 Config 改变时，再执行 `dbt run` 更新定义；
+- 平时的数据刷新由 Doris Schedule 完成，不需要每小时再调一次 dbt；
+- 维表发生变化时可能影响多个甚至全部 MV 分区，因此维表应相对稳定，并评估刷新
+  成本。
+
+如果目标是维护订单最新状态、处理退款和软删除，应该选择 Incremental；如果业务表
+已经正确，问题只是看板反复计算太慢，才是 Async MV 的典型场景。
+
+### 5.3 优点
 
 1. **刷新由 Doris 管理**
 
@@ -263,7 +447,7 @@ dbt 部署定义 -> Doris 观察底表变化 -> Doris 决定刷新范围并维�
 
    刷新调度、分区状态、资源组和查询改写能够在 Doris 内统一管理。
 
-### 5.2 缺点
+### 5.4 缺点
 
 1. **只能做到最终一致**
 
@@ -300,12 +484,12 @@ dbt 部署定义 -> Doris 观察底表变化 -> Doris 决定刷新范围并维�
 | --- | --- | --- |
 | 维护订单、客户等标准业务明细表 | Incremental | 需要业务 Key、更新和删除语义 |
 | 构建下游必须直接依赖的 DWD/DWS 表 | Incremental | 普通表的发布和依赖边界更明确 |
-| 每小时更新一张复杂的业务宽表 | 优先 Incremental | Model 可精确控制数据修正和发布 |
+| 定时发布一张复杂的业务宽表 | 优先 Incremental | Model 可精确控制数据修正和发布 |
 | 加速固定报表聚合或重复 Join | Async MV | Doris 可预计算并透明改写多个查询 |
-| 按天分区的事实表，只改少量近期分区 | Async MV 很合适 | Doris 可自动识别并覆盖变化分区 |
+| 加速按天分区的事实表查询，每次只变化少量分区 | Async MV 很合适 | Doris 可自动识别并覆盖变化分区 |
 | 需要按主键修正任意历史行 | Incremental | Upsert/Delete+Insert 更直接 |
 | SQL 含跨表复杂计算，但允许分钟级延迟 | Async MV | 可用异步刷新换取查询性能 |
-| 必须强一致、底表写完立即可见 | Async MV 不合适 | 应评估 Sync MV 或直接查询底表 |
+| 底表变化后必须立即得到最新结果 | 两者都不直接满足 | Incremental 要等待 `dbt run`，Async MV 要等待刷新任务 |
 | 无分区底表且数据量很大 | 谨慎使用 Async MV | 可能退化为 Full Refresh |
 | 需要一次 Job 完成构建、测试和数据发布 | Incremental | dbt 调度边界更清楚 |
 
@@ -328,31 +512,9 @@ fct_orders 标准事实表
 这里 Incremental 解决“数据模型怎样正确维护”，Async MV 解决“重复查询怎样更快”。
 职责清楚，也避免把所有业务正确性寄托在查询加速对象上。
 
-## 7. Sync MV 在这个选择中的位置
+## 7. 其他 Adapter 怎么实现
 
-Sync MV 与 Async MV 都由 Doris 维护，但目标不同：
-
-| 对比项 | Sync MV | Async MV |
-| --- | --- | --- |
-| 一致性 | 与底表写入强一致 | 异步刷新，最终一致 |
-| 刷新方式 | 底表写入时同步维护 | Manual、Schedule 或 Commit 触发任务 |
-| SQL 范围 | 主要是单表过滤、排序、表达式和聚合 | 支持更复杂的 Join 和聚合 |
-| 是否可直接查询 | 不可作为普通表直接查询，依靠改写 | 可以直接查询，也可透明改写 |
-| 写入影响 | 每次底表写入都要同步维护，MV 多时会拖慢导入 | 刷新与底表写入解耦 |
-| 典型用途 | 实时单表聚合、前缀索引、预过滤 | 跨表预计算、周期报表、湖仓加速 |
-
-简单判断：
-
-- 要求底表写完后结果立即一致，并且是单表加速：看 Sync MV；
-- 能接受一定延迟，需要复杂 Join、分区刷新或直接查询：看 Async MV；
-- 需要业务 Key、迟到数据和发布流程由 dbt 明确控制：看 Incremental。
-
-本需求中的 `materialized='materialized_view'` 应先明确支持 **Async MV**。Sync MV
-的对象归属、创建语法和生命周期不同，不应悄悄复用同一套默认行为。
-
-## 8. 其他 Adapter 怎么实现
-
-### 8.1 总览
+### 7.1 总览
 
 | Adapter / 产品 | 普通增量表 | 数据库维护的物化对象 | 对 dbt-doris 的启示 |
 | --- | --- | --- | --- |
@@ -362,91 +524,31 @@ Sync MV 与 Async MV 都由 Doris 维护，但目标不同：
 | dbt-snowflake | `incremental`，支持 Merge、Append、Delete+Insert 等 | 使用 `dynamic_table`，而非原生 MV Materialization | 当平台对象语义特殊时，应使用清晰的专用名称和 Config |
 | dbt-clickhouse | 多种 Incremental Strategy | `materialized_view` 是 Insert Trigger 语义 | 同名对象在不同数据库中语义不同，Adapter 必须明确说明 |
 
-### 8.2 StarRocks：最接近 Doris 的参考
+### 7.2 对选型有用的共同结论
 
-dbt-starrocks 同时提供：
+其他 Adapter 的共同做法可以归纳成三点：
 
-- `materialized='incremental'`；
-- `materialized='materialized_view'`；
-- Incremental 的 Append、Insert Overwrite、Dynamic Overwrite 和 Microbatch；
-- MV 的 Partition、Distribution、Bucket、Properties 和 Refresh 配置。
+1. Incremental 和数据库维护的物化对象是两个独立的 Materialization；
+2. Incremental 暴露 Merge、Append、Overwrite、Microbatch 等“怎样写普通表”的
+   策略；
+3. Materialized View、Dynamic Table 或 Streaming Table 暴露 Refresh、Schedule、
+   Staleness 等“数据库怎样维护对象”的配置。
 
-它没有把异步 MV 做成 `incremental_strategy='materialized_view'`。这说明即使两者都
-能“只处理变化数据”，生命周期仍然不同：
+其中：
 
-- Incremental 每次运行都执行数据写入；
-- Materialized View 的 dbt 运行主要负责创建和配置对象；
-- 物化视图后续刷新由数据库任务完成。
+- StarRocks 与 Doris 最接近，同时提供 `incremental` 和 `materialized_view`；
+- BigQuery 把自动刷新间隔和最大陈旧时间作为 MV Config；
+- Databricks 把 Incremental Table、Materialized View 和 Streaming Table 分开；
+- Snowflake 用 `dynamic_table` 表达由平台维护目标延迟的对象；
+- ClickHouse 的 `materialized_view` 是 Insert Trigger 语义，说明同名对象在不同
+  数据库中也可能拥有不同的刷新模型。
 
-对 dbt-doris 最直接的启示是：实现两个独立入口，共享底层的标识符、Properties
-和 Relation 工具，但不要共享同一套数据写入生命周期。
+这些实现共同说明：用户选择的不是两种相似的增量算法，而是“由 dbt 维护业务表”
+还是“由数据库维护查询加速对象”。
 
-### 8.3 BigQuery：把自动刷新暴露为 Materialized View Config
+## 8. dbt-doris 当前实现到哪里
 
-dbt-bigquery 的 Incremental 支持：
-
-- `merge`；
-- `insert_overwrite`；
-- `microbatch`。
-
-它还独立支持 `materialized_view`，并把 `enable_refresh`、
-`refresh_interval_minutes` 和 `max_staleness` 等平台能力暴露为 Config。
-dbt 监控 Config 变化，能 `ALTER` 的配置就原地修改，SQL 定义等不能修改的变化则
-需要重建对象。
-
-启示：
-
-1. Refresh Config 是 Materialized View 的一等配置，不是 Hook 字符串；
-2. dbt 应区分“本次部署是否成功”和“后台数据是否已经刷新”；
-3. `on_configuration_change` 应优先修改可变配置，不能修改时才 Drop/Create。
-
-### 8.4 Databricks：Incremental Table、MV 和 Streaming Table 三条路径
-
-dbt-databricks 的 Incremental 可以按存储格式选择 Append、Insert Overwrite、
-Merge、Replace Where、Delete+Insert 和 Microbatch。另一方面，它把平台托管的
-Materialized View 和 Streaming Table 做成独立 Materialization，并支持 Schedule、
-Partition、Cluster、Table Properties 等配置。
-
-启示：
-
-- 写表策略解决“这一批怎样合并进普通表”；
-- MV/Streaming Table 解决“平台怎样持续维护派生对象”；
-- 即使能力有重叠，也应按对象类型和控制权拆开，而不是追求一个万能 Incremental。
-
-### 8.5 Snowflake：语义不同就使用 `dynamic_table`
-
-dbt-snowflake 的普通 Incremental 支持 Merge、Append、Delete+Insert、
-Insert Overwrite 和 Microbatch。对于由 Snowflake 自动维护的派生结果，Adapter
-使用：
-
-```sql
-{{ config(
-    materialized='dynamic_table',
-    snowflake_warehouse='COMPUTE_WH',
-    target_lag='1 minute'
-) }}
-```
-
-`target_lag` 表达的是平台负责维持的目标延迟，而不是 dbt 每分钟重跑一次 Model。
-
-启示：dbt Materialization 名称要反映数据库对象的真实语义。Doris 已经有明确的
-Async MV 对象，因此使用 `materialized_view` 合理；但 Config 仍应直接表达 Doris
-的 Build、Refresh Method 和 Trigger，而不是照搬 Snowflake 的 `target_lag`。
-
-### 8.6 ClickHouse：同名 Materialized View，刷新模型不同
-
-dbt-clickhouse 的 Incremental 支持 Append、Delete+Insert、Insert Overwrite、
-Microbatch 等策略。它的 `materialized_view` 则对应 ClickHouse 的 Insert Trigger：
-源表插入新行时，视图查询只处理新插入的数据，并把结果写入目标表。
-
-这与 Doris Async MV 的“创建刷新任务、检测分区失效、重算物化分区”不同。
-
-启示：dbt 的 Materialization 负责把统一概念映射到数据库真实能力，但不能因为
-都叫 `materialized_view` 就宣称各平台拥有相同的一致性、刷新和删除处理语义。
-
-## 9. dbt-doris 当前实现到哪里
-
-### 9.1 Incremental 当前已实现
+### 8.1 Incremental 当前已实现
 
 本地代码
 [`incremental.sql`](../dbt/include/doris/macros/materializations/incremental/incremental.sql)
@@ -467,10 +569,11 @@ Microbatch 等策略。它的 `materialized_view` 则对应 ClickHouse 的 Inser
 - 标准 Incremental Strategy Dispatch 接口；
 - Microbatch 和 Dynamic Overwrite 等高级能力。
 
-### 9.2 Async Materialized View 当前未实现
+### 8.2 Async Materialized View 当前未实现
 
-当前 dbt-doris 没有 `materialized_view` Materialization，不能把 dbt Model 原生
-编译成 Doris Async MV DDL。对应需求见：
+dbt Core 已经提供通用的 `materialized_view` 生命周期框架，但当前 dbt-doris
+尚未实现 Doris 所需的 Dispatch Macro、Relation Type 识别和 Config 映射，因此
+还不能把 dbt Model 原生编译成 Doris Async MV DDL。对应需求见：
 
 [`dbt-doris-issue-65967-async-materialized-view-requirements.zh-CN.md`](dbt-doris-issue-65967-async-materialized-view-requirements.zh-CN.md)。
 
@@ -483,9 +586,9 @@ Microbatch 等策略。它的 `materialized_view` 则对应 ClickHouse 的 Inser
 - Drop、Rename、Relation Cache 与返回结果；
 - 刷新任务触发、状态观察和错误处理边界。
 
-## 10. 对 dbt-doris 的设计建议
+## 9. 对 dbt-doris 的设计建议
 
-### 10.1 保持两个独立 Materialization
+### 9.1 保持两个独立 Materialization
 
 建议明确提供：
 
@@ -511,7 +614,7 @@ incremental_strategy='async_materialized_view'
 `is_incremental()`、`--full-refresh`、Hook、Schema Change 和运行结果的语义全部
 变得含混。
 
-### 10.2 分别补齐各自的基础能力
+### 9.2 分别补齐各自的基础能力
 
 Incremental 优先补：
 
@@ -534,7 +637,7 @@ Async MV 优先补：
 Dynamic Overwrite、Microbatch、外表变化感知增强和高级查询改写配置可以在基础
 生命周期稳定后继续建设。
 
-### 10.3 不让 dbt 重复实现 Doris 的刷新算法
+### 9.3 不让 dbt 重复实现 Doris 的刷新算法
 
 dbt-doris 应负责：
 
@@ -558,16 +661,15 @@ Doris 应继续负责：
 Adapter 不应另外维护一套“上次刷新到哪个分区”的状态来替代 Doris，这会造成两套
 状态源和更复杂的恢复问题。
 
-## 11. 最终选型口诀
+## 10. 最终选型口诀
 
 ```text
 要维护一张业务表，选 Incremental；
 要让 Doris 自动维护预计算结果，选 Async MV；
-要底表写入后立即强一致，而且只是单表加速，评估 Sync MV；
 要既保证业务模型正确又加速查询，Incremental + Async MV 分层组合。
 ```
 
-## 12. 官方资料
+## 11. 官方资料
 
 ### dbt
 
@@ -580,7 +682,6 @@ Adapter 不应另外维护一套“上次刷新到哪个分区”的状态来替
 - [Incremental Materialized View](https://doris.apache.org/docs/4.x/key-features/incremental-materialized-view/)
 - [Async Materialized View Overview](https://doris.apache.org/docs/4.x/query-acceleration/materialized-view/async-materialized-view/overview/)
 - [Manage and Query Async Materialized Views](https://doris.apache.org/docs/4.x/query-acceleration/materialized-view/async-materialized-view/functions-and-demands/)
-- [Sync Materialized View](https://doris.apache.org/docs/4.x/query-acceleration/materialized-view/sync-materialized-view/)
 
 ### 其他 Adapter
 
