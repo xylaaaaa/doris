@@ -2,8 +2,8 @@
 
 > 本文同时面向 dbt 使用者和 dbt-doris 开发者。
 > 当前状态以仓库中的 dbt-doris 1.0.0 实现为准；[`setup.py`](../setup.py) 声明的
-> dbt Core 最低版本为 1.10.4。文中标为“未来设计示意”的 SQL
-> **不是当前 dbt-doris 会生成的 SQL**。
+> dbt Core 最低版本为 1.10.4。当前支持状态统一看第 1 节；第 4～9 节只说明
+> 每种策略正确的配置、SQL 和结果。
 
 ## 1. 先看结论
 
@@ -359,7 +359,7 @@ dbt debug --profiles-dir profiles
 
 示例使用单副本表，便于在单 BE 开发集群执行。生产环境应按实际集群设置副本数。
 
-## 4. 已实现：Append 游戏事件日志
+## 4. Append：游戏事件日志
 
 ### 4.1 场景
 
@@ -456,7 +456,7 @@ select
 from `dbt_incremental_lab`.`raw_game_events`
 ```
 
-当前 Adapter 发送的核心 Doris SQL形态是：
+Adapter 发送的核心 Doris SQL 形态是：
 
 ```sql
 CREATE TABLE `dbt_incremental_lab`.`game_event_fact`
@@ -596,18 +596,15 @@ HAVING count(*) > 1;
 这不是 dbt-doris 的异常，而是 `append` 的标准语义。若业务要求同 Key 更新而不是
 保留重复行，需要 Upsert、Merge 或 Delete+Insert。
 
-## 5. 已实现但命名有问题：外卖订单 Unique Key Upsert
+## 5. Unique Key Upsert：外卖订单状态
 
 ### 5.1 场景
 
 外卖订单会从“已接单”变成“配送中”或“已送达”。本批可能既有旧订单的完整新状态，
 也有第一次出现的新订单。目标表只需要保留每个 `order_id` 的最新完整状态。
 
-这正是当前 dbt-doris 已实现的 Unique Key Upsert，但用户必须暂时写成：
-
-```python
-incremental_strategy='insert_overwrite'
-```
+这个策略按 `order_id` 判断记录是否已经存在：存在时更新完整订单状态，不存在时
+插入新订单，本批没有出现的订单继续保留。
 
 ### 5.2 准备第一批源数据
 
@@ -656,7 +653,7 @@ sources:
 {{
     config(
         materialized='incremental',
-        incremental_strategy='insert_overwrite',
+        incremental_strategy='unique_key_upsert',
         unique_key=['order_id'],
         distributed_by=['order_id'],
         buckets=1,
@@ -681,7 +678,7 @@ where change_seq > (
 {% endif %}
 ```
 
-这里的 Model 必须返回完整的新行。当前实现没有提供“只更新部分列”的独立语义。
+这里的 Model 必须返回完整的新行。
 
 ### 5.4 第一次执行
 
@@ -689,7 +686,7 @@ where change_seq > (
 dbt run --profiles-dir profiles --select delivery_order_current
 ```
 
-首次运行的 Model 查询读取三条源数据。当前 Adapter 生成的是 Unique Key CTAS：
+首次运行的 Model 查询读取三条源数据，并生成 Unique Key CTAS：
 
 ```sql
 CREATE TABLE `dbt_incremental_lab`.`delivery_order_current`
@@ -746,7 +743,7 @@ where change_seq > (
 )
 ```
 
-当前 Materialization 会先确认目标是 Unique Key 表：
+策略先确认目标是 Unique Key 表：
 
 ```sql
 SHOW CREATE TABLE `dbt_incremental_lab`.`delivery_order_current`;
@@ -764,7 +761,7 @@ INSERT INTO `dbt_incremental_lab`.`delivery_order_current`
 );
 ```
 
-请注意，SQL 是 `INSERT INTO`，没有 `OVERWRITE`。更新行为来自目标表的
+这条 SQL 使用 `INSERT INTO` 写入 Unique Key 表，更新行为来自目标表的
 `UNIQUE KEY(order_id)`。
 
 验证：
@@ -791,72 +788,14 @@ ORDER BY order_id;
 - 本批没有出现的 `order_id=102` 和 `103` 继续保留；
 - 总行数从 3 变成 4，而不是只剩本批的 2 行。
 
-现有 Functional Test 验证的也是同一语义：一条旧 Key 更新、一条新 Key 插入、
-一条不在本批的历史记录保留。
+### 5.6 实现要求
 
-### 5.6 为什么说名字有问题
-
-Unique Key Upsert 的语义是：
-
-```text
-本批出现的 Key       -> 更新或新增
-本批没有出现的旧 Key -> 保留
-```
-
-Insert Overwrite 的语义是：
-
-```text
-被覆盖分区中的旧数据 -> 整体移除
-本批分区数据         -> 成为该分区的完整新内容
-其他分区             -> 保留
-```
-
-两个策略在“本批没有出现的旧 Key”上会得到相反结果，不能只把当前实现理解成
-Insert Overwrite 的另一种写法。
-
-### 5.7 缺少 `unique_key` 会发生什么
-
-如果 Model 写成：
-
-```sql
-{{
-    config(
-        materialized='incremental',
-        incremental_strategy='insert_overwrite'
-    )
-}}
-
-select * from {{ source('delivery', 'order_changes') }}
-```
-
-执行：
-
-```bash
-dbt run --profiles-dir profiles --select delivery_order_current
-```
-
-会在策略校验阶段失败，错误信息核心内容是：
-
-```text
-Incremental strategy 'insert_overwrite' requires a 'unique_key' config on model
-model.doris_incremental_lab.delivery_order_current.
-
-Either add the key columns:
-    {{ config(materialized='incremental', unique_key=['<your_key>']) }}
-or, if appending every row is what you want, say so explicitly:
-    {{ config(materialized='incremental', incremental_strategy='append') }}
-```
-
-此时不会为这个 Model 创建目标表或执行 Incremental DML。
-
-如果连 `incremental_strategy` 也不写：
-
-```sql
-{{ config(materialized='incremental') }}
-select ...
-```
-
-结果相同，因为当前默认值就是 `insert_overwrite`。
+- 必须配置 `unique_key`；
+- 首次运行必须创建 Doris Unique Key 表；
+- 第二次运行前必须确认目标仍然是 Unique Key 表；
+- Model 必须为本批 Key 返回完整的新行；
+- 本批出现的 Key 更新或新增，本批没有出现的 Key 保持不变；
+- 目标表原来是其他 Key 模型时，必须通过 Full Refresh 重建。
 
 ## 6. 官方 Insert Overwrite：正确实现
 
@@ -1041,7 +980,7 @@ FROM `dbt_incremental_lab`.`daily_ad_attribution__dbt_tmp`;
   `INSERT OVERWRITE TABLE target PARTITION (*) SELECT ...`；
 - 覆盖失败时必须保留原分区，并清理本轮临时 Relation。
 
-## 7. Delete+Insert：当前未实现
+## 7. Delete+Insert：订单明细修正
 
 ### 7.1 场景
 
@@ -1121,45 +1060,39 @@ where correction_seq > (
 {% endif %}
 ```
 
-### 7.3 当前两轮执行会发生什么
-
-第一次执行：
+### 7.3 第一次执行
 
 ```bash
 dbt run --profiles-dir profiles --select restaurant_order_detail
 ```
 
-当前真实错误：
+第一次运行读取全部源数据并创建目标表：
 
-```text
-Invalid incremental strategy provided: delete+insert
-Expected one of: 'append', 'insert_overwrite'
+```sql
+CREATE TABLE `dbt_incremental_lab`.`restaurant_order_detail`
+UNIQUE KEY (`order_id`)
+COMMENT ''
+DISTRIBUTED BY HASH (`order_id`) BUCKETS 1
+PROPERTIES ("replication_num" = "1") AS
+SELECT
+    order_id,
+    correction_seq,
+    restaurant_id,
+    dish_count,
+    payable_amount,
+    corrected_at
+FROM `dbt_incremental_lab`.`raw_order_corrections`;
 ```
 
-第二次执行仍会得到同一个错误，因为第一次没有创建目标表：
-
-```bash
-dbt run --profiles-dir profiles --select restaurant_order_detail
-```
-
-策略校验发生在首次建表、临时表和 Hook 之前。该 Model 没有 CTAS、Delete 或
-Insert SQL 发往 Doris。
-
-虽然 [`help.sql`](../dbt/include/doris/macros/materializations/incremental/help.sql)
-里存在 `tmp_delete()`，但仓库中没有调用点，而且它也没有接入
-`get_incremental_delete_insert_sql`。一个未被调用的辅助宏不能算功能支持。
-
-### 7.4 正确实现后的第二批过程
-
-> **未来设计示意，当前 dbt-doris 不会生成下面的 SQL，也不会得到下面的结果。**
-
-假设未来首次运行已经得到：
+第一次结果：
 
 | order_id | correction_seq | restaurant_id | dish_count | payable_amount |
 | ---: | ---: | ---: | ---: | ---: |
 | 201 | 1 | 81 | 2 | 45.00 |
 | 202 | 2 | 81 | 1 | 28.00 |
 | 203 | 3 | 93 | 4 | 96.00 |
+
+### 7.4 第二次执行
 
 第二批把 201 的菜品数量和金额改正，同时新增 204：
 
@@ -1169,13 +1102,11 @@ INSERT INTO dbt_incremental_lab.raw_order_corrections VALUES
     (204, 5, 93, 2, 52.00, '2026-07-28 12:31:00');
 ```
 
-用户仍然执行：
-
 ```bash
 dbt run --profiles-dir profiles --select restaurant_order_detail
 ```
 
-未来策略应先把本批 Model 结果放入临时表，然后按 `unique_key` 删除并插入：
+策略先把本批 Model 结果放入临时表，再按 `unique_key` 删除旧行并插入完整新行：
 
 ```sql
 DELETE FROM `dbt_incremental_lab`.`restaurant_order_detail` DBT_INTERNAL_DEST
@@ -1201,10 +1132,17 @@ FROM `dbt_incremental_lab`.`restaurant_order_detail__dbt_tmp`;
 | 204 | 5 | 93 | 2 | 52.00 |
 
 201 的旧行被完整替换，204 被新增，202 和 203 没有出现在本批中，因此保留。
-Doris 仓库的 `delete_p0/test_delete_using.groovy` 已有 `DELETE FROM ... USING`
-语法测试；dbt-doris 仍需补表模型约束、事务边界、组合 Key 和失败恢复。
 
-## 8. Merge：当前未实现
+### 7.5 实现要求
+
+- 必须配置一个或多个 `unique_key`；
+- Delete 和 Insert 必须使用同一份临时表结果；
+- 组合 Key 的每个字段都必须加入 Delete 匹配条件；
+- Delete 成功而 Insert 失败时不能留下永久缺失数据；
+- 本批没有出现的 Key 不参与删除，继续保留；
+- 临时表必须在成功或失败后正确清理。
+
+## 8. Merge：会员等级更新
 
 ### 8.1 场景
 
@@ -1279,28 +1217,40 @@ where change_seq > (
 {% endif %}
 ```
 
-### 8.3 当前真实执行结果
-
-第一次和第二次运行都会在同一个校验点失败：
+### 8.3 第一次执行
 
 ```bash
 dbt run --profiles-dir profiles --select member_level_current
 ```
 
-```text
-Invalid incremental strategy provided: merge
-Expected one of: 'append', 'insert_overwrite'
+第一次运行读取全部源数据并创建 Unique Key 目标表：
+
+```sql
+CREATE TABLE `dbt_incremental_lab`.`member_level_current`
+UNIQUE KEY (`member_id`)
+COMMENT ''
+DISTRIBUTED BY HASH (`member_id`) BUCKETS 1
+PROPERTIES ("replication_num" = "1") AS
+SELECT
+    member_id,
+    change_seq,
+    member_level,
+    points,
+    updated_at
+FROM `dbt_incremental_lab`.`raw_member_changes`;
 ```
 
-没有该 Model 的建表或 Merge DML 发往 Doris。当前 Unique Key Upsert 能实现这个
-简单案例的最终数据效果，但它不等于 dbt 的标准 Merge 接口，也没有接入
-`merge_update_columns`、`merge_exclude_columns` 或 Incremental Predicates。
+第一次结果：
 
-### 8.4 正确实现后的第二批过程
+| member_id | change_seq | member_level | points |
+| ---: | ---: | --- | ---: |
+| 301 | 1 | silver | 1200 |
+| 302 | 2 | gold | 5600 |
+| 303 | 3 | bronze | 300 |
 
-> **未来设计示意，当前 dbt-doris 不会生成下面的 SQL，也不会得到下面的结果。**
+### 8.4 第二次执行
 
-假设未来第一次运行已创建 Doris Unique Key 目标，并写入 301、302、303。第二批：
+第二批把会员 301 升级为 Gold，同时新增会员 304：
 
 ```sql
 INSERT INTO dbt_incremental_lab.raw_member_changes VALUES
@@ -1314,7 +1264,7 @@ INSERT INTO dbt_incremental_lab.raw_member_changes VALUES
 dbt run --profiles-dir profiles --select member_level_current
 ```
 
-未来的核心 Doris SQL 可以是：
+策略把本批结果写入临时表，再生成：
 
 ```sql
 MERGE INTO `dbt_incremental_lab`.`member_level_current` AS DBT_INTERNAL_DEST
@@ -1335,7 +1285,7 @@ VALUES
      DBT_INTERNAL_SOURCE.`updated_at`);
 ```
 
-正确结果：
+最终结果：
 
 | member_id | change_seq | member_level | points |
 | ---: | ---: | --- | ---: |
@@ -1344,12 +1294,19 @@ VALUES
 | 303 | 3 | bronze | 300 |
 | 304 | 5 | bronze | 100 |
 
-Doris 仓库的 `load_p0/merge_into/test_merge_into.groovy` 已有
-`MERGE INTO ... WHEN MATCHED ... WHEN NOT MATCHED` 测试。Adapter 仍需决定支持的
-Doris 版本和表模型，并把 dbt 的列更新配置、组合 Key、NULL 安全比较和
-Predicates 正确翻译进去。
+301 匹配已有 Key，因此被更新；304 没有匹配，因此被插入；302 和 303 没有出现
+在本批中，因此保持不变。
 
-## 9. Microbatch：当前未实现
+### 8.5 实现要求
+
+- 必须正确处理单列和组合 `unique_key`；
+- Key 比较需要明确 NULL 安全语义；
+- `merge_update_columns` 只更新用户指定的列；
+- `merge_exclude_columns` 保留用户排除列的旧值；
+- Incremental Predicates 只能限制目标扫描，不能改变匹配正确性；
+- 同一个 Key 在本批出现多次时必须有确定的冲突处理规则。
+
+## 9. Microbatch：按小时处理 IoT 数据
 
 ### 9.1 场景
 
@@ -1414,6 +1371,14 @@ sources:
         begin='2026-07-28 10:00:00',
         batch_size='hour',
         lookback=1,
+        duplicate_key=['hour_start', 'device_id'],
+        partition_by=['hour_start'],
+        partition_type='RANGE',
+        partition_by_init=[
+            "PARTITION p2026072810 VALUES LESS THAN ('2026-07-28 11:00:00')",
+            "PARTITION p2026072811 VALUES LESS THAN ('2026-07-28 12:00:00')",
+            "PARTITION pmax VALUES LESS THAN (MAXVALUE)"
+        ],
         distributed_by=['device_id'],
         buckets=1,
         properties={'replication_num': '1'}
@@ -1431,7 +1396,7 @@ group by
     device_id
 ```
 
-### 9.3 当前真实执行结果
+### 9.3 按时间窗口执行
 
 ```bash
 dbt run \
@@ -1441,20 +1406,16 @@ dbt run \
   --event-time-end "2026-07-28 12:00:00"
 ```
 
-当前 dbt-doris 在自己的策略校验中拒绝 `microbatch`：
+dbt 根据 `event_time` 和 `batch_size='hour'` 把这次运行拆成两个独立批次：
 
 ```text
-Invalid incremental strategy provided: microbatch
-Expected one of: 'append', 'insert_overwrite'
+批次 1：[2026-07-28 10:00:00, 2026-07-28 11:00:00)
+批次 2：[2026-07-28 11:00:00, 2026-07-28 12:00:00)
 ```
 
-不会为 10:00 和 11:00 生成两个 Doris 批次 DML，也不会创建目标表。
+### 9.4 执行每个批次
 
-### 9.4 正确实现后应怎样拆批
-
-> **未来设计示意，当前 dbt-doris 不会生成下面的 SQL，也不会得到下面的结果。**
-
-10:00 批次的 Model 查询应被限制为：
+10:00 批次的 Model 查询：
 
 ```sql
 select
@@ -1473,15 +1434,14 @@ group by
     device_id;
 ```
 
-11:00 批次应使用：
+11:00 批次使用：
 
 ```sql
 where event_time >= '2026-07-28 11:00:00'
   and event_time <  '2026-07-28 12:00:00'
 ```
 
-每个批次还需要一种幂等的“完整批次替换”机制。对于按小时分区的 Doris 目标，
-可以设计为：
+每个批次都是该小时的完整结果，因此分别覆盖对应 Doris 分区：
 
 ```sql
 INSERT OVERWRITE TABLE `dbt_incremental_lab`.`hourly_device_temperature`
@@ -1493,28 +1453,47 @@ PARTITION (p2026072811)
 SELECT * FROM `hourly_device_temperature__dbt_tmp_2026072811`;
 ```
 
-预期结果：
+执行结果：
 
 | hour_start | device_id | reading_count | avg_temperature |
 | --- | ---: | ---: | ---: |
 | 2026-07-28 10:00:00 | 51 | 2 | 21.80 |
 | 2026-07-28 11:00:00 | 52 | 1 | 29.30 |
 
-如果后来补到一条 10:20 的晚到数据：
+### 9.5 重新处理晚到数据
+
+如果后来收到一条 10:20 的晚到数据：
 
 ```sql
 INSERT INTO dbt_incremental_lab.raw_iot_temperature VALUES
     (404, 51, '2026-07-28 10:20:00', 22.70);
 ```
 
-`lookback=1` 应让下一次运行重新处理前一个小时，覆盖后的 10:00 结果变成：
+重新执行 10:00 批次：
+
+```bash
+dbt run \
+  --profiles-dir profiles \
+  --select hourly_device_temperature \
+  --event-time-start "2026-07-28 10:00:00" \
+  --event-time-end "2026-07-28 11:00:00"
+```
+
+同一个小时被完整重算并覆盖，不会追加一条重复聚合结果：
 
 | hour_start | device_id | reading_count | avg_temperature |
 | --- | ---: | ---: | ---: |
 | 2026-07-28 10:00:00 | 51 | 3 | 22.10 |
 
-真正接入还需要声明 dbt Microbatch 能力，处理自动时间过滤、目标书签、批次重试、
-并行执行和每批幂等写入，不能只增加一个策略名称。
+### 9.6 实现要求
+
+- `event_time`、`begin` 和 `batch_size` 必须完整配置；
+- dbt 必须自动向设置了 `event_time` 的上游 Relation 下推时间范围；
+- 每个批次必须独立、幂等，可以单独重试；
+- `lookback` 用于定期重算最近的若干批次，接收晚到数据；
+- 同一个批次重复执行必须得到相同目标结果；
+- 并行批次不能同时覆盖同一个 Doris 分区；
+- 批次失败时只重试失败批次，不重复执行已经成功的批次。
 
 ## 10. 相关但不能混为一谈的能力
 
