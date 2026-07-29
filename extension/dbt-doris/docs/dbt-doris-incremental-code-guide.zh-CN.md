@@ -55,7 +55,212 @@ Upsert”的路径：
 - [`test_doris_incremental.py`](../test/functional/adapter/test_doris_incremental.py)：
   当前 Append、Upsert 和 Full Refresh 的 Doris Functional Test。
 
-### 2.1 `config`、Model SQL 和 Doris SQL 各负责什么
+### 2.1 `help.sql`、`create_table_as.sql` 和 `relation.sql` 分别做什么
+
+这三个文件都是 Incremental Materialization 使用的“零件”，真正决定调用顺序的
+总入口仍然是 `incremental.sql`：
+
+```text
+incremental.sql：组织完整运行流程
+    |
+    +-- help.sql：判断运行状态、检查目标表、把临时表写入目标表
+    |
+    +-- create_table_as.sql：通过 Model 查询创建并填充新表
+            |
+            +-- relation.sql：生成 Doris Key、分区、分布和 Properties，
+                              并执行删除、重命名、表交换等 Relation 操作
+```
+
+#### 2.1.1 `help.sql`：增量运行辅助工具
+
+[`help.sql`](../dbt/include/doris/macros/materializations/incremental/help.sql)
+主要处理“当前处于什么运行状态”和“目标表已存在后怎样写入”：
+
+| 宏 | 作用 | 当前是否使用 |
+| --- | --- | :---: |
+| `is_incremental()` | 判断本轮是不是普通增量运行 | ✅ |
+| `tmp_insert()` | 把临时表的列按目标表列顺序写入目标表 | ✅ |
+| `show_create()` | 生成 `SHOW CREATE TABLE` | ✅ |
+| `is_unique_model()` | 根据 `SHOW CREATE TABLE` 判断目标是不是 Unique Key 表 | ✅ |
+| `tmp_delete()` | 尝试通过 `__DORIS_DELETE_SIGN__` 写入删除标记 | ❌ 没有调用点 |
+
+例如第二次执行 Upsert 时，`tmp_insert()` 会生成：
+
+```sql
+INSERT INTO `dbt_incremental_lab`.`delivery_order_current`
+    (`order_id`, `order_status`, `amount`)
+(
+    SELECT
+        `order_id`, `order_status`, `amount`
+    FROM `dbt_incremental_lab`.`delivery_order_current__dbt_tmp`
+);
+```
+
+这条 SQL 本身只是普通 `INSERT INTO`：
+
+- 目标是 Duplicate Key 表时，相同 Key 的记录继续追加；
+- 目标是 Unique Key 表时，相同 Key 的新记录覆盖旧记录。
+
+因此 Append 和当前 Upsert 的结果差异来自目标表模型，不是
+`tmp_insert()` 生成了两种不同的 DML。
+
+`tmp_delete()` 虽然已经写在文件里，但当前 Materialization 没有调用它，也没有
+接入 `get_incremental_delete_insert_sql`。存在一个未使用的辅助宏，不等于
+dbt-doris 已经支持 Delete+Insert。
+
+#### 2.1.2 `create_table_as.sql`：创建并填充新表
+
+[`create_table_as.sql`](../dbt/include/doris/macros/materializations/table/create_table_as.sql)
+负责生成 CTAS。CTAS 是 `CREATE TABLE AS SELECT`，意思是用 Model 查询同时确定
+表字段并写入查询结果。
+
+`doris__create_table_as()` 用于创建 Duplicate Key 表：
+
+```sql
+CREATE TABLE `dbt_incremental_lab`.`game_event_fact`
+DUPLICATE KEY (`event_id`)
+DISTRIBUTED BY HASH (`event_id`) BUCKETS 1
+PROPERTIES ("replication_num" = "1") AS
+SELECT
+    event_id,
+    player_id,
+    event_time
+FROM `dbt_incremental_lab`.`raw_game_events`;
+```
+
+它主要用于 `append` 的首次构建。
+
+`doris__create_unique_table_as()` 用于创建 Unique Key 表：
+
+```sql
+CREATE TABLE `dbt_incremental_lab`.`delivery_order_current`
+UNIQUE KEY (`order_id`)
+DISTRIBUTED BY HASH (`order_id`) BUCKETS 1
+PROPERTIES ("replication_num" = "1") AS
+SELECT
+    order_id,
+    order_status,
+    amount
+FROM `dbt_incremental_lab`.`raw_delivery_order_changes`;
+```
+
+它用于当前名为 `insert_overwrite`、实际为 Unique Key Upsert 的首次构建。
+
+这个文件还会在以下场景使用：
+
+- 第一次创建 Incremental 目标表；
+- 第二次运行时创建只包含本批结果的临时表；
+- `--full-refresh` 时创建用于替换目标的 Backup 表；
+- 开启 Model Contract 时，通过 `doris__table_colume_type()` 校验列集合并对声明
+  类型进行 `CAST`。
+
+#### 2.1.3 `relation.sql`：把 Config 翻译成 Doris 表结构
+
+[`relation.sql`](../dbt/include/doris/macros/adapters/relation.sql)
+负责生成 Doris 特有的建表片段：
+
+| 宏 | 生成内容 |
+| --- | --- |
+| `doris__duplicate_key()` | `DUPLICATE KEY(...)` |
+| `doris__unique_key()` | `UNIQUE KEY(...)` |
+| `doris__partition_by()` | `PARTITION BY RANGE/LIST ...` |
+| `doris__distributed_by()` | `DISTRIBUTED BY HASH ... BUCKETS ...` |
+| `doris__properties()` | `PROPERTIES(...)` |
+| `doris__table_comment()` | Doris 表注释 |
+
+例如用户在 Model 中写：
+
+```jinja
+{{
+    config(
+        unique_key=['order_date', 'order_id'],
+        partition_by=['order_date'],
+        partition_type='RANGE',
+        partition_by_init=[
+            "PARTITION p202607 VALUES LESS THAN ('2026-08-01')"
+        ],
+        distributed_by=['order_id'],
+        buckets=3,
+        properties={'replication_num': '1'}
+    )
+}}
+```
+
+这些宏会把配置翻译成：
+
+```sql
+UNIQUE KEY (`order_date`, `order_id`)
+PARTITION BY RANGE (`order_date`) (
+    PARTITION p202607 VALUES LESS THAN ('2026-08-01')
+)
+DISTRIBUTED BY HASH (`order_id`) BUCKETS 3
+PROPERTIES (
+    "replication_num" = "1"
+)
+```
+
+`relation.sql` 还负责数据库对象的生命周期操作：
+
+- `doris__drop_relation()`：删除 Table 或 View；
+- `doris__rename_relation()`：重命名 Relation；
+- `exchange_relation()`：用 Doris 表交换替换目标表。
+
+例如 Full Refresh 构建好 Backup 后，`exchange_relation()` 会生成类似：
+
+```sql
+ALTER TABLE `dbt_incremental_lab`.`delivery_order_current`
+REPLACE WITH TABLE `delivery_order_current__dbt_backup`
+PROPERTIES ('swap' = 'false');
+```
+
+#### 2.1.4 三个文件怎样配合
+
+第一次运行当前 Upsert Model：
+
+```text
+incremental.sql
+    |
+    +-- 判断目标表不存在
+    |
+    v
+create_table_as.sql
+    |
+    +-- 选择 doris__create_unique_table_as()
+    |
+    v
+relation.sql
+    |
+    +-- 生成 UNIQUE KEY、PARTITION、DISTRIBUTED BY、PROPERTIES
+    |
+    v
+Doris 执行 CREATE TABLE ... AS SELECT ...
+```
+
+第二次运行：
+
+```text
+incremental.sql
+    |
+    +-- help.sql / is_unique_model()
+    |      检查目标是不是 Unique Key 表
+    |
+    +-- create_table_as.sql
+    |      创建只包含本批 Model 结果的临时表
+    |
+    +-- help.sql / tmp_insert()
+    |      INSERT INTO 目标表 SELECT ... FROM 临时表
+    |
+    +-- relation.sql / doris__drop_relation()
+           清理临时表
+```
+
+一句话概括：
+
+- `help.sql`：增量运行时怎样判断、检查和写入；
+- `create_table_as.sql`：怎样用查询创建并填充一张新表；
+- `relation.sql`：怎样把 dbt Config 翻译成 Doris 表结构和对象操作。
+
+### 2.2 `config`、Model SQL 和 Doris SQL 各负责什么
 
 下面这个 Model 包含两类信息：
 
@@ -106,7 +311,7 @@ Model SELECT + is_incremental()
 上述策略生成的 Doris DDL / DML
 ```
 
-### 2.2 `target/compiled` 不等于最终执行的全部 SQL
+### 2.3 `target/compiled` 不等于最终执行的全部 SQL
 
 `target/compiled/...sql` 主要展示经过 Jinja 渲染后的 Model 查询。对于普通
 Incremental Model，它能帮助用户确认 `source()`、`ref()` 和过滤条件怎样展开，
@@ -133,7 +338,7 @@ dbt run --debug --select <model>
 Materialization 在运行时发送的 DDL/DML。本文后面分别展示“运行时展开的
 Model 查询”和“Adapter 发送的 Doris SQL”。
 
-### 2.3 策略校验
+### 2.4 策略校验
 
 `dbt_doris_validate_get_incremental_strategy()` 当前等价于：
 
@@ -159,7 +364,7 @@ Model 查询”和“Adapter 发送的 Doris SQL”。
 dbt Core 1.2 以后允许项目通过 `get_incremental_<策略名>_sql` 扩展自定义策略，
 但当前 dbt-doris 会先执行上述白名单校验，因此也没有接通这条扩展路径。
 
-### 2.4 `is_incremental()` 什么时候为真
+### 2.5 `is_incremental()` 什么时候为真
 
 当前 Doris 宏检查：
 
@@ -180,7 +385,7 @@ Model materialized 是 incremental 或 partition
 需要注意：`is_incremental()` 只决定 Model 查询返回哪些行，并不会自动判断
 “哪些数据是新的”。时间戳、序号或回看窗口都需要用户在 Model 中写清楚。
 
-### 2.5 首次运行
+### 2.6 首次运行
 
 目标表不存在时：
 
@@ -196,7 +401,7 @@ append
 
 首次构建没有临时表，也没有先执行 `INSERT INTO`。
 
-### 2.6 第二次普通运行
+### 2.7 第二次普通运行
 
 目标表已经存在时，两条策略的主要流程实际上非常接近：
 
@@ -215,7 +420,7 @@ DROP 临时 Relation
 - Duplicate Key 表接收相同 Key 时保留多行，所以表现为 Append；
 - Unique Key 表接收相同 Key 时以新行覆盖旧行，所以表现为 Upsert。
 
-### 2.7 Full Refresh
+### 2.8 Full Refresh
 
 目标是 View 或用户传入 `--full-refresh` 时，当前代码：
 
