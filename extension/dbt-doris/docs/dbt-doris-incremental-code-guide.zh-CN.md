@@ -311,126 +311,14 @@ Model SELECT + is_incremental()
 上述策略生成的 Doris DDL / DML
 ```
 
-### 2.3 `target/compiled` 不等于最终执行的全部 SQL
+`is_incremental()` 在首次运行和 `--full-refresh` 时为 `False`，目标表已存在的
+普通增量运行才为 `True`。它只控制 Model 是否加入过滤条件，不会自动判断哪些
+数据是新的。
 
-`target/compiled/...sql` 主要展示经过 Jinja 渲染后的 Model 查询。对于普通
-Incremental Model，它能帮助用户确认 `source()`、`ref()` 和过滤条件怎样展开，
-但不会简单地等于 Doris 最终收到的一条 SQL。
-
-运行时 Materialization 还会通过多个 statement 发送：
-
-```text
-DROP 临时表
-CREATE 临时表 AS <Model 查询>
-SHOW CREATE TABLE
-INSERT INTO 目标表 SELECT ... FROM 临时表
-DROP 临时表
-```
-
-因此排查生成 SQL 时需要同时看：
-
-```bash
-dbt compile --select <model>
-dbt run --debug --select <model>
-```
-
-前者方便看编译后的 Model 查询，后者的 `logs/dbt.log` 才能看到
-Materialization 在运行时发送的 DDL/DML。本文后面分别展示“运行时展开的
-Model 查询”和“Adapter 发送的 Doris SQL”。
-
-### 2.4 策略校验
-
-`dbt_doris_validate_get_incremental_strategy()` 当前等价于：
-
-```jinja
-{% set strategy = config.get('incremental_strategy') or 'insert_overwrite' %}
-
-{% if strategy not in ['append', 'insert_overwrite'] %}
-    {{ exceptions.raise_compiler_error(...) }}
-{% endif %}
-
-{% if strategy == 'insert_overwrite' and not unique_key %}
-    {{ exceptions.raise_compiler_error(...) }}
-{% endif %}
-```
-
-这带来三个重要结果：
-
-1. `delete+insert`、`merge`、`microbatch` 和任意自定义策略都会在这里被拒绝；
-2. 当前默认策略是 `insert_overwrite`；
-3. 默认策略要求 `unique_key`，所以只写
-   `config(materialized='incremental')` 会报错。
-
-dbt Core 1.2 以后允许项目通过 `get_incremental_<策略名>_sql` 扩展自定义策略，
-但当前 dbt-doris 会先执行上述白名单校验，因此也没有接通这条扩展路径。
-
-### 2.5 `is_incremental()` 什么时候为真
-
-当前 Doris 宏检查：
-
-```text
-execute 为真
-目标 Relation 已存在
-目标类型是 Table
-Model materialized 是 incremental 或 partition
-当前没有 --full-refresh
-```
-
-条件全部满足才返回 `True`。因此：
-
-- 第一次运行：目标表不存在，执行 Model 中的全量分支；
-- 第二次普通运行：目标表存在，执行增量过滤分支；
-- `dbt run --full-refresh`：即使表存在，也执行全量分支。
-
-需要注意：`is_incremental()` 只决定 Model 查询返回哪些行，并不会自动判断
-“哪些数据是新的”。时间戳、序号或回看窗口都需要用户在 Model 中写清楚。
-
-### 2.6 首次运行
-
-目标表不存在时：
-
-```text
-append
-  -> doris__create_table_as
-  -> CREATE TABLE ... DUPLICATE KEY ... AS <Model SQL>
-
-当前 insert_overwrite
-  -> doris__create_unique_table_as
-  -> CREATE TABLE ... UNIQUE KEY ... AS <Model SQL>
-```
-
-首次构建没有临时表，也没有先执行 `INSERT INTO`。
-
-### 2.7 第二次普通运行
-
-目标表已经存在时，两条策略的主要流程实际上非常接近：
-
-```text
-DROP 临时 Relation
-  -> CREATE TABLE 临时 Relation AS <本轮 Model SQL>
-  -> 当前 Upsert 路径额外执行 SHOW CREATE TABLE 检查目标是否为 Unique Key
-  -> tmp_insert()
-  -> INSERT INTO 目标表 (...) SELECT ... FROM 临时表
-  -> COMMIT dbt 连接状态
-  -> DROP 临时 Relation
-```
-
-两者结果不同，不是因为 `tmp_insert()` 生成了不同 SQL，而是目标表模型不同：
-
-- Duplicate Key 表接收相同 Key 时保留多行，所以表现为 Append；
-- Unique Key 表接收相同 Key 时以新行覆盖旧行，所以表现为 Upsert。
-
-### 2.8 Full Refresh
-
-目标是 View 或用户传入 `--full-refresh` 时，当前代码：
-
-1. 创建 `<目标表>__dbt_backup`；
-2. 使用全量 Model SQL 填充 Backup；
-3. 执行 Doris `ALTER TABLE ... REPLACE WITH TABLE`；
-4. 使用 `select 'hello doris'` 作为主 statement 的占位 SQL。
-
-因此 Full Refresh 能重建结果，但这个占位查询会让 Adapter Response 的影响行数
-不准确。这也是现有 Incremental 仍需要完善的边界。
+还要区分两类 SQL：`target/compiled/...sql` 主要是 Jinja 展开后的 Model 查询；
+Materialization 运行时发送的 CTAS、`SHOW CREATE TABLE`、`INSERT INTO` 和清理
+临时表等 SQL，需要通过 `dbt run --debug` 的日志查看。后面的完整案例会直接展示
+这两部分。
 
 ## 3. 示例运行环境
 
