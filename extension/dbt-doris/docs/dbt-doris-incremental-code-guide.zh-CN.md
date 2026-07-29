@@ -858,13 +858,15 @@ select ...
 
 结果相同，因为当前默认值就是 `insert_overwrite`。
 
-## 6. 官方 Insert Overwrite：当前未实现
+## 6. 官方 Insert Overwrite：正确实现
 
 ### 6.1 场景
 
-广告归因表按日期分区。7 月 27 日第一次计算出了 Campaign A 和 B；后来归因规则
-修正，整天需要重算，新结果只有 A 和 D。正确的分区覆盖完成后，旧的 B 必须从
-7 月 27 日分区消失，7 月 26 日的数据不受影响。
+广告归因表按日期分区。7 月 27 日第一次计算出 Campaign A 和 B；后来归因规则
+修正，整天重新计算后的完整结果只有 A 和 D。
+
+Insert Overwrite 应该用 A、D 替换 7 月 27 日整个分区，因此旧的 B 消失；
+7 月 26 日属于其他分区，继续保留。
 
 ### 6.2 准备第一批数据
 
@@ -904,15 +906,14 @@ sources:
         identifier: raw_ad_attribution_batches
 ```
 
-### 6.3 按官方语义编写 Model
-
-用户自然会写成：
+### 6.3 编写 Model
 
 ```sql
 {{
     config(
         materialized='incremental',
         incremental_strategy='insert_overwrite',
+        duplicate_key=['stat_date', 'campaign_id'],
         partition_by=['stat_date'],
         partition_type='RANGE',
         partition_by_init=[
@@ -920,6 +921,7 @@ sources:
             "PARTITION p20260727 VALUES LESS THAN ('2026-07-28')",
             "PARTITION pmax VALUES LESS THAN (MAXVALUE)"
         ],
+        overwrite_partitions=['p20260727'],
         distributed_by=['campaign_id'],
         buckets=1,
         properties={'replication_num': '1'}
@@ -942,33 +944,27 @@ where batch_id > (
 {% endif %}
 ```
 
-第一次执行：
+这里的关键配置是：
+
+| 配置 | 作用 |
+| --- | --- |
+| `partition_by=['stat_date']` | 目标表按日期进行 Range 分区 |
+| `partition_by_init` | 创建目标表时定义初始 Doris 分区 |
+| `overwrite_partitions=['p20260727']` | 本次增量运行完整替换 7 月 27 日分区 |
+
+Insert Overwrite 的匹配单位是分区，不是业务 Key，因此不需要 `unique_key`。
+
+### 6.4 第一次执行
 
 ```bash
 dbt run --profiles-dir profiles --select daily_ad_attribution
 ```
 
-当前真实结果不是创建分区表，而是在策略校验阶段报错：
-
-```text
-Incremental strategy 'insert_overwrite' requires a 'unique_key' config ...
-```
-
-没有该 Model 的 CTAS、`INSERT INTO` 或 `INSERT OVERWRITE` 发往 Doris。
-
-### 6.4 加上 `unique_key` 也不等于支持了覆盖
-
-为了让当前代码接受配置，假设用户加上：
-
-```python
-unique_key=['stat_date', 'campaign_id']
-```
-
-第一次运行会创建：
+第一次运行读取全部源数据，并创建分区目标表：
 
 ```sql
 CREATE TABLE `dbt_incremental_lab`.`daily_ad_attribution`
-UNIQUE KEY (`stat_date`, `campaign_id`)
+DUPLICATE KEY (`stat_date`, `campaign_id`)
 COMMENT ''
 PARTITION BY RANGE (`stat_date`) (
     PARTITION p20260726 VALUES LESS THAN ('2026-07-27'),
@@ -977,16 +973,16 @@ PARTITION BY RANGE (`stat_date`) (
 )
 DISTRIBUTED BY HASH (`campaign_id`) BUCKETS 1
 PROPERTIES ("replication_num" = "1") AS
-select
+SELECT
     stat_date,
     campaign_id,
     batch_id,
     attributed_orders,
     attributed_revenue
-from `dbt_incremental_lab`.`raw_ad_attribution_batches`;
+FROM `dbt_incremental_lab`.`raw_ad_attribution_batches`;
 ```
 
-此时第一次结果为：
+第一次结果：
 
 | stat_date | campaign_id | batch_id | attributed_orders |
 | --- | ---: | ---: | ---: |
@@ -994,7 +990,9 @@ from `dbt_incremental_lab`.`raw_ad_attribution_batches`;
 | 2026-07-27 | 101 | 1 | 10 |
 | 2026-07-27 | 102 | 1 | 20 |
 
-写入第二批重算结果：
+### 6.5 第二次执行
+
+写入 7 月 27 日的完整重算结果：
 
 ```sql
 INSERT INTO dbt_incremental_lab.raw_ad_attribution_batches VALUES
@@ -1002,43 +1000,14 @@ INSERT INTO dbt_incremental_lab.raw_ad_attribution_batches VALUES
     ('2026-07-27', 104, 2,  8,  880.00);
 ```
 
-再次执行：
+执行：
 
 ```bash
 dbt run --profiles-dir profiles --select daily_ad_attribution
 ```
 
-当前真实生成的写入仍然是：
-
-```sql
-INSERT INTO `dbt_incremental_lab`.`daily_ad_attribution`
-    (`stat_date`, `campaign_id`, `batch_id`,
-     `attributed_orders`, `attributed_revenue`)
-(
-    SELECT
-        `stat_date`, `campaign_id`, `batch_id`,
-        `attributed_orders`, `attributed_revenue`
-    FROM `dbt_incremental_lab`.`daily_ad_attribution__dbt_tmp`
-);
-```
-
-结果：
-
-| stat_date | campaign_id | batch_id | attributed_orders |
-| --- | ---: | ---: | ---: |
-| 2026-07-26 | 900 | 1 | 5 |
-| 2026-07-27 | 101 | 2 | 12 |
-| 2026-07-27 | 102 | 1 | 20 |
-| 2026-07-27 | 104 | 2 | 8 |
-
-Campaign B（`campaign_id=102`）仍然存在。这证明当前路径是按 Key Upsert，
-没有覆盖 7 月 27 日整个分区。
-
-### 6.5 正确实现后应该是什么
-
-> **未来设计示意，当前 dbt-doris 不会生成下面的 SQL。**
-
-对 7 月 27 日进行真正覆盖时，目标 SQL 应使用 Doris 原生分区覆盖：
+`is_incremental()` 过滤后，本批临时表只包含 A 和 D。策略随后执行 Doris 原生
+分区覆盖：
 
 ```sql
 INSERT OVERWRITE TABLE `dbt_incremental_lab`.`daily_ad_attribution`
@@ -1048,11 +1017,10 @@ PARTITION (p20260727)
 SELECT
     `stat_date`, `campaign_id`, `batch_id`,
     `attributed_orders`, `attributed_revenue`
-FROM `dbt_incremental_lab`.`daily_ad_attribution__dbt_tmp`
-WHERE stat_date = '2026-07-27';
+FROM `dbt_incremental_lab`.`daily_ad_attribution__dbt_tmp`;
 ```
 
-正确结果应该是：
+最终结果：
 
 | stat_date | campaign_id | batch_id | attributed_orders |
 | --- | ---: | ---: | ---: |
@@ -1060,18 +1028,18 @@ WHERE stat_date = '2026-07-27';
 | 2026-07-27 | 101 | 2 | 12 |
 | 2026-07-27 | 104 | 2 | 8 |
 
-`campaign_id=102` 被移除，而 7 月 26 日分区保持不变。
+7 月 27 日分区原来的 `campaign_id=102` 被移除，7 月 26 日分区保持不变。
 
-Doris 本身已经支持：
+### 6.6 实现要求
 
-```sql
-INSERT OVERWRITE TABLE target SELECT ...;
-INSERT OVERWRITE TABLE target PARTITION (p1, p2) SELECT ...;
-INSERT OVERWRITE TABLE target PARTITION (*) SELECT ...;
-```
-
-当前缺的是 dbt-doris 对策略 Config、分区选择、运行生命周期和兼容迁移的接入，
-不是 Doris 数据库缺少 `INSERT OVERWRITE`。
+- Model 必须返回被覆盖分区的完整新数据，不能只返回发生变化的行；
+- `overwrite_partitions` 只能接受经过标识符校验的目标分区名；
+- 本批数据必须全部属于指定分区，越界数据应执行失败；
+- 第一次运行创建完整目标表，普通增量运行才执行分区覆盖；
+- 整表覆盖使用 `INSERT OVERWRITE TABLE target SELECT ...`；
+- 自动识别本批分区可以使用 Doris
+  `INSERT OVERWRITE TABLE target PARTITION (*) SELECT ...`；
+- 覆盖失败时必须保留原分区，并清理本轮临时 Relation。
 
 ## 7. Delete+Insert：当前未实现
 
