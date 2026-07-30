@@ -1,5 +1,10 @@
 # dbt-doris：Async Materialized View 与 Incremental 对比及选型
 
+> **历史设计快照（2026-07-29）**：本文保留两类 Materialization 的选型调研，
+> 下文凡称“当前实现”的内容都只代表该日期的旧基线，不再作为功能状态依据。
+> Incremental 的现行策略、临时关系和版本边界以
+> [Incremental 使用与实现说明](incremental.zh-CN.md)为准。
+
 ## 文档信息
 
 | 项目 | 内容 |
@@ -7,7 +12,7 @@
 | 文档目的 | 解释 dbt Incremental 与 Doris Async Materialized View 的区别、优缺点和选型边界 |
 | 调研范围 | dbt Core、Apache Doris、StarRocks、BigQuery、Databricks、Snowflake、ClickHouse |
 | 本地实现基线 | `extension/dbt-doris`，检查日期 2026-07-29 |
-| 说明 | “目标能力”不代表 dbt-doris 当前已经支持，当前状态以第 8 节为准 |
+| 说明 | “目标能力”不代表 dbt-doris 当前已经支持；本文是历史设计稿，不维护当前状态 |
 
 ## 0. 一句话结论
 

@@ -9,6 +9,16 @@ git clone https://github.com/apache/doris.git
 cd doris/extension/dbt-doris && pip install .
 ```
 
+## Status
+
+This adapter targets dbt Core 1.12.x on Python 3.10 or newer. It is not yet a
+dbt Fusion adapter. For the migration roadmap and implementation plan, see
+[docs/dbt-doris-v1-v2-evaluation.zh-CN.md](docs/dbt-doris-v1-v2-evaluation.zh-CN.md).
+
+The Doris SQL, staging behavior, version boundaries, and configuration for
+incremental models are documented in
+[docs/incremental.zh-CN.md](docs/incremental.zh-CN.md).
+
 ## Configuring your profile
 
 Example entry for profiles.yml:

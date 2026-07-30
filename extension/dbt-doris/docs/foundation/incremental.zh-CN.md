@@ -1,6 +1,7 @@
-# dbt-doris 基础功能实施方案：Incremental
+# dbt-doris 基础功能实施方案：Incremental（历史设计）
 
-> 状态：实施方案。本文的“目标”和“建议”不代表当前已经支持，当前能力以第 2 节为准。
+> 状态：历史实施方案。本文记录改造前的问题和设计，不再用第 2 节判断当前能力。
+> 当前实现见[《dbt-doris Incremental》](../incremental.zh-CN.md)。
 >
 > 当前代码到底支持哪些策略、实际生成什么 Doris SQL，以及从 Model 到结果的完整
 > 示例，见[《dbt-doris Incremental 策略：代码实现与完整实战》](../dbt-doris-incremental-code-guide.zh-CN.md)。

@@ -288,18 +288,18 @@ Spark 和 DuckDB 等 Adapter，没有 Doris，见
 | 数据质量 | Generic Test / Singular Test | 🟡 | 实测（基础） | 已验证 `not_null` Generic Test 和 Singular Test 主链路；其他通用测试仍取决于生成 SQL，尚未逐类验收 |
 | 数据质量 | dbt Unit Test | 🟡 | 实测（基础） | 用户编写的 SQL Unit Test 已通过；单 BE 测试库需把默认副本数设为 1，尚未接入官方 Unit Testing 套件，也未覆盖类型、大小写等边界 |
 | 文档与血缘 | Docs、Lineage、Manifest、Run Results | 🔵 | Core/实测（主链路） | 主要由 dbt Core 根据项目资源、`ref()` 和 `source()` 生成；dbt-doris 为 Catalog 提供 Doris Relation 和字段元数据 |
-| 文档与血缘 | `persist_docs` | 🟡 | 实测/单测 | Table 的表说明和字段说明已验证；View 底层会跳过，Incremental 调用仍被关闭 |
+| 文档与血缘 | `persist_docs` | 🟡 | 实测/单测 | Table 和 Incremental 已接入；View 底层会跳过不支持的字段 ALTER |
 | Incremental | Append | ✅ | 实测 | 将本轮 Model 产生的记录直接追加到目标表，不自动去重 |
-| Incremental | Unique Key Upsert | 🟡 | 实测 | 利用 Doris Unique Key 让同 Key 新记录覆盖旧记录；当前配置名仍叫 `insert_overwrite`，但实际不是分区覆盖语义 |
-| Incremental | Full Refresh | 🟡 | 实测 | 可以重建增量目标表，但主 Statement 使用占位查询，运行结果中的影响行数不准确 |
+| Incremental | Unique Key Upsert (`merge`) | ✅ | 实测/单测 | MOW Unique Key 单条 `INSERT INTO`，支持单列/复合 Key 和重复 Source Key 拒绝 |
+| Incremental | Full Refresh | ✅ | 实测 | Table→Table 用 `swap=true` 原子交换；View→Table 先备份旧对象再改名，失败重试前恢复备份 |
 | Incremental | `is_incremental()` 过滤 | ✅ | 实测 | 运行时检查目标是否为 Table、Model 是否为 Incremental/Partition，以及当前是否处于 Full Refresh；Model 再据此决定本轮读取哪些源数据 |
-| Incremental | `on_schema_change` | ❌ | 代码 | Incremental 没有处理该配置；Partition 只做参数校验，没有执行字段同步策略 |
-| Incremental | 字段类型扩展 | 🟡 | 代码 | Upsert 前会尝试扩展目标字段类型，但没有新增、删除字段和复杂类型的完整验证 |
+| Incremental | `on_schema_change` | ✅ | 官方测试/实测 | 支持 `ignore`、`fail`、`append_new_columns`、`sync_all_columns`，并等待 Doris 异步 Schema Change |
+| Incremental | 字段类型扩展 | ✅ | 实测/单测 | 逻辑/物理 Source 均保留 VARCHAR 长度和 DECIMAL 精度、Scale，扩展后等待异步 ALTER 完成 |
 | Incremental | Partition 自定义 Materialization | 🟡 | 实测/单测 | 已验证第二次运行只替换本批分区、保留其他分区并清理临时表；它不是 Incremental Strategy，失败恢复和 Schema Change 仍未闭环 |
-| Incremental | 与命名相符的 Insert Overwrite | ❌ | 代码 | 当前名为 `insert_overwrite` 的策略实际执行 Unique Key Upsert，没有生成 Doris 原生 `INSERT OVERWRITE` 来覆盖整表或分区 |
-| Incremental | 动态分区覆盖 | 🟡 | 实测/代码 | 自定义 Partition Materialization 已能识别本批分区并通过临时分区逐个替换；尚未作为标准 Incremental Strategy，也没有使用 Doris 原生 `PARTITION(*)` 路径 |
+| Incremental | 与命名相符的 Insert Overwrite | ✅ | 实测/单测 | 生成 Doris 原生 `INSERT OVERWRITE`，支持整表和显式分区覆盖 |
+| Incremental | 动态分区覆盖 | ✅ | 实测/单测 | 标准 `insert_overwrite` 支持 Doris 2.1.3+ 原生 `PARTITION(*)` |
 | Incremental | Microbatch | ❌ | 代码 | 尚未按 `event_time` 和 `batch_size` 拆分批次，也未声明 dbt Microbatch 能力 |
-| Incremental | Merge / Delete+Insert | ❌ | 代码 | 尚未提供独立、标准命名的 Merge 或 Delete+Insert 策略 |
+| Incremental | Merge / Delete+Insert | ✅ | 实测/单测 | 无 Sequence 的 MOW 路由单条 Upsert；MOR 用物理 Staging 和 Doris 3.0+ 显式事务；Sequence 目标前置拒绝 |
 | Doris 表设计 | Duplicate Key | ✅ | 实测 | Table 可以声明 Duplicate Key |
 | Doris 表设计 | Unique Key | 🟡 | 实测（增量） | Incremental Upsert 路径可以创建 Unique Key 目标；普通 Table 尚无统一表模型入口 |
 | Doris 表设计 | Aggregate Key | ❌ | 代码 | 尚未提供 Aggregate Key 及聚合列配置 |
@@ -320,7 +320,7 @@ Spark 和 DuckDB 等 Adapter，没有 Doris，见
 | 工程生态 | Adapter Capability 声明 | ❌ | 代码 | 尚未向 dbt 工具链正式声明 Metadata Freshness、Microbatch、单 Relation Catalog 等能力 |
 | 资源治理 | Session Variable / Workload Group | ❌ | 代码 | 尚未支持 Profile 或 Model 级会话变量与工作负载组选择 |
 | 可观测性 | Query Label、Query ID、服务端 Cancel | ❌ | 代码 | 尚不能把 dbt Invocation、Model 与 Doris Query 关联；取消连接不等于服务端取消查询 |
-| 发布兼容 | Python / dbt Core / Doris 版本矩阵 | 🟡 | 实测（单一组合）/单测 | 已声明 Python 3.9+ 和 dbt Core 1.10.4+；本轮只完整验证 Python 3.11.15 与 dbt-core 1.10.4，缺少上限、完整 CI 矩阵和正式兼容声明 |
+| 发布兼容 | Python / dbt Core / Doris 版本矩阵 | 🟡 | 实测（单一组合）/单测 | 当前代码声明 Python 3.10+ 和 dbt Core 1.12.x，并已在 Python 3.11 上完成本地回归；仍需由 CI 跑绿 Python 3.10/3.14 边界矩阵 |
 
 当前 1.0 的核心已经覆盖“连接 Doris、组织 Model、构建 Table/View、
 运行测试和基础增量”这一条主链路；差距主要集中在标准增量语义、
@@ -631,7 +631,8 @@ v2 需要新的 Driver、Adapter 和 Doris SQL Dialect，应作为独立路线�
 1. dbt 是数据转换的工程化工具，不是数据同步工具，也不是计算引擎；
 2. Doris 真正保存数据和执行 SQL，dbt 管 Model、依赖、测试、文档和构建；
 3. dbt-doris 是二者之间的适配层，也负责表达 Doris 的物理设计；
-4. 当前 dbt-doris 1.0.0 是 dbt Core v1 Python Adapter，尚不能直接运行在 dbt v2；
+4. 当前 dbt-doris 1.0.0 是 dbt Core v1 Python Adapter，后续开发和验证基线升级到
+   dbt Core 1.12.x，尚不能直接运行在 dbt v2；
 5. 后续先修正现有标准语义，再建设 Doris 原生能力、高级场景和运行治理，
    同时用独立最小链路验证 dbt v2。
 

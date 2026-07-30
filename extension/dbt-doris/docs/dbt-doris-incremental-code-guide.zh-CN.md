@@ -1,9 +1,10 @@
-# dbt-doris Incremental 策略：代码实现与完整实战
+# dbt-doris Incremental 策略：历史调研与实战草稿
 
-> 本文同时面向 dbt 使用者和 dbt-doris 开发者。
-> 当前状态以仓库中的 dbt-doris 1.0.0 实现为准；[`setup.py`](../setup.py) 声明的
-> dbt Core 最低版本为 1.10.4。当前支持状态统一看第 1 节；第 4～9 节只说明
-> 每种策略正确的配置、SQL 和结果。
+> 本文是策略改造前的历史分析，保留用于解释旧实现和设计过程，不再代表当前
+> Adapter 行为。当前配置、SQL、临时表原则和版本边界请看
+> [《dbt-doris Incremental》](incremental.zh-CN.md)。
+>
+> **下文所有“当前”均指 2026-07-27 改造前快照；能力表不是现状清单。**
 
 ## 1. 先看结论
 
@@ -13,7 +14,7 @@ dbt Core 把 Incremental 的通用概念定义为：第一次运行创建完整�
 [dbt 官方 Incremental Strategy 文档](https://docs.getdbt.com/docs/build/incremental-strategy)
 列出五种内置策略。Adapter 不会自动获得全部策略，每个 Adapter 必须分别接入：
 
-| dbt 内置策略 | dbt 标准策略宏 | 用户期望 | 当前 dbt-doris |
+| dbt 内置策略 | dbt 标准策略宏 | 用户期望 | 当时的 dbt-doris |
 | --- | --- | --- | --- |
 | `append` | `get_incremental_append_sql` | 本批结果全部追加，不检查重复 | ✅ 已实现并有 Doris Functional Test |
 | `delete+insert` | `get_incremental_delete_insert_sql` | 删除本批 Key 对应的旧行，再插入本批完整行 | ❌ 配置校验直接拒绝 |
