@@ -1,97 +1,28 @@
-# dbt-doris 基础功能实施方案：Snapshot
+# dbt-doris Snapshot
 
-> 状态：实施方案。本文的“目标”和“建议”不代表当前已经支持，当前能力以第 2 节为准。
+> 状态：已实现并通过真实 Doris 与 `dbt-tests-adapter` Snapshot 用例验证。
 
-## 1. 目标
+## 1. Snapshot 是什么
 
-Snapshot 用 SCD Type 2 方式保存一条业务记录的历史版本。dbt-doris 需要保证：
+Snapshot 用 SCD Type 2 方式保存业务记录的历史版本。源表中的一条记录发生变化时，
+dbt-doris 会关闭旧版本的有效期并写入一个新版本，而不是覆盖旧数据。
 
-- Check Strategy 和 Timestamp Strategy 都可用；
-- 新增、修改和硬删除都产生正确的历史；
-- 重复执行不会制造重复版本；
-- 最终替换失败时，旧快照历史仍可查询；
-- Snapshot 的表配置、文档和权限具有稳定生命周期。
+Snapshot 表包含以下默认元字段：
 
-Snapshot 保存的是历史事实，通常不能只靠当前源表重建。因此它的失败安全要求应高于
-普通 Table Model。
+| 字段 | 含义 |
+| --- | --- |
+| `dbt_scd_id` | 历史版本的唯一标识 |
+| `dbt_updated_at` | 该版本对应的更新时间 |
+| `dbt_valid_from` | 版本生效时间 |
+| `dbt_valid_to` | 版本失效时间；当前版本默认为 `NULL` |
+| `dbt_is_deleted` | `hard_deletes='new_record'` 时标记删除版本 |
 
-## 2. 当前实现
+Snapshot 保存的是历史事实，通常不能只靠当前源表重建。因此 dbt-doris 在更新已有
+Snapshot 时先构造一张完整的新历史表，校验通过后再原子替换目标表。
 
-dbt Core 负责识别记录变化和生成 Snapshot 临时结果，dbt-doris 主要提供：
+## 2. Check Strategy
 
-- Doris 时间字符串转换；
-- Snapshot Key 的 Hash 表达式；
-- 将当前快照、更新/删除记录和新增记录合并到新表；
-- 最终替换目标 Snapshot 表。
-
-相关代码：
-
-- [`snapshot.sql`](../../dbt/include/doris/macros/materializations/snapshot/snapshot.sql)
-- [`strategies.sql`](../../dbt/include/doris/macros/materializations/snapshot/strategies.sql)
-
-当前真实 Doris 测试
-[`test_doris_snapshot.py`](../../test/functional/adapter/test_doris_snapshot.py)
-已经覆盖 Check Strategy 的：
-
-- 首次写入；
-- 一条记录更新；
-- 一条记录新增；
-- 一条记录硬删除并失效；
-- 当前版本和历史版本查询。
-
-## 3. 当前缺口
-
-### 3.1 最终替换不是原子的
-
-当前最后执行：
-
-```sql
-drop table if exists target;
-alter table target__snapshot_upsert rename target;
-```
-
-两条语句之间目标表不存在。如果连接中断、FE 切换或 Rename 失败，历史表会丢失。
-
-### 3.2 失败恢复不可靠
-
-Upsert 表使用 `create table if not exists`。如果上次运行中途失败并留下部分数据，
-下次运行可能继续使用不干净的 Upsert 表。
-
-每次运行必须先识别并清理本次专属中间对象，不能复用未知状态的残留表。
-
-### 3.3 Timestamp Strategy 未验证
-
-当前只验证了：
-
-```yaml
-strategy: check
-check_cols: [...]
-```
-
-还需要验证：
-
-```yaml
-strategy: timestamp
-updated_at: updated_at
-```
-
-包括时间精度、相同时间戳、NULL、迟到更新和时区行为。
-
-### 3.4 Snapshot 配置生命周期不完整
-
-需要补齐：
-
-- `invalidate_hard_deletes`；
-- 新版 Hard Deletes 配置；
-- `dbt_valid_to_current`；
-- `snapshot_meta_column_names`；
-- Schema Change；
-- Contract、Persist Docs 和 Grants；
-- Full Refresh 或目标 Relation 类型冲突时的处理。
-
-## 4. 目标用户接口
-
-### 4.1 Check Strategy
+源数据没有可靠的更新时间字段时，使用 Check Strategy：
 
 ```sql
 {% snapshot snap_customers %}
@@ -112,9 +43,16 @@ from {{ source("ods", "customers") }}
 {% endsnapshot %}
 ```
 
-适合源表没有可靠更新时间的场景。只比较 `check_cols` 中的业务字段。
+`check_cols` 中任一字段变化都会生成新版本。也可以使用 `check_cols='all'` 比较全部
+业务字段。
 
-### 4.2 Timestamp Strategy
+Doris 的 `current_timestamp()` 默认只有秒级精度。为避免同一秒连续执行产生相同
+`dbt_scd_id`，dbt-doris 会在 Check Strategy 的版本 Hash 中加入随机 nonce；无变化
+记录仍不会产生新版本。
+
+## 3. Timestamp Strategy
+
+源数据有可靠、单调递增的更新时间字段时，使用 Timestamp Strategy：
 
 ```sql
 {% snapshot snap_customers %}
@@ -135,168 +73,136 @@ from {{ source("ods", "customers") }}
 {% endsnapshot %}
 ```
 
-适合源表有可靠更新时间的场景。Timestamp Strategy 的正确性依赖：
+dbt-doris 保留 Doris `DATETIME(p)` 精度，并在修改历史前拒绝以下输入：
 
-- `updated_at` 在业务变化时单调更新；
-- 时间字段类型和精度稳定；
-- 多条相同 `unique_key` 输入已经由用户处理；
-- 迟到数据的产品行为在文档中明确。
+- `updated_at` 为 `NULL`；
+- 同一个 `unique_key` 出现多行；
+- 当前源记录的 `updated_at` 早于 Snapshot 中该 Key 的当前版本。
 
-## 5. 目标执行流程
+这意味着迟到数据不会静默改写已有历史。需要接纳时间倒退时，应先制定业务迁移规则，
+而不是关闭保护后直接运行。
 
-```text
-读取 Snapshot 配置
-        |
-校验 unique_key / strategy / updated_at / check_cols
-        |
-清理本次运行可能残留的 staging 和 upsert Relation
-        |
-dbt Core 生成 staging 变化记录
-        |
-按目标表结构创建全新的 upsert Relation
-        |
-写入未变化的历史记录
-        |
-写入已关闭有效期的旧版本
-        |
-写入新版本
-        |
-校验 upsert Relation
-        |
-REPLACE WITH TABLE 原子替换目标
-        |
-Persist Docs / Grants / 清理临时 Relation
-```
+## 4. Hard Deletes
 
-任何一步失败时：
+支持 dbt 1.12 的三种公开行为：
 
-- 原目标表保持可查询；
-- 不把不完整的 Upsert 表改名为目标；
-- 下次运行会清理残留对象后重新计算；
-- dbt 返回 Error，而不是 Partial Success。
+| 配置 | 源记录删除后的结果 |
+| --- | --- |
+| `hard_deletes='ignore'` | 保留原版本为当前版本 |
+| `hard_deletes='invalidate'` | 关闭原版本，不写删除版本 |
+| `hard_deletes='new_record'` | 关闭原版本，并写入 `dbt_is_deleted='True'` 的当前版本 |
 
-## 6. 具体代码改造
+旧配置 `invalidate_hard_deletes=True` 仍由 dbt Core 转换为 Invalidate 行为。
 
-### 6.1 使用原子替换
+## 5. 原子替换与失败恢复
 
-复用 dbt-doris 已有的 `exchange_relation`，底层使用 Doris：
-
-```sql
-ALTER TABLE target
-REPLACE WITH TABLE target__snapshot_upsert
-PROPERTIES('swap' = 'false');
-```
-
-替换前不再删除目标表。只有 Upsert 表完整构建成功后才执行交换。
-
-### 6.2 每次构建全新的 Upsert 表
-
-运行开始时：
-
-1. 查找 `target__snapshot_upsert`；
-2. 如果存在，先删除；
-3. 用 `CREATE TABLE ... LIKE target` 创建空表；
-4. 分步骤写入全部历史；
-5. 交换成功后确认临时表不存在。
-
-不能继续使用 `CREATE TABLE IF NOT EXISTS` 接受上次失败的内容。
-
-### 6.3 把合并过程拆成可验证步骤
-
-将 `doris__snapshot_merge_sql` 拆分为职责明确的宏：
+更新已有 Snapshot 的执行流程如下：
 
 ```text
-doris__create_snapshot_upsert_relation
-doris__insert_unchanged_snapshot_rows
-doris__close_changed_snapshot_rows
-doris__insert_new_snapshot_rows
-doris__validate_snapshot_upsert_relation
-doris__replace_snapshot_relation
+清理上次失败留下的 staging/upsert
+        |
+校验源 Key 和 Timestamp
+        |
+生成 staging 变化记录
+        |
+CREATE TABLE upsert LIKE target
+        |
+写入完整历史并校验
+        |
+ALTER TABLE target REPLACE WITH TABLE upsert
+PROPERTIES('swap' = 'false')
+        |
+Persist Docs / Grants 生命周期 / 清理 staging
 ```
 
-每个 Statement 只执行一条 SQL，避免 MySQL Connector 多结果集污染连接。
+替换前不会执行 `DROP target`。创建临时表、写入或最终替换失败时，已有目标表继续提供
+完整旧历史；下一次运行会丢弃未知状态的临时对象并从目标表重新构建。
 
-### 6.4 增加构建后校验
+dbt-doris 还可以恢复旧版本实现遗留的一种状态：目标表已被删除，但完整的
+`target__snapshot_upsert` 仍然存在。恢复前会先校验该表，校验失败则保持错误状态供人工
+处理，不会把不完整数据改名为目标。
 
-交换前至少验证：
+同一个 Snapshot 节点不应被两个独立的 dbt 进程并发执行；物理 staging 名称遵循 dbt
+的固定临时 Relation 命名，并发执行同一节点不属于支持的运行方式。
 
-- `(unique_key, dbt_valid_to is null)` 不存在多个当前版本；
-- `dbt_valid_from <= dbt_valid_to`；
-- `dbt_scd_id` 非空；
-- Upsert 表字段与目标 Snapshot 协议一致。
+## 6. 构建前校验
 
-如果全表校验成本过高，应提供可关闭的内部校验开关，但测试环境默认开启。
+默认启用 `snapshot_validate`，在原子替换前检查：
 
-### 6.5 明确 Schema Change
+- Source `unique_key` 非空且唯一，复合 Key 的每一列都非空；
+- Timestamp Strategy 的 `updated_at` 非空且不倒退；
+- `dbt_scd_id` 和 `dbt_valid_from` 非空；
+- `dbt_scd_id` 不重复；
+- 每个业务 Key 最多有一个当前版本；
+- `dbt_valid_from <= dbt_valid_to`。
 
-Snapshot 源新增字段时：
+校验会扫描 Source 和待替换历史表。对已经通过其他强约束保证输入质量、且确认可以承担
+风险的超大表，可以设置 `snapshot_validate=false` 关闭这些附加校验。关闭后仍使用原子
+替换，但不再阻止逻辑错误的完整表被安装。
 
-- 新增字段可通过 `ALTER TABLE ADD COLUMN` 接入；
-- 删除或改变历史字段类型默认失败；
-- 需要破坏性同步时，要求用户明确执行迁移；
-- 不自动 Full Refresh，因为 Full Refresh 会丢失历史。
+## 7. Schema Change
 
-Snapshot 不应照搬普通 Incremental 的 `sync_all_columns` 删除历史列。
+Snapshot 历史采用保守的 Schema 演进策略：
 
-## 7. 测试计划
+- 新增业务字段：允许，向目标表增加可空列；旧历史该字段为 `NULL`；
+- 删除历史字段：失败，要求显式迁移；
+- 不兼容类型变化：失败，要求显式迁移；
+- 安全拓宽：允许，例如较小整数写入较大整数、`DATE` 写入 `DATETIME`、较低精度
+  `DATETIME` 写入较高精度目标。
 
-### 7.1 Check Strategy
+新增列使用 Doris 异步 Schema Change。dbt-doris 会等待对应任务完成后再继续构建，避免
+在列尚未可见时写入。
 
-- 首次运行；
-- 新增记录；
-- 修改一个和多个 `check_cols`；
-- 未检查字段变化；
-- 硬删除：Ignore、Invalidate 和 New Record；
-- `check_cols: all`；
-- NULL 与非 NULL 相互变化；
-- 连续三次无变化运行不增加历史版本。
+Snapshot 不支持通过 Full Refresh 自动丢弃历史；dbt Core 1.12 的 `dbt snapshot` 命令也
+没有 `--full-refresh` 选项。破坏性变更必须由用户显式迁移历史表。
 
-### 7.2 Timestamp Strategy
+## 8. 其他配置
 
-- 时间增加产生新版本；
-- 时间不变不产生新版本；
-- 相同 Key 的时间倒退；
-- DATETIME 不同精度；
-- NULL `updated_at`；
-- Date/Datetime 类型边界；
-- 时区输入和 Session 时区；
-- 硬删除。
+以下 dbt Snapshot 配置已经验证：
 
-### 7.3 失败与恢复
+- 单列和复合 `unique_key`；
+- `dbt_valid_to_current`；
+- `snapshot_meta_column_names`；
+- Relation 和 Column `persist_docs`。
 
-- Upsert 表创建后失败；
-- 写入未变化记录后失败；
-- 原子交换前断开连接；
-- FE 切换；
-- 留下残余 Upsert 表后重新运行；
-- 交换成功但清理阶段失败；
-- 任何失败后原历史仍可查询。
+Snapshot Materialization 保留 dbt 的 Pre/Post Hooks，并在原子替换成功后重新执行
+`persist_docs` 和 `apply_grants`。Doris 权限 SQL 的读取、授权和回收属于独立的 Grants
+通用能力；在该能力实现前，不应仅凭 Snapshot 调用了 `apply_grants` 就认为 `grants:`
+已完整支持。
 
-### 7.4 标准兼容测试
+如果目标同名 Relation 是 View 等非 Table 类型，Snapshot 会直接报错，不会删除或替换
+该 Relation。
 
-接入：
+## 9. 已验证场景
 
-- dbt 官方 Snapshot Check 测试；
-- dbt 官方 Snapshot Timestamp 测试；
-- `dbt-tests-adapter` 的 Simple Snapshot 套件；
-- Persist Docs、Grants 和 Schema Change 的组合测试。
+真实 Doris Functional Test 覆盖：
 
-## 8. 分阶段任务
+- Check 和 Timestamp Strategy；
+- 新增、修改、删除、恢复和无变化重复执行；
+- Ignore、Invalidate、New Record 三种 Hard Deletes；
+- `DATETIME(6)` 精度、NULL 时间和时间倒退；
+- 复合 Key、自定义元字段、当前版本哨兵值；
+- 新增、删除和不兼容类型 Schema Change；
+- 重复/NULL Source Key；
+- Persist Docs 在原子替换后保留；
+- 最终交换故障时旧历史保持可查询，重跑自动恢复；
+- 旧实现遗留 Upsert 表恢复；
+- `dbt-tests-adapter` 官方 Timestamp 和 Check Snapshot 套件。
 
-| 阶段 | 任务 | 完成标准 |
+相关代码与测试：
+
+- [`materialization.sql`](../../dbt/include/doris/macros/materializations/snapshot/materialization.sql)
+- [`snapshot.sql`](../../dbt/include/doris/macros/materializations/snapshot/snapshot.sql)
+- [`strategies.sql`](../../dbt/include/doris/macros/materializations/snapshot/strategies.sql)
+- [`test_doris_snapshot.py`](../../test/functional/adapter/test_doris_snapshot.py)
+
+## 10. 实施状态
+
+| 阶段 | 状态 | 验收结果 |
 | --- | --- | --- |
-| S1 | 用 `REPLACE WITH TABLE` 替换 Drop+Rename | 故障注入后旧历史仍可查询 |
-| S2 | 清理残留并每次新建 Upsert 表 | 失败后重跑不重复、不污染 |
-| S3 | 补 Timestamp Strategy | 正常、NULL、精度和迟到场景通过 |
-| S4 | 补 Hard Deletes 配置矩阵 | 每种公开配置都有数据结果断言 |
-| S5 | 补 Schema Change、Docs 和 Grants | 不破坏历史，生命周期一致 |
-| S6 | 接入官方 Snapshot 测试 | 支持项全部通过 |
-
-## 9. 完成定义
-
-- Check 和 Timestamp 两种策略均有真实 Doris 验证；
-- 新增、更新、硬删除和重复执行结果正确；
-- 任何失败都不会先删除现有 Snapshot；
-- 残留临时对象不会污染下一次运行；
-- 历史 Schema 变化有明确策略；
-- Snapshot 的文档、权限和 Artifact 与其他 dbt 资源一致。
+| S1 原子替换 | 完成 | 故障注入后旧历史仍可查询 |
+| S2 残留清理与恢复 | 完成 | 失败后重跑无重复、无残留 |
+| S3 Timestamp Strategy | 完成 | 正常、精度、NULL、倒退场景通过 |
+| S4 Hard Deletes | 完成 | 三种公开行为均有结果断言 |
+| S5 Schema/Docs 生命周期 | 完成 | Schema 保护和 Persist Docs 通过；Grants SQL 属于独立能力 |
+| S6 官方测试 | 完成 | 官方 Timestamp/Check 共 6 个用例通过 |

@@ -281,6 +281,10 @@ WHEN NOT MATCHED THEN
 | Store Failures | 把 Data Test 失败的具体数据行保存到审计表 | `dbt test --store-failures` |
 | Grants | 按 Model Config 授权并回收 Relation 的过期权限 | `grants:` |
 
+Snapshot 的 S1-S6 已完成，使用方式、失败语义和验证范围见
+[`foundation/snapshot.zh-CN.md`](foundation/snapshot.zh-CN.md)。其中 Grants SQL 仍按本表的
+独立 Grants 能力跟踪。
+
 - [ ] 接入适用的 `dbt-tests-adapter` 官方测试，作为上述能力的兼容性验收。
 
 ## P2：完善 Doris Table 原生能力
