@@ -333,7 +333,8 @@ public abstract class ExternalCatalog
             CatalogConnectivityTestCoordinator testCoordinator = new CatalogConnectivityTestCoordinator(
                     name,
                     catalogProperty.getMetastoreProperties(),
-                    catalogProperty.getStoragePropertiesMap()
+                    catalogProperty.getStoragePropertiesMap(),
+                    catalogProperty.getOrderedStoragePropertiesList()
             );
             testCoordinator.runTests();
         }

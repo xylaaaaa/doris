@@ -35,6 +35,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -48,16 +49,19 @@ public class CatalogConnectivityTestCoordinator {
     private final String catalogName;
     private final MetastoreProperties metastoreProperties;
     private final Map<StorageProperties.Type, StorageProperties> storagePropertiesMap;
+    private final List<StorageProperties> storagePropertiesList;
 
     private String warehouseLocation;
 
     public CatalogConnectivityTestCoordinator(
             String catalogName,
             MetastoreProperties metastoreProperties,
-            Map<StorageProperties.Type, StorageProperties> storagePropertiesMap) {
+            Map<StorageProperties.Type, StorageProperties> storagePropertiesMap,
+            List<StorageProperties> storagePropertiesList) {
         this.catalogName = catalogName;
         this.metastoreProperties = metastoreProperties;
         this.storagePropertiesMap = storagePropertiesMap;
+        this.storagePropertiesList = storagePropertiesList;
     }
 
     /**
@@ -295,7 +299,7 @@ public class CatalogConnectivityTestCoordinator {
 
         // Iceberg REST
         if (props instanceof IcebergRestProperties) {
-            return new IcebergRestConnectivityTester((IcebergRestProperties) props);
+            return new IcebergRestConnectivityTester((IcebergRestProperties) props, storagePropertiesList);
         }
 
         // Iceberg S3Table
