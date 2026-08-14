@@ -44,7 +44,27 @@
 
 在 customer-managed storage 场景中，managed table 的数据仍可位于客户自己的 S3、ADLS 或 GCS，只是位置和生命周期由 UC 管理。Databricks 新的 default storage 是 fully managed storage，外部 FileIO 能力不同，不能把两种 managed storage 混为一谈。
 
-## 3. External Location 问题
+## 3. 直接回答：为什么需要 External Location，Databricks 内部表能否直接访问
+
+**问题一：为什么需要一个 Databricks External Location？**
+
+External Location 不是 Doris 协议层的强制要求，也不是为了把表创建成 external table。Doris 教程需要它，是因为教程要主动准备一块**确定支持外部 FileIO 和 credential vending 的 customer-managed storage**，再把它设为 Databricks catalog 的 managed storage。这样创建出来的表仍是 managed Iceberg，但 UC 可以在 Doris 按表名访问时，为其签发限定表路径和有效期的临时云凭证。
+
+**问题二：Databricks 中已有的大量内部/managed 表，有方案让 Doris 不复制数据而直接访问吗？**
+
+有。只要已有 managed Iceberg 表具备 external-engine capability，并且实际位于支持外部 FileIO/vending 的存储中，Doris 就可以直接连接**已有 Unity Catalog 和原表名**，通过 Iceberg REST 取得 metadata 和临时凭证，再读取原来的 S3、ADLS 或 GCS 文件。此时不需要新建 External Location、不需要把表改成 external table，也不需要复制数据。
+
+但是，“managed table”只表示 UC 管理表的位置和生命周期，不能单独证明它能被外部客户端访问。Databricks managed table 还要按底层存储分成两类：
+
+| 已有 managed table 的实际存储 | Doris 能否原地直接访问 | 是否需要另建 External Location |
+| --- | --- | --- |
+| 支持外部 FileIO/vending 的 customer-managed storage | 可以；使用现有 UC catalog、原表名和 UC 签发的短期凭证 | 不需要 |
+| 当前不支持外部 FileIO/vending 的 Databricks default storage | 不能通过 Iceberg REST + 外部 FileIO 原地读取 | 单独新建 External Location 不会改变已有表的位置；如必须由 Doris 直读，需要把兼容数据迁移/复制到 customer-managed storage，或改用 JDBC/ODBC、受限 OpenSharing 等非直读方案 |
+| 存储类型或 capability 不明确 | 不能只看 Catalog Explorer 中的 `MANAGED` 判断 | 先检查 table capability，并用一次真实 `loadTable` 验证是否返回可用的临时凭证 |
+
+因此最短结论是：
+
+> External Location 是官方教程用来构造“可向外部引擎签发凭证的 managed storage”的手段，不是 Doris 访问所有 managed table 的前置条件。已有表能否直接访问，取决于 external-engine capability、底层存储是否支持 FileIO/vending，以及 Doris 能否消费返回的云凭证。
 
 ### 3.1 Doris 教程为什么创建 External Location
 
