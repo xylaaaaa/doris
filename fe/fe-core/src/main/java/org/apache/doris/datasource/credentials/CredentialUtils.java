@@ -41,9 +41,15 @@ public class CredentialUtils {
             "obs.",          // Huawei OBS
             "gs.",           // Google Cloud Storage
             "azure.",        // Microsoft Azure
+            "adls.",         // Apache Iceberg Azure Data Lake Storage
             "client.",       // Iceberg client properties (e.g., client.region)
             "iceberg.rest."  // Iceberg REST catalog properties (e.g., iceberg.rest.access-key-id)
     ));
+
+    private static final String ADLS_SAS_TOKEN_PREFIX = "adls.sas-token.";
+    private static final String ADLS_PROPERTY_PREFIX = "adls.";
+    private static final String HADOOP_AZURE_ACCOUNT_AUTH_TYPE_PREFIX = "fs.azure.account.auth.type.";
+    private static final String HADOOP_AZURE_FIXED_SAS_TOKEN_PREFIX = "fs.azure.sas.fixed.token.";
 
     /**
      * Filter cloud storage properties from raw vended credentials
@@ -64,6 +70,36 @@ public class CredentialUtils {
                 .forEach(entry -> filtered.put(entry.getKey(), entry.getValue()));
 
         return filtered;
+    }
+
+    /**
+     * Convert cloud-native vended credential properties to the configuration consumed by Doris storage readers.
+     * Apache Iceberg ADLS FileIO accepts {@code adls.sas-token.<host>}, while the Doris backend reads ABFS through
+     * Hadoop and requires account-scoped {@code fs.azure.*} settings.
+     */
+    public static Map<String, String> normalizeCloudStorageProperties(Map<String, String> rawVendedCredentials) {
+        Map<String, String> filtered = filterCloudStorageProperties(rawVendedCredentials);
+        Map<String, String> normalized = new HashMap<>(filtered);
+
+        for (Map.Entry<String, String> entry : filtered.entrySet()) {
+            if (!entry.getKey().startsWith(ADLS_SAS_TOKEN_PREFIX)) {
+                continue;
+            }
+
+            String accountHost = entry.getKey().substring(ADLS_SAS_TOKEN_PREFIX.length());
+            if (accountHost.isBlank()) {
+                throw new IllegalArgumentException("ADLS SAS token is missing its storage account host");
+            }
+            if (entry.getValue().isBlank()) {
+                throw new IllegalArgumentException("ADLS SAS token is empty for storage account " + accountHost);
+            }
+
+            normalized.put(HADOOP_AZURE_ACCOUNT_AUTH_TYPE_PREFIX + accountHost, "SAS");
+            normalized.put(HADOOP_AZURE_FIXED_SAS_TOKEN_PREFIX + accountHost, entry.getValue());
+        }
+
+        normalized.keySet().removeIf(key -> key.startsWith(ADLS_PROPERTY_PREFIX));
+        return normalized;
     }
 
     /**

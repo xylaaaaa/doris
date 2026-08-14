@@ -61,6 +61,18 @@ under the License.
             <version>${iceberg.version}</version>
         </dependency>
 
+        <!-- Iceberg Azure integration (ADLSFileIO for abfs/abfss locations) -->
+        <dependency>
+            <groupId>org.apache.iceberg</groupId>
+            <artifactId>iceberg-azure</artifactId>
+            <version>${iceberg.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.iceberg</groupId>
+            <artifactId>iceberg-azure-bundle</artifactId>
+            <version>${iceberg.version}</version>
+        </dependency>
+
         <!-- Hadoop for HadoopCatalog and Configuration -->
         <dependency>
             <groupId>org.apache.hadoop</groupId>

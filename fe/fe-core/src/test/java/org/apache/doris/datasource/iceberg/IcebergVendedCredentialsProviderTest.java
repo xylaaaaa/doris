@@ -24,9 +24,13 @@ import org.apache.doris.datasource.property.metastore.MetastoreProperties;
 import org.apache.doris.datasource.property.storage.StorageProperties;
 import org.apache.doris.datasource.property.storage.StorageProperties.Type;
 
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.azurebfs.AbfsConfiguration;
+import org.apache.hadoop.fs.azurebfs.services.AuthType;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.aws.s3.S3FileIOProperties;
 import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.io.ResolvingFileIO;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -156,6 +160,53 @@ public class IcebergVendedCredentialsProviderTest {
         // Note: The actual result depends on whether StorageProperties.createAll() can properly map the credentials
         // This test verifies the integration flow works without exceptions
         Assertions.assertNotNull(result);
+    }
+
+    @Test
+    public void testGetStoragePropertiesMapWithAdlsVendedCredentials() throws Exception {
+        String accountHost = "account.dfs.core.windows.net";
+        String sasToken = "testSasToken";
+
+        IcebergRestProperties restProperties = Mockito.mock(IcebergRestProperties.class);
+        Mockito.when(restProperties.getType()).thenReturn(MetastoreProperties.Type.ICEBERG);
+        Mockito.when(restProperties.isIcebergRestVendedCredentialsEnabled()).thenReturn(true);
+
+        Table table = Mockito.mock(Table.class);
+        FileIO fileIO = Mockito.mock(FileIO.class);
+        Mockito.when(table.io()).thenReturn(fileIO);
+        Mockito.when(fileIO.properties()).thenReturn(Map.of(
+                "adls.sas-token." + accountHost, sasToken,
+                "adls.sas-token-expires-at-ms." + accountHost, "4102444800000"));
+
+        Map<Type, StorageProperties> result = VendedCredentialsFactory
+                .getStoragePropertiesMapWithVendedCredentials(restProperties, new HashMap<>(), table);
+
+        Assertions.assertTrue(result.containsKey(Type.HDFS));
+        Map<String, String> backendProperties = CredentialUtils.getBackendPropertiesFromStorageMap(result);
+        String authTypeKey = "fs.azure.account.auth.type." + accountHost;
+        String fixedSasTokenKey = "fs.azure.sas.fixed.token." + accountHost;
+        Assertions.assertEquals("SAS", backendProperties.get(authTypeKey));
+        Assertions.assertEquals(sasToken, backendProperties.get(fixedSasTokenKey));
+        Assertions.assertFalse(backendProperties.containsKey("adls.sas-token." + accountHost));
+
+        Configuration configuration = new Configuration(false);
+        backendProperties.forEach(configuration::set);
+        AbfsConfiguration abfsConfiguration = new AbfsConfiguration(configuration, accountHost);
+        Assertions.assertEquals(AuthType.SAS, abfsConfiguration.getAuthType(accountHost));
+        Assertions.assertEquals(sasToken,
+                abfsConfiguration.getSASTokenProvider().getSASToken(accountHost, "container", "/table", "read"));
+    }
+
+    @Test
+    public void testAdlsFileIoIsAvailableForAbfssLocations() {
+        ResolvingFileIO fileIO = new ResolvingFileIO();
+        fileIO.initialize(new HashMap<>());
+        try {
+            Assertions.assertEquals("org.apache.iceberg.azure.adlsv2.ADLSFileIO",
+                    fileIO.ioClass("abfss://container@account.dfs.core.windows.net/table").getName());
+        } finally {
+            fileIO.close();
+        }
     }
 
     @Test

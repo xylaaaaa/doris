@@ -55,16 +55,16 @@ public abstract class AbstractVendedCredentialsProvider {
                 return null;
             }
 
-            // 2. Filter cloud storage properties before format conversion
-            Map<String, String> filteredCredentials =
-                    CredentialUtils.filterCloudStorageProperties(rawVendedCredentials);
-            if (filteredCredentials.isEmpty()) {
+            // 2. Filter and normalize cloud storage properties before format conversion
+            Map<String, String> normalizedCredentials =
+                    CredentialUtils.normalizeCloudStorageProperties(rawVendedCredentials);
+            if (normalizedCredentials.isEmpty()) {
                 return null;
             }
 
             // 3. Key steps: Format conversion via StorageProperties.createAll()
             // This avoids writing duplicate transformation logic in the VendedCredentials class
-            List<StorageProperties> vendedStorageProperties = StorageProperties.createAll(filteredCredentials);
+            List<StorageProperties> vendedStorageProperties = StorageProperties.createAll(normalizedCredentials);
 
             // 4. Convert to Map format
             Map<StorageProperties.Type, StorageProperties> vendedPropertiesMap = vendedStorageProperties.stream()
