@@ -2,11 +2,21 @@
 
 > 状态：调研结论与实现路线建议，不是最终接口承诺
 >
-> 调研更新：2026-08-13
+> 调研更新：2026-08-14
 >
 > Doris 代码复核基线：`2e8fd03e8c0b19a65fab7fd94f7c0318afc28995`
 >
 > 范围：只讨论 Databricks Unity Catalog 中的 Iceberg 外部访问及 Doris 现有 Iceberg 能力；native Delta Lake Catalog 见[独立调研](databricks-native-delta-lake-catalog-research.md)。
+
+## 本文回答的三个问题
+
+| 问题 | 直接回答 | 展开位置 |
+| --- | --- | --- |
+| 为什么 Doris 教程需要 Databricks External Location？ | 教程用 External Location 承载 customer-managed managed storage，避开当前不支持外部 FileIO/vending 的 default storage；它不是把表变成 External Table。 | 第 3.1 节 |
+| 已有 Databricks 内部/managed 表能否不复制数据而直接访问？ | 可以，但必须按表名经过 Unity Catalog Iceberg REST；目标表要具备 external-engine capability，底层 storage 要能 vending，Doris 还要支持返回的云凭证。不能绕过 UC 猜测对象存储 URI。 | 第 3.2、3.3、4 节 |
+| Doris 已有 Iceberg 支持还要完善什么？ | 不需要重造 Databricks 专用 Iceberg Catalog；应在现有 Iceberg REST 主干上补齐三云凭证、expiry/refresh、fail-closed、capability 校验、真实环境测试、治理策略和诊断。 | 第 5、7、8、9 节 |
+
+此外，第 6 节单独比较 Snowflake、Spark、Starburst Enterprise/Trino 和 ClickHouse OSS/Cloud，重点区分商业版能力、开源基线、版本边界与官方资料中的冲突。
 
 ## 1. 结论摘要
 
@@ -19,6 +29,8 @@
 4. **Doris 已有正确的 Iceberg REST 主干，但尚不能把“Databricks 三云 managed Iceberg”整体标为 production-ready。** 当前具备 REST、OAuth、access delegation 和 native Iceberg scan/write 基础；缺口包括真实环境门禁、凭证过期/刷新、vending 失败时 fail-closed、Databricks capability 校验，以及 AWS/Azure/GCP 的完整认证。
 
 5. **欧洲 Azure 现场不是“未新建 External Location”导致失败的优先解释。** 现场已成功列库/列表，`loadTable` 又返回 `abfss://.../__unitystorage/...` metadata 和 table-scoped ADLS SAS，证明 UC 控制面、表解析和 credential vending 已经走通。当前 Doris 会过滤 Databricks 返回的 `adls.sas-token.*`，也没有形成 Azure Iceberg FileIO/SAS 到执行层的完整闭环，这是高置信候选根因；由于缺少原始 `SELECT` 错误和 FE/BE 日志，尚不能写成最终根因。
+
+6. **竞品的成熟方案都把 Unity Catalog 当控制面，而不是要求用户复制 managed table。** Snowflake 的商业实现最完整，已经通过 catalog-linked database、vended credentials 和 GA write 支持形成双向集成；Starburst Enterprise 481-e 在开源 Trino 的 REST/vending 基础上增加 external write 和 Databricks server-side scan planning；Spark 是 Databricks 官方开源参考客户端；ClickHouse 的 UC 集成仍处于 Beta/Experimental，当前 UC 指南的可靠范围主要是 external-storage tables。
 
 ## 2. 先把五个概念分开
 
@@ -189,15 +201,84 @@ SHOW DATABASES / SHOW TABLES 成功
 
 ## 6. 竞品：只看 Databricks Iceberg
 
-| 产品 | 公开支持边界 | 对 Doris 的启示 |
-| --- | --- | --- |
-| Snowflake | 通过 Unity Iceberg REST 和 catalog-linked database 访问 managed Iceberg；vended credentials 模式无需 Snowflake external volume，双向访问已 GA | 标准 Iceberg REST 足以承载商业级集成；无需把 managed table 变成 external table |
-| Apache Spark + Iceberg | `SparkCatalog` 直连 UC Iceberg REST，并加载对应云 bundle | 是协议和三云 FileIO 的开源基准，但不是裸 Spark core 自带 UC 能力 |
-| Starburst Enterprise | 新版 STS 支持 UC Iceberg external R/W、managed R 和 server-side planning；较新 LTS 文档仍要求 read-only | 能力必须带版本；ABAC 需要服务端 planning，不能只靠 vending |
-| ClickHouse | UC 指南明确主要支持 external-location 表，managed Iceberg 不支持；能列 metadata 不代表能读取 managed data | 必须把 catalog 控制面、storage vending 和 FileIO 分层验收 |
-| Doris 当前 | 标准 Iceberg REST 与 native scan/write 已存在，但三云和 credential lifecycle 未认证完整 | 增强现有实现，不建立平行的 Databricks 专用 Iceberg 栈 |
+本节只把各产品通过 Iceberg REST 访问 Databricks 的能力计入比较。Delta Sharing、Delta Direct、native Delta connector 等不在本篇的 Iceberg 支持结论内。
 
-竞品共同采用“开放 catalog API + 短期凭证 + 原生格式引擎”。成熟方案没有把“猜 managed path + 长期 AK/SK”作为主路径。
+### 6.1 支持矩阵与版本边界
+
+| 产品/版本 | Catalog 与身份入口 | 表与存储范围 | 凭证/FileIO | 写入与治理 | 成熟度和商业边界 |
+| --- | --- | --- | --- | --- | --- |
+| Snowflake 商业 SaaS | Unity Iceberg REST catalog integration；OAuth 或 bearer token；catalog-linked database 自动发现 UC namespace/table | AWS、Azure、GCP 上符合条件的 UC Iceberg；按已有 UC catalog 接入 | `ACCESS_DELEGATION_MODE=VENDED_CREDENTIALS` 时由 UC 下发临时凭证，不需要 Snowflake external volume；也可选择 external volume | catalog-linked database 默认可读写；支持 INSERT/UPDATE/CREATE 等受支持操作 | externally managed Iceberg writes 与 catalog-linked database 于 2025-10-17 GA；本次比较中产品化最完整 |
+| Apache Spark + Apache Iceberg | `SparkCatalog` 直连 `/api/2.1/unity-catalog/iceberg-rest`；PAT/OAuth | Managed Iceberg R/W、Foreign Iceberg R、Delta with Iceberg reads R，取决于 UC capability | 必须加载 Iceberg runtime 和 AWS/Azure/GCP 对应 cloud bundle；支持 REST vending | 写操作由 Iceberg client 按 REST capability 执行 | 开源参考实现，不是裸 Spark core 内置 UC；是 Doris 三云正确性基线 |
+| Starburst Enterprise 481-e STS | SEP Iceberg connector + UC Iceberg REST + OAuth | 按 SEP 文档分类支持 external R/W、managed R，覆盖 AWS/Azure/GCP | 开启 `iceberg.rest-catalog.vended-credentials-enabled`；worker 读取对象存储 | 新增 external write；可自动采用 Databricks server-side scan planning 执行 row filter/column mask | 481-e 是商业 STS；external write 与 server-side planning 是该版本新增能力 |
+| Trino OSS 483 | 通用 Iceberg REST + OAuth | UC 官方配置要求 `iceberg.security=read_only` | 通用 REST 支持 vended credentials；481 起支持 AWS/GCS/Azure 可刷新凭证 | UC 路径只读；没有 SEP 的 Databricks server-side planning 产品能力 | 是 Starburst Enterprise 的开源基线，不能把 SEP 商业能力反推给 Trino/Doris plugin |
+| ClickHouse OSS / ClickHouse Cloud | 开源 `DataLakeCatalog`；Cloud 25.8 起将 Glue/Unity 集成作为 Beta | 当前 UC 指南只承诺使用 external storage locations 的 Delta/Iceberg；不承诺 managed storage | 依赖 UC vending 后直读文件；指南认为其 managed-storage 路径拿不到所需凭证 | 支持矩阵把 UC Read/Create/INSERT 标为 Beta，但 UC 指南只完整展示 external read，写支持需 PoC | OSS 提供 catalog/format engine；Cloud 增加 Shared Catalog、distributed cache、parallel execution 等托管能力，但不改变 UC managed-table 契约 |
+| Doris 当前 | 标准 Iceberg REST + OAuth/access delegation | 已有通用 Iceberg scan/write；Databricks managed/foreign/Delta-Iceberg-reads 尚未完成认证 | AWS 有基础；Azure `adls.sas-token.*` 和 GCP 未形成已认证闭环；执行期 refresh 待补 | 通用 Iceberg 有写基础，但 Databricks capability gate 不完整 | 正确路线是增强现有实现，不建立平行的 Databricks 专用 Iceberg 栈 |
+
+### 6.2 Snowflake：商业实现的完整形态
+
+Snowflake 使用 [Unity Catalog REST catalog integration](https://docs.snowflake.com/en/user-guide/tables-iceberg-configure-catalog-integration-rest-unity) 对接已有 Databricks catalog。核心配置是：
+
+```text
+CATALOG_SOURCE = ICEBERG_REST
+CATALOG_URI = <workspace>/api/2.1/unity-catalog/iceberg-rest
+CATALOG_NAME = <existing-uc-catalog>
+ACCESS_DELEGATION_MODE = VENDED_CREDENTIALS
+```
+
+然后通过 catalog-linked database 自动同步 UC schema/table。它没有要求把已有 managed Iceberg 复制成 Snowflake 表，也没有要求客户为 Snowflake 创建一张 external table。vended-credentials 模式要求 DBX metastore 开启 external data access，并给 Snowflake service principal 授予 `EXTERNAL USE SCHEMA`、`SELECT`、`USE CATALOG`、`USE SCHEMA`；UC 负责发放临时存储凭证。如果不用 vending，Snowflake 也支持 external volume，但那是另一种由消费端管理存储权限的部署模式。
+
+Snowflake 文档明确写出 catalog-linked database 默认支持读写；externally managed Iceberg writes 与 catalog-linked database 已于 [2025-10-17 GA](https://docs.snowflake.com/en/release-notes/2025/other/2025-10-17-iceberg-external-writes-cld-ga)。这说明商业级 Databricks Iceberg 集成的完整形态是：
+
+```text
+自动 catalog 同步 + OAuth/PAT + vended credentials
++ 原生 Iceberg read/write + 权限预检 + 私网/运维能力
+```
+
+对 Doris 最直接的启示不是照搬 Snowflake 对象模型，而是：标准 Iceberg REST 已足以访问已有 UC managed Iceberg；消费端应把 credential lifecycle、catalog 自动同步、诊断和远端/本地 RBAC 边界做成产品能力。
+
+### 6.3 Spark：Databricks 官方开源参考链路
+
+Databricks 的 [Iceberg client 文档](https://docs.databricks.com/aws/en/external-access/iceberg) 给出了 Spark 的官方配置。实际组合并不是“Spark core 自动懂 Unity Catalog”，而是：
+
+```text
+Apache Spark
+  + Iceberg Spark runtime
+  + iceberg-aws/azure/gcp bundle
+  + SparkCatalog
+  + Databricks Iceberg REST endpoint
+```
+
+cloud-specific bundle 是重要信号：catalog 层能成功 `loadTable`，不代表数据层一定能消费 S3 STS、Azure SAS 或 GCP OAuth。Doris 当前 Azure 案例正好卡在这一层。Spark 因此适合作为 Doris contract/live test 的对照客户端：同一个 UC table、同一个 principal、同一种 vending 响应，Spark 成功而 Doris 失败时，问题可以进一步收敛到 Doris credential/FileIO 或 execution path。
+
+### 6.4 Starburst Enterprise 与 Trino OSS：商业增量在哪里
+
+[Starburst Enterprise 481-e STS](https://docs.starburst.io/latest/connector/starburst-iceberg-unity.html) 和 [481-e release notes](https://docs.starburst.io/latest/release/release-481-e.html) 明确增加了两项 Databricks Iceberg 能力：
+
+- 使用 Unity Catalog 时写 external tables；
+- Databricks server-side scan planning。
+
+server-side planning 由 UC 决定要读取哪些文件，是执行 row filter/column mask 的必要路径。SEP 会在 catalog advertises capability 时自动选择它，并暴露 `serverSideScanCount`/`clientSideScanCount` 指标。代价是更高的 split planning latency，并限制 statistics/join reorder、time travel 和 Iceberg metadata tables。
+
+这不是 upstream Trino 的无条件能力。[Trino 483 metastore 文档](https://trino.io/docs/current/object-storage/metastores.html) 虽然支持标准 REST、OAuth、vended credentials，并且 Trino 481 已增加 AWS/GCS/Azure refreshable vending，但连接 Databricks UC 时仍要求 `iceberg.security=read_only`。因此 Starburst Enterprise 的价值主要是 provider-aware 支持、商业版本认证、server-side planning 和新增的 external write，不只是把开源 connector 换一个名字。
+
+版本也必须写清：当前 latest STS 是 481-e，而 latest LTS 是 480-e.7。不能把 481-e STS 新能力直接当成所有 LTS 部署已具备的契约；选型时要按客户实际 SEP 版本核对。
+
+### 6.5 ClickHouse OSS 与 ClickHouse Cloud：能力宣传与指南边界
+
+ClickHouse 的 `DataLakeCatalog` 是开源 catalog engine；ClickHouse Cloud 在 25.8 将 Glue/Unity integration 作为 Beta，并增加 Shared Catalog、distributed cache、userspace page cache 和 parallel execution 等托管能力。它可以根据 catalog metadata 自动选择 Iceberg/Delta table engine，这一点值得 Doris 借鉴：catalog discovery 与 format execution 应解耦。
+
+但当前 [Unity Catalog 指南](https://clickhouse.com/docs/guides/use-cases/data-warehousing/unity-catalog) 明确把范围限定为使用 external storage locations 的 Delta/Iceberg 表，并把功能标为 experimental；managed Databricks storage 不在其承诺范围。与此同时，[ClickHouse support matrix](https://clickhouse.com/docs/guides/use-cases/data-warehousing/support-matrix) 又把 Unity Read/Create/INSERT 标为 Beta。两份官方资料没有按 Iceberg/Delta、external/managed 拆清写能力，不能据此宣传“UC managed Iceberg 已支持完整写入”。保守产品结论应是：external-storage catalog read 已有公开路径；create/insert 和 managed table 必须以具体版本、云和 PoC 结果为准。
+
+这也说明 Cloud 的商业增量主要在托管、弹性和缓存执行层；当前没有证据表明 Cloud 另有一套绕开 UC storage/vending 限制的 managed-Iceberg 协议。
+
+### 6.6 对 Doris 的共同启示
+
+1. **不复制数据。** Snowflake、Spark、Starburst 和 ClickHouse 都先连接已有 catalog；没有成熟方案要求为消费端把 managed table 改成 external table。
+2. **catalog control plane 与 data plane 分离。** 表名、权限、capability 和临时凭证来自 UC；文件由各产品自己的 Iceberg/Parquet 执行层读取。
+3. **credential vending 是主路径。** 商业产品把短期、表范围凭证做成自动能力，而不是让用户长期配置 AK/SK。
+4. **三云 FileIO 是产品能力，不是 REST 成功的自然结果。** Spark 明确要求 cloud bundle；Trino 也按版本补齐 Azure/GCS vending；Doris 必须分别认证。
+5. **治理需要 server-side planning。** 仅有文件凭证不能执行 UC row filter/column mask；Starburst 的实现证明这是独立能力，并伴随性能和功能限制。
+6. **商业支持必须带版本和支持矩阵。** Snowflake 已 GA；Starburst STS/LTS 不同；ClickHouse 仍 Beta/Experimental。Doris 不能用“能列表”代替 production-ready 定级。
 
 ## 7. 推荐目标设计
 
@@ -296,6 +377,13 @@ principal + table/path + operation + cloud + credential material + expiration
 
 - [Snowflake bidirectional access to Unity Catalog](https://docs.snowflake.com/en/user-guide/tutorials/tables-iceberg-set-up-bidirectional-access-to-unity-catalog)
 - [Snowflake REST catalog integration for Unity Catalog](https://docs.snowflake.com/en/user-guide/tables-iceberg-configure-catalog-integration-rest-unity)
+- [Snowflake externally managed Iceberg writes / catalog-linked database GA](https://docs.snowflake.com/en/release-notes/2025/other/2025-10-17-iceberg-external-writes-cld-ga)
 - [Apache Iceberg Spark configuration](https://iceberg.apache.org/docs/latest/spark-configuration/)
-- [Starburst Enterprise Iceberg with Unity Catalog](https://docs.starburst.io/481-e/connector/starburst-iceberg-unity.html)
+- [Starburst Enterprise 481-e Iceberg with Unity Catalog](https://docs.starburst.io/latest/connector/starburst-iceberg-unity.html)
+- [Starburst Enterprise 481-e release notes](https://docs.starburst.io/latest/release/release-481-e.html)
+- [Starburst Enterprise 480-e LTS release notes](https://docs.starburst.io/latest/release/release-480-e.html)
+- [Trino 483 metastore and Iceberg REST configuration](https://trino.io/docs/current/object-storage/metastores.html)
+- [Trino 481: Azure and refreshable vended credentials](https://trino.io/docs/current/release/release-481.html)
 - [ClickHouse Unity Catalog guide](https://clickhouse.com/docs/guides/use-cases/data-warehousing/unity-catalog)
+- [ClickHouse open table format and catalog support matrix](https://clickhouse.com/docs/guides/use-cases/data-warehousing/support-matrix)
+- [ClickHouse Cloud DataLakeCatalog architecture](https://clickhouse.com/blog/query-your-catalog-clickhouse-cloud)
