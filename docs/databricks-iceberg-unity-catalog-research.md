@@ -137,15 +137,41 @@ https://<workspace-host>/api/2.1/unity-catalog/iceberg-rest
 
 短查询成功不能证明实现完整。排队、长查询、retry 或写入跨越 TTL 时，需要携带 expiration 并刷新凭证。
 
-### 4.1 表类型支持矩阵
+### 4.1 第一步：识别 Unity Catalog 暴露的对象
 
-| 表类型 | Iceberg REST 外部能力 | Doris 应如何处理 |
+这一层只判断表以什么形式通过 Iceberg REST 暴露，不讨论它存在哪里。
+
+| UC 中的对象 | 它实际是什么 | Doris 应提供的能力 |
 | --- | --- | --- |
-| Managed Iceberg，存储支持外部 FileIO/vending | 读写 | 作为主要认证目标，按服务端 capability 限制操作 |
-| Foreign Iceberg | 只读 | 保守标为只读；官方页面对 vending 的表述仍有差异，需 live test |
-| Delta table with Iceberg reads | 只读 | 读取异步生成的 Iceberg metadata；不等价于 native Delta，也不可据此写 Delta |
-| Default-storage managed table | 不支持外部 FileIO/vending | 在规划期给出明确诊断；使用 JDBC/ODBC、受限 OpenSharing 或迁移副本 |
-| 带 row filter/column mask 的表 | 普通文件凭证不足以执行策略 | 在支持 cross-engine ABAC server-side planning 前明确拒绝，不能绕过策略 |
+| Managed Iceberg | UC 原生管理位置、metadata 和生命周期的 Iceberg 表 | 主要目标是读写；具体操作仍以服务端返回的 capability 为准 |
+| Foreign Iceberg | UC 从外部 Iceberg catalog 登记的表，生命周期不由 UC 管理 | 保守按只读支持；credential vending 的官方表述存在差异，需要 live test |
+| Delta table with Iceberg reads | 本质仍是 Delta 表，但 Databricks 为外部 Iceberg client 异步生成兼容 metadata | 只读；不等于 Doris 已经支持 native Delta，也不能通过 Iceberg 路径写 Delta |
+
+### 4.2 第二步：检查这张表能否由 Doris 直接读写
+
+知道对象形式后，还必须分别检查存储、临时凭证和治理策略。下面这些是访问条件或阻断因素，不是新的表类型。
+
+| 检查项 | 观察到的情况 | Doris 应如何处理 |
+| --- | --- | --- |
+| 底层存储 | customer-managed storage 支持外部 FileIO/vending | 继续请求临时凭证，并检查 Doris 是否支持对应的 AWS、Azure 或 GCP 凭证 |
+| 底层存储 | Databricks default storage | 当前不能通过 Iceberg REST + FileIO 直读；明确提示改用 JDBC/ODBC、受限 OpenSharing 或迁移副本 |
+| 服务端 capability | 不支持当前 read/write/DDL 操作 | 在规划或 DDL 阶段拒绝，不能假设通用 Iceberg 能力在 Databricks 中都可用 |
+| 临时凭证 | UC 未返回凭证，或 Doris 不认识返回的云凭证 | fail-closed，并指出是 vending 或 FileIO 兼容问题，不能静默回退长期凭证 |
+| 行列策略 | 表带有 UC row filter/column mask | 普通文件凭证不足以执行策略；在支持 cross-engine ABAC/server-side planning 前明确拒绝 |
+
+因此 Doris 的判断顺序应该是：
+
+```text
+识别 managed / foreign / Delta with Iceberg reads
+        ↓
+检查底层 storage 是否支持外部 FileIO/vending
+        ↓
+检查服务端 capability 和 UC 治理策略
+        ↓
+检查 Doris 能否消费返回的云凭证
+        ↓
+决定允许读、允许写，还是给出明确拒绝
+```
 
 Databricks managed Iceberg 也不是通用 Iceberg 能力的无条件超集。截至本调研日期，官方限制涉及文件格式、delete 表达、branches/tags、partition transform、部分类型和 UC 控制的 table properties。Doris 的 create/alter/write 必须按远端 capability 和官方支持矩阵校验，而不是因为 Doris 支持通用 Iceberg 就承诺所有语法。
 
