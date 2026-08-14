@@ -1,6 +1,6 @@
 # data-eng-bench、dbt-doris Demo 与 Doris 后端可行性调研
 
-> 调研日期：2026-08-12
+> 调研日期：2026-08-12；实施验证更新：2026-08-14
 >
 > data-eng-bench 基线：`master@53353547b9869d35d61b40fd6ee9397a7ac8ca80`
 >
@@ -910,7 +910,155 @@ backend 维度。新增 Doris connector、verifier 和任务工程会改变 dige
   [ADE-bench](https://github.com/dbt-labs/ade-bench) 增加 Doris database variant；
 - 两条路线都应建立在独立 Demo 和 adapter 标准测试之上。
 
-## 12. 最终建议
+## 12. Harness 到底是什么，怎样自己定义工作流
+
+### 12.1 本文语境中的 Harness
+
+广义上，Harness 是“把输入交给系统、执行一次试验、判分并保存证据”的运行与测量装置。
+在 `data-eng-bench` 的语境中，它不是某一个脚本，而是以下约定合在一起形成的
+**Coding-Agent trial execution harness**：
+
+| 组成 | 本题中的载体 | 解决的问题 |
+| --- | --- | --- |
+| 任务契约 | `instruction.md`、`task.toml` | Agent 要做什么，资源和超时是多少 |
+| 执行环境 | Dockerfile、Compose、healthcheck | 依赖、数据库、网络和隔离怎样准备 |
+| Agent 适配 | Harbor 的 Codex、Claude Code、OpenHands 等 adapter | 怎样安装、启动并记录不同 Agent |
+| 判分契约 | `tests/test.sh`、pytest、`reward.txt` | 什么才算完成，失败证据在哪里 |
+| 生命周期 | Task -> Trial -> Job | 怎样重复、并发、收集轨迹和清理 |
+
+所以，“Harness 是不是这一套工作流”的答案是：**是，但要加上可执行契约和判分契约**。
+只有流程图而没有隔离、超时、verifier、reward 和 cleanup，仍不是一套可重复的 benchmark
+harness。
+
+### 12.2 用 Harbor 定义自己的工作流
+
+定义工作流时先定测量对象，再写容器。一个最小闭环是：
+
+1. 明确输入、Agent 可修改的目录和最终可观察产物；
+2. 用 `instruction.md` 写 ticket，用 `task.toml` 固定资源、超时和健康检查；
+3. 用 Dockerfile/Compose 准备主容器和数据库等 sidecar；
+4. 用 healthcheck 在 Agent 启动前完成真实查询、fixture 和 trial namespace；
+5. 让 Agent adapter 只负责作答，不让 Agent 自己宣布成功；
+6. 用确定性 verifier 检查数据库状态，并写 `reward.txt` 或 `reward.json`；
+7. 固定任务 digest、Agent、模型、预算和 attempt 数，保存轨迹并清理环境。
+
+```mermaid
+flowchart LR
+    T[Task package] --> E[Environment + sidecars]
+    E --> H[Healthcheck / fixture]
+    H --> A[Agent rollout]
+    A --> V[Deterministic verifier]
+    V --> R[Reward + artifacts]
+    R --> C[Cleanup]
+```
+
+Harbor 的价值是把通用“考务”实现一次：统一 task 格式、多个 Agent adapter、Docker/云
+sandbox、并发 trial、reward 协议、日志与数据集版本。团队仍要定义业务题目、Doris 环境和
+正确性 oracle；Harbor 不会自动知道一个 dbt 表是否业务正确。
+
+官方入口：[Core concepts](https://www.harborframework.com/docs/core-concepts)、
+[Tasks](https://www.harborframework.com/docs/tasks)、
+[Agents](https://www.harborframework.com/docs/agents)、
+[Cloud sandboxes](https://www.harborframework.com/docs/run-jobs/cloud-sandboxes)。
+
+## 13. 主流 Harness 与 Harbor 的区别
+
+当前没有所有团队统一采用的单一 Harness。容易混淆的项目实际分为三类：端到端 Agent eval
+runtime、特定 benchmark 的 grader，以及评测/可观测控制面。
+
+| 项目 | 本质 | 环境与 Agent | 判分方式 | 最适合 |
+| --- | --- | --- | --- | --- |
+| Harbor | 通用 Coding-Agent trial runtime | 自包含 task；Docker/Compose 和多种云 sandbox；Agent 无关 | 任意 `test.sh` 写结构化 reward | 自定义终端任务，并横向比较多种 Agent |
+| Inspect AI | 通用 Python eval DSL/runtime | `Task(dataset, solver/agent, scorer, sandbox)`；支持 Docker、Kubernetes、Modal 等 | Python `Scorer`、多指标、LLM judge、离线重评分 | 复杂 scorer、多 Agent、行为和模型 eval |
+| SWE-bench harness | GitHub Issue patch 专用 grader | 输入已生成 patch；每 instance Docker；不负责现场驱动 Agent | FAIL_TO_PASS 与 PASS_TO_PASS | 权威判断 SWE-bench patch 是否解决问题 |
+| OpenHands benchmarks | OpenHands/Software Agent SDK 原生 runner | 与 OpenHands agent-server、工具和轨迹强绑定 | 各 benchmark 自定义；SWE-bench 最终调用官方 grader | 研究和回归 OpenHands 自身 Agent |
+| LangSmith / Braintrust | 广义 LLM eval runner + 托管控制面 | Dataset/experiment/trace；sandbox 能力处于 Preview/Beta 或由用户代码执行 | 代码、人评、LLM judge、线上评分 | 应用实验对比、轨迹分析和生产 online eval |
+| Phoenix / Weave | 可观测与离线/线上评测平台 | 主要接收已有 trace/dataset；不负责完整 coding trial 生命周期 | code/LLM/human evaluator、monitor | 失败聚类、轨迹分析和生产观测 |
+
+需要特别澄清两点：
+
+- [Terminal-Bench 2.0](https://github.com/harbor-framework/terminal-bench-2) 首先是题库，官方执行
+  Harness 就是 Harbor，不是 Harbor 的平行竞品。
+- LangSmith 和 Braintrust 广义上都有 eval runner，可以称 LLM application eval harness；
+  但它们不是 Harbor 语境下“任务容器 + 终端 Agent + verifier 隔离 + reward + cleanup”的
+  等价替代。
+
+对 dbt/Doris，第一版应让 Harbor 内的确定性 verifier 成为真相源；LLM judge 只能补充解法质量
+和失败归因。若需要更强的轨迹 UI，可把 Harbor 产出的 metadata/trace 导出到 Phoenix、
+Braintrust 或 LangSmith，而不是让后者替代 Doris trial 生命周期。
+
+一手资料：
+[Inspect AI](https://inspect.aisi.org.uk/)、
+[SWE-bench harness](https://www.swebench.com/SWE-bench/reference/harness/)、
+[OpenHands benchmarks](https://github.com/OpenHands/benchmarks)、
+[LangSmith evaluation](https://docs.langchain.com/langsmith/evaluation)、
+[Braintrust evaluations](https://www.braintrust.dev/docs/evaluate)、
+[Phoenix](https://arize.com/docs/phoenix)、
+[W&B Weave](https://docs.wandb.ai/weave)。
+
+## 14. 2026-08-14 实施结果：Doris tracer 已跑通
+
+本次将上文 P2 从方案推进成了可执行证据：
+
+- Fork/分支：[`xylaaaaa/data-eng-bench@doris-demo`](https://github.com/xylaaaaa/data-eng-bench/tree/9c046d249ef2a4aec316c135a9d10193aa270226)；
+- 实测提交：[`9c046d2`](https://github.com/xylaaaaa/data-eng-bench/commit/9c046d249ef2a4aec316c135a9d10193aa270226)；
+- 新任务：[`tasks/dbt-daily-order-summary-doris`](https://github.com/xylaaaaa/data-eng-bench/tree/9c046d249ef2a4aec316c135a9d10193aa270226/tasks/dbt-daily-order-summary-doris)；
+- 未修改原始 `dbt-daily-order-summary`，也未把新任务加入 canonical `dataset.toml`；
+- 未下载 488,910,848 字节的 Git LFS 数据库，改用 7 行确定性 fixture。
+
+固定运行栈如下：
+
+| 组件 | 实测版本 |
+| --- | --- |
+| Harbor | 0.21.0 |
+| dbt adapter | `dbt-for-apache-doris==1.1.0` |
+| dbt Core / Python | 1.12.2 / 3.12.13 |
+| 本地源码 Doris | `doris-0.0.0-43af0bbc4d0`，单 FE/BE |
+| Harbor sidecar | `apache/doris:4.0.3-all-slim@sha256:3237...` |
+
+执行链为：
+
+```text
+Harbor 创建 main + Doris sidecar
+  -> 等待 FE/BE Alive
+  -> init_doris.py 创建专用 demo source/target database 与 7 行 fixture
+  -> oracle 创建完整 dbt project
+  -> dbt debug / run / 4 个 data tests
+  -> verifier 删除目标表后重新执行 dbt run/test
+  -> 检查 manifest、run_results、Doris 物理表和 13 项业务断言
+  -> reward=1
+  -> Harbor 删除两个 trial 容器
+```
+
+两条独立验证都通过：
+
+| 验证路径 | 结果 |
+| --- | --- |
+| 当前 Doris 源码构建的本地 FE/BE | `dbt debug` 通过；1 个 table model 和 4 个 dbt data tests 通过；pytest 13/13（10.79 秒）；reward=1 |
+| Harbor 0.21.0 + 独立 Doris sidecar | healthcheck 通过；pytest 13/13（11.19 秒）；reward=1；1 trial、0 exception、mean=1.0；缓存后 Job 总时长 1 分 27 秒 |
+
+确定输出为：
+
+| order_date | order_count | total_revenue |
+| --- | ---: | ---: |
+| 2026-01-01 | 2 | 120.31 |
+| 2026-01-02 | 1 | 5.56 |
+| 2026-01-03 | 1 | 12.34 |
+
+source 金额使用四位小数，因此遗漏 `ROUND(..., 2)` 会被验证器发现。`SHOW CREATE TABLE` 还确认
+adapter 生成了 `DATE/BIGINT/DECIMAL` 列、Duplicate Key、按 `order_date` Hash 分布、1 bucket
+和 1 副本。验证器先删除目标 relation，以隔离手工建表结果，再从全新 artifact 目录核对
+`manifest.json`、`run_results.json`、model/source 依赖及四个 generic tests；第二次 `dbt run`
+后行级结果不变。初始化脚本只接受两个固定 demo database 名，若名称已存在便拒绝覆盖；它不再
+依赖调用者传入的“已隔离”布尔值，也不会删除现有 database。
+
+这个结果证明了一个窄而重要的结论：目标 adapter、Doris Table materialization、跨 database
+source、metadata 查询、dbt data tests、重复物化和 Harbor sidecar 生命周期可以在该 tracer
+上协同工作。它尚未证明：Coding Agent 能独立解题、103 题兼容、当前 stable split FE/BE 部署、
+数据库性能或官方 leaderboard 可比性。下一道门禁应是同一任务的 Codex trial，再用当前 stable
+Doris 版本重复 oracle，并把成功与失败轨迹一起保留。
+
+## 15. 最终建议
 
 这是一个值得做的生态机会，但最佳切入点不是“把 DuckDB 全部替换成 Doris”。
 
