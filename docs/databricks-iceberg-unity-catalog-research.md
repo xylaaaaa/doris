@@ -13,7 +13,7 @@
 1. **External Location 不是 External Table。** Doris 教程用它为 catalog 准备支持外部 FileIO 和 credential vending 的 customer-managed storage；未指定 `LOCATION` 创建的表仍是 managed table。
 2. **符合条件的已有 managed Iceberg 可以原地访问。** Doris 按表名通过 Unity Catalog Iceberg REST 获取 metadata 和短期凭证，再读取原文件；不需要复制数据、重建表或绕过 UC 猜路径。
 3. **不是所有 managed table 都能直读。** 位于可 vending 的 customer-managed storage 时可以；位于 Databricks default storage 时，当前外部 Iceberg/Delta client 不支持 FileIO 和 credential vending。
-4. **Doris 路线正确，但三云支持尚未全部认证。** 当前已有 REST、OAuth、vended credentials 请求和 native Iceberg scan/write 基础；Azure 客户现场仍在 UC 返回 SAS 后读取失败，GCP 和长查询凭证也没有完整认证。
+4. **当前 Azure 客户问题高度疑似 Doris 没有消费 UC 返回的 ADLS SAS。** 客户的 `loadTable` 已返回 `adls.sas-token.<host>`，但 Doris 当前凭证过滤规则不接受 `adls.` 前缀，该凭证会在转换为执行层存储配置前被过滤；仍需客户日志和网络结果排除其他原因。
 5. **竞品使用相同主链路。** Snowflake、Spark、Starburst 和 ClickHouse 都以 Unity Catalog 为控制面，再由各自的格式引擎读文件；差别主要在支持范围、版本认证和治理能力。
 
 ## 2. 先把五个概念分开
@@ -175,7 +175,9 @@ SHOW DATABASES / SHOW TABLES 成功
 3. UC 已签发限定表路径的 Azure SAS，`storage-credentials: []` 不等于没有凭证；
 4. “未新建 External Location”不是优先根因。
 
-结合接口返回与 Doris 现状复核，当前高置信候选原因是：UC 已返回 Azure table-scoped SAS，但 Doris 尚未形成这类凭证从 REST 响应到 Iceberg 文件读取的已验证闭环。这不是最终诊断；仍需要 Doris 版本、完整 `SELECT` 错误、FE/BE 日志，以及 Doris 到目标 ADLS endpoint 的网络/防火墙结果才能关闭问题。
+**代码观察：** vended credential 在转换为执行层存储配置前，会经过 `CredentialUtils.filterCloudStorageProperties()`。当前白名单包含 `azure.`，但不包含 Databricks/Iceberg 使用的 `adls.`，因此 `adls.sas-token.<host>` 会被过滤。FE 依赖中也只有 `iceberg-aws`，没有 `iceberg-azure`。这两点共同说明，当前 Doris 没有形成 Databricks ADLS SAS 的完整消费链路。
+
+**结论：** “Doris 没有正确消费 UC 返回的 ADLS SAS”是当前代码和接口证据共同支持的高置信候选根因，但还不是现场最终诊断。仍需 Doris 版本、完整 `SELECT` 错误、FE/BE 日志，以及 Doris 到目标 ADLS endpoint 的网络、防火墙、token host 和有效期结果，排除网络或 token 使用条件问题。
 
 ### 6.4 中国区输入的证据等级
 
