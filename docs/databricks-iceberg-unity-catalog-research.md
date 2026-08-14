@@ -1,6 +1,6 @@
 # Apache Doris 对 Databricks Iceberg 的支持完善调研
 
-> 状态：调研结论与实现路线建议，不是最终接口承诺
+> 状态：调研结论，不是实现方案或最终接口承诺
 >
 > 调研更新：2026-08-14
 >
@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | 为什么 Doris 教程需要 Databricks External Location？ | 教程用 External Location 承载 customer-managed managed storage，避开当前不支持外部 FileIO/vending 的 default storage；它不是把表变成 External Table。 | 第 3.1 节 |
 | 已有 Databricks 内部/managed 表能否不复制数据而直接访问？ | 可以，但必须按表名经过 Unity Catalog Iceberg REST；目标表要具备 external-engine capability，底层 storage 要能 vending，Doris 还要支持返回的云凭证。不能绕过 UC 猜测对象存储 URI。 | 第 3.2、3.3、4 节 |
-| Doris 已有 Iceberg 支持还要完善什么？ | 不需要重造 Databricks 专用 Iceberg Catalog；应在现有 Iceberg REST 主干上补齐三云凭证、expiry/refresh、fail-closed、capability 校验、真实环境测试、治理策略和诊断。 | 第 6、7、8、9 节 |
+| Doris 已有 Iceberg 支持还要完善什么？ | Doris 已采用标准 Iceberg REST 路线；与成熟支持相比，主要差距是三云数据访问、短期凭证生命周期、表类型/治理边界和真实环境认证。 | 第 5、6 节 |
 
 此外，第 5 节先比较 Snowflake、Spark、Starburst Enterprise/Trino 和 ClickHouse OSS/Cloud，建立商业版能力、开源基线和版本边界；第 6 节再据此评估 Doris 当前能力与差距。
 
@@ -26,9 +26,9 @@
 
 3. **是否需要新建 External Location，取决于已有表的存储条件，不取决于它是不是 managed table。** 已有 catalog/schema 若继承了可 vending 的 customer-managed storage，通常不需要新建；如果表位于 Databricks default storage，当前不支持外部 Iceberg/Delta FileIO 和 credential vending，则不能靠给 Doris 配一个长期存储密钥绕过限制。
 
-4. **Doris 已有正确的 Iceberg REST 主干，但尚不能把“Databricks 三云 managed Iceberg”整体标为 production-ready。** 当前具备 REST、OAuth、access delegation 和 native Iceberg scan/write 基础；缺口包括真实环境门禁、凭证过期/刷新、vending 失败时 fail-closed、Databricks capability 校验，以及 AWS/Azure/GCP 的完整认证。
+4. **Doris 已有正确的 Iceberg REST 主干，但尚不能把“Databricks 三云 managed Iceberg”整体标为 production-ready。** 当前具备 REST、OAuth、access delegation 和 native Iceberg scan/write 基础；AWS、Azure、GCP、长查询凭证和 Databricks 特有能力边界尚未完成系统认证。
 
-5. **欧洲 Azure 现场不是“未新建 External Location”导致失败的优先解释。** 现场已成功列库/列表，`loadTable` 又返回 `abfss://.../__unitystorage/...` metadata 和 table-scoped ADLS SAS，证明 UC 控制面、表解析和 credential vending 已经走通。当前 Doris 会过滤 Databricks 返回的 `adls.sas-token.*`，也没有形成 Azure Iceberg FileIO/SAS 到执行层的完整闭环，这是高置信候选根因；由于缺少原始 `SELECT` 错误和 FE/BE 日志，尚不能写成最终根因。
+5. **欧洲 Azure 现场不是“未新建 External Location”导致失败的优先解释。** 现场已成功列库/列表，`loadTable` 又返回 `abfss://.../__unitystorage/...` metadata 和 table-scoped ADLS SAS，证明 UC 控制面、表解析和 credential vending 已经走通。现有证据更指向 Doris 消费 Azure SAS 的数据访问链路；由于缺少原始 `SELECT` 错误和 FE/BE 日志，尚不能写成最终根因。
 
 6. **竞品的成熟方案都把 Unity Catalog 当控制面，而不是要求用户复制 managed table。** Snowflake 的商业实现最完整，已经通过 catalog-linked database、vended credentials 和 GA write 支持形成双向集成；Starburst Enterprise 481-e 在开源 Trino 的 REST/vending 基础上增加 external write 和 Databricks server-side scan planning；Spark 是 Databricks 官方开源参考客户端；ClickHouse 的 UC 集成仍处于 Beta/Experimental，当前 UC 指南的可靠范围主要是 external-storage tables。
 
@@ -141,23 +141,23 @@ https://<workspace-host>/api/2.1/unity-catalog/iceberg-rest
 
 这一层只判断表以什么形式通过 Iceberg REST 暴露，不讨论它存在哪里。
 
-| UC 中的对象 | 它实际是什么 | Doris 应提供的能力 |
+| UC 中的对象 | 它实际是什么 | 公开支持边界 |
 | --- | --- | --- |
-| Managed Iceberg | UC 原生管理位置、metadata 和生命周期的 Iceberg 表 | 主要目标是读写；具体操作仍以服务端返回的 capability 为准 |
-| Foreign Iceberg | UC 从外部 Iceberg catalog 登记的表，生命周期不由 UC 管理 | 保守按只读支持；credential vending 的官方表述存在差异，需要 live test |
-| Delta table with Iceberg reads | 本质仍是 Delta 表，但 Databricks 为外部 Iceberg client 异步生成兼容 metadata | 只读；不等于 Doris 已经支持 native Delta，也不能通过 Iceberg 路径写 Delta |
+| Managed Iceberg | UC 原生管理位置、metadata 和生命周期的 Iceberg 表 | Iceberg REST 支持读写；具体操作以服务端 capability 为准 |
+| Foreign Iceberg | UC 从外部 Iceberg catalog 登记的表，生命周期不由 UC 管理 | 只读；credential vending 的官方表述存在差异，需要真实环境确认 |
+| Delta table with Iceberg reads | 本质仍是 Delta 表，但 Databricks 为外部 Iceberg client 异步生成兼容 metadata | 只读；不等于 native Delta 支持，也不能通过 Iceberg 路径写 Delta |
 
 ### 4.2 第二步：检查这张表能否由 Doris 直接读写
 
 知道对象形式后，还必须分别检查存储、临时凭证和治理策略。下面这些是访问条件或阻断因素，不是新的表类型。
 
-| 检查项 | 观察到的情况 | Doris 应如何处理 |
+| 检查项 | 观察到的情况 | 对外部客户端的影响 |
 | --- | --- | --- |
-| 底层存储 | customer-managed storage 支持外部 FileIO/vending | 继续请求临时凭证，并检查 Doris 是否支持对应的 AWS、Azure 或 GCP 凭证 |
-| 底层存储 | Databricks default storage | 当前不能通过 Iceberg REST + FileIO 直读；明确提示改用 JDBC/ODBC、受限 OpenSharing 或迁移副本 |
-| 服务端 capability | 不支持当前 read/write/DDL 操作 | 在规划或 DDL 阶段拒绝，不能假设通用 Iceberg 能力在 Databricks 中都可用 |
-| 临时凭证 | UC 未返回凭证，或 Doris 不认识返回的云凭证 | fail-closed，并指出是 vending 或 FileIO 兼容问题，不能静默回退长期凭证 |
-| 行列策略 | 表带有 UC row filter/column mask | 普通文件凭证不足以执行策略；在支持 cross-engine ABAC/server-side planning 前明确拒绝 |
+| 底层存储 | customer-managed storage 支持外部 FileIO/vending | UC 可以签发临时凭证；客户端还必须支持对应的 AWS、Azure 或 GCP 凭证 |
+| 底层存储 | Databricks default storage | 当前不能通过 Iceberg REST + FileIO 直读；可选 JDBC/ODBC、受限 OpenSharing 或迁移副本 |
+| 服务端 capability | 不支持当前 read/write/DDL 操作 | 该操作不可用；不能把通用 Iceberg 能力直接套用到 Databricks |
+| 临时凭证 | UC 未返回凭证，或客户端不认识返回的云凭证 | metadata 可能可见，但底层文件无法读取 |
+| 行列策略 | 表带有 UC row filter/column mask | 普通文件扫描无法执行策略，需要 cross-engine ABAC/server-side planning |
 
 因此 Doris 的判断顺序应该是：
 
@@ -168,12 +168,12 @@ https://<workspace-host>/api/2.1/unity-catalog/iceberg-rest
         ↓
 检查服务端 capability 和 UC 治理策略
         ↓
-检查 Doris 能否消费返回的云凭证
+检查客户端能否消费返回的云凭证
         ↓
 决定允许读、允许写，还是给出明确拒绝
 ```
 
-Databricks managed Iceberg 也不是通用 Iceberg 能力的无条件超集。截至本调研日期，官方限制涉及文件格式、delete 表达、branches/tags、partition transform、部分类型和 UC 控制的 table properties。Doris 的 create/alter/write 必须按远端 capability 和官方支持矩阵校验，而不是因为 Doris 支持通用 Iceberg 就承诺所有语法。
+Databricks managed Iceberg 也不是通用 Iceberg 能力的无条件超集。截至本调研日期，官方限制涉及文件格式、delete 表达、branches/tags、partition transform、部分类型和 UC 控制的 table properties。因此不能因为客户端支持通用 Iceberg，就推导出它在 Databricks 上支持全部语法。
 
 ## 5. 竞品：只看 Databricks Iceberg
 
@@ -188,7 +188,7 @@ Databricks managed Iceberg 也不是通用 Iceberg 能力的无条件超集。�
 | Starburst Enterprise 481-e STS | SEP Iceberg connector + UC Iceberg REST + OAuth | 按 SEP 文档分类支持 external R/W、managed R，覆盖 AWS/Azure/GCP | 开启 `iceberg.rest-catalog.vended-credentials-enabled`；worker 读取对象存储 | 新增 external write；可自动采用 Databricks server-side scan planning 执行 row filter/column mask | 481-e 是商业 STS；external write 与 server-side planning 是该版本新增能力 |
 | Trino OSS 483 | 通用 Iceberg REST + OAuth | UC 官方配置要求 `iceberg.security=read_only` | 通用 REST 支持 vended credentials；481 起支持 AWS/GCS/Azure 可刷新凭证 | UC 路径只读；没有 SEP 的 Databricks server-side planning 产品能力 | 是 Starburst Enterprise 的开源基线，不能把 SEP 商业能力反推给 Trino/Doris plugin |
 | ClickHouse OSS / ClickHouse Cloud | 开源 `DataLakeCatalog`；Cloud 25.8 起将 Glue/Unity 集成作为 Beta | 当前 UC 指南只承诺使用 external storage locations 的 Delta/Iceberg；不承诺 managed storage | 依赖 UC vending 后直读文件；指南认为其 managed-storage 路径拿不到所需凭证 | 支持矩阵把 UC Read/Create/INSERT 标为 Beta，但 UC 指南只完整展示 external read，写支持需 PoC | OSS 提供 catalog/format engine；Cloud 增加 Shared Catalog、distributed cache、parallel execution 等托管能力，但不改变 UC managed-table 契约 |
-| Doris 当前 | 标准 Iceberg REST + OAuth/access delegation | 已有通用 Iceberg scan/write；Databricks managed/foreign/Delta-Iceberg-reads 尚未完成认证 | AWS 有基础；Azure `adls.sas-token.*` 和 GCP 未形成已认证闭环；执行期 refresh 待补 | 通用 Iceberg 有写基础，但 Databricks capability gate 不完整 | 正确路线是增强现有实现，不建立平行的 Databricks 专用 Iceberg 栈 |
+| Doris 当前 | 标准 Iceberg REST + OAuth/access delegation | 已有通用 Iceberg scan/write；Databricks managed/foreign/Delta-Iceberg-reads 尚未完成认证 | AWS 有基础；Azure 在 UC 返回 SAS 后仍读取失败；GCP 和长查询凭证尚未完成认证 | 通用 Iceberg 有写基础，但没有完整的 Databricks 读写/治理支持矩阵 | 处于部分链路可用、三云尚未系统认证的阶段 |
 
 ### 5.2 Snowflake：商业实现的完整形态
 
@@ -224,7 +224,7 @@ Apache Spark
   + Databricks Iceberg REST endpoint
 ```
 
-cloud-specific bundle 是重要信号：catalog 层能成功 `loadTable`，不代表数据层一定能消费 S3 STS、Azure SAS 或 GCP OAuth。Doris 当前 Azure 案例正好卡在这一层。Spark 因此适合作为 Doris contract/live test 的对照客户端：同一个 UC table、同一个 principal、同一种 vending 响应，Spark 成功而 Doris 失败时，问题可以进一步收敛到 Doris credential/FileIO 或 execution path。
+cloud-specific bundle 是重要信号：catalog 层能成功 `loadTable`，不代表数据层一定能消费 S3 STS、Azure SAS 或 GCP OAuth。Doris 当前 Azure 案例正好卡在这一层，因此 Spark 可作为判断 catalog、凭证还是文件读取问题的参考客户端。
 
 ### 5.4 Starburst Enterprise 与 Trino OSS：商业增量在哪里
 
@@ -260,71 +260,38 @@ ClickHouse 的 `DataLakeCatalog` 是开源 catalog engine；ClickHouse Cloud 在
 
 这里的“完成度”和“产品化程度”不是指是否采用了不同协议，也不是简单比较开源与商业软件。Doris 与竞品使用的主链路相同：按表名访问 Unity Catalog，由 UC 返回 metadata、capability 和临时凭证，再由各自的 Iceberg/FileIO 执行层读取数据。差异在于这条链路覆盖了多少场景，以及能否作为稳定的产品承诺交付给客户。
 
-**完成度**关注协议和执行链路是否在支持矩阵内端到端正确：
-
-| 维度 | 功能完整应达到的状态 | Doris 当前差距 |
+| 概念 | 本文含义 | 主要观察维度 |
 | --- | --- | --- |
-| 云存储 | AWS STS、Azure SAS、GCP OAuth 均能从 REST 响应传递到执行层 | AWS 有基础；Azure table-scoped SAS 尚未闭环；GCP 未完整认证 |
-| 凭证生命周期 | 保存 expiration，支持排队、长查询、retry 和 FE/BE 故障场景下的 refresh | 凭证主要在 scan/sink 初始化时物化，缺少执行期 refresh 闭环 |
-| 失败语义 | 显式启用 vending 后，空凭证、格式错误、刷新失败均 fail-closed | 当前存在回退 base storage properties 的风险 |
-| 表能力 | managed、foreign、Delta Iceberg reads、default storage 的读写能力按服务端 capability 校验 | Databricks provider-aware capability gate 不完整 |
-| 治理策略 | 正确执行 UC row filter/column mask；不能执行时明确拒绝 | 尚未形成 cross-engine ABAC/server-side planning 支持 |
-| 兼容验证 | 按云、表类型、操作和版本覆盖 contract、live、长查询及 negative tests | Databricks live test 和三云认证矩阵不完整 |
+| 完成度 | 协议和数据访问链路是否在声明的范围内端到端可用 | AWS/Azure/GCP、短期凭证有效期、managed/foreign/Delta Iceberg reads、读写和治理策略 |
+| 产品化程度 | 客户能否安全、稳定地配置、诊断和运维，并获得明确的版本承诺 | 配置与报错、凭证安全、可观测性、私网部署、支持矩阵和兼容认证 |
 
-**产品化程度**关注客户是否可以在不了解 SAS、STS 和 FileIO 内部实现的情况下，安全、稳定地部署和运维：
+Snowflake 和 Starburst Enterprise 的领先主要体现在这些能力已经形成版本化支持范围、凭证生命周期、诊断或治理能力，而不是使用了另一套访问架构。ClickHouse 当前仍标为 Beta/Experimental，因此不能只根据“已提供 Unity Catalog 接口”判断其成熟度。
 
-| 产品化能力 | 应达到的状态 |
-| --- | --- |
-| 配置与预检 | 用户只提供 workspace、catalog 和 OAuth；创建 catalog 时检查 external data access、UC 权限、table capability 和 storage vending |
-| 错误诊断 | 区分 catalog OAuth、UC ACL、credential vending、FileIO、对象存储网络和 token expiry，不把数据面错误延迟成模糊的文件读取失败 |
-| 可观测性 | 展示不含 secret 的 credential source、scope、expiration、refresh outcome，以及控制面/数据面耗时 |
-| 安全与隔离 | SAS/session token 不进入日志、profile、edit log 或 `SHOW CREATE CATALOG`；凭证和 metadata cache 按 principal/table/operation 隔离 |
-| 部署与运维 | 覆盖 private endpoint、proxy、endpoint/firewall、权限撤销、版本升级和 FE failover |
-| 支持承诺 | 给出带版本的 AWS/Azure/GCP × 表类型 × read/write 支持矩阵、限制和排障文档 |
+## 6. Doris 当前支持状态
 
-当前欧洲 Azure 现场已经完成 `SHOW TABLES -> loadTable -> UC 返回 ADLS SAS`，但在 `SELECT` 数据面失败。这说明 Doris 的总体架构和控制面主干已经存在，当前 Databricks managed Iceberg 支持处于“部分链路可用、尚未完成三云端到端认证”的阶段。修复 Azure SAS 只能关闭当前首要功能缺口；还需要补齐 refresh、fail-closed、capability、治理、安全、诊断和兼容矩阵，才能标为 production-ready。
-
-Snowflake 和 Starburst Enterprise 的领先主要体现在这些能力已经形成版本化支持范围、凭证生命周期、诊断或治理能力，而不是使用了另一套访问架构。ClickHouse 当前仍标为 Beta/Experimental，因此不能只根据“已提供 Unity Catalog 接口”判断其产品化程度高于 Doris。
-
-## 6. Doris 当前能力与具体缺口
-
-有了第 5 节的竞品基线后，本节再对照评估 Doris：总体协议路线与竞品一致，差距主要在三云数据面闭环、凭证生命周期、治理和产品化认证，不需要另建一套 Databricks 专用 Iceberg Catalog。
+有了第 5 节的竞品基线后，本节只总结 Doris 已经具备的能力、尚未验证完整的范围和客户现场证据，不展开实现设计。
 
 ### 6.1 已有基础
 
 当前 Doris 已有：
 
-- Iceberg REST URI、OAuth token/credential、M2M token refresh、user session/token exchange；
-- nested namespace、view 和 `iceberg.rest.vended-credentials-enabled`；
-- `X-Iceberg-Access-Delegation: vended-credentials`；
-- 从 Iceberg `Table.io()` / `SupportsStorageCredentials` 提取临时凭证的代码；
-- native Iceberg scan、sink、delete 和 merge 基础。
+- 标准 Iceberg REST Catalog；
+- OAuth/PAT 认证和 vended-credentials 请求；
+- native Iceberg metadata、manifest、Parquet 读取和通用写入基础。
 
-主要代码入口：
+这说明 Doris 的总体协议路线与竞品一致，不需要把现有能力描述成另一种 Databricks 专用 catalog。
 
-- `IcebergRestProperties.java`；
-- `IcebergVendedCredentialsProvider.java`；
-- `AbstractVendedCredentialsProvider.java`；
-- `VendedCredentialsFactory.java`；
-- `IcebergScanNode.java`；
-- `IcebergUnityCatalogRestCatalogTest.java`。
+### 6.2 尚未完成系统认证的范围
 
-所以不建议另造 `databricks_iceberg` catalog。应继续使用标准 `type=iceberg` + `iceberg.catalog.type=rest`，把 Databricks 做成 capability、诊断和认证 profile。
+| 范围 | 当前调研结论 |
+| --- | --- |
+| 云存储 | AWS 已有基础；Azure table-scoped SAS 尚未形成已验证闭环；GCP 未完成系统认证 |
+| 短期凭证 | 长查询、排队和重试跨越凭证有效期的行为尚未完成认证 |
+| 表与操作 | managed、foreign、Delta Iceberg reads 以及 Databricks 特有 DDL/DML 限制尚未形成正式支持矩阵 |
+| 治理 | UC row filter/column mask 需要 server-side planning，普通文件扫描不能等价执行 |
+| 测试 | 缺少覆盖三云、表类型、读写和凭证过期场景的完整真实环境结果 |
 
-### 6.2 优先补齐项
-
-| 优先级 | 当前情况 | 风险与目标 |
-| --- | --- | --- |
-| P0 | Databricks live test 整类被禁用，且存在固定环境/吞异常问题 | 建立三云 gated live suite 和可重复 contract fixtures |
-| P0 | 临时凭证在 scan/sink 初始化时物化，未形成 expiry 到执行期 refresh 闭环 | 长查询、排队和 retry 跨 TTL 时主动刷新 |
-| P0 | 凭证提取异常/空结果会回退 base storage properties | 显式启用 vending 时 fail-closed；不得静默扩大权限边界 |
-| P0 | Databricks managed Iceberg 的能力子集没有 provider-aware 校验 | 在规划/DDL 阶段给出语义化拒绝 |
-| P0 | Azure `adls.sas-token.*` 未形成转换和 FileIO/BE 使用闭环 | 支持 table-scoped ADLS SAS、host、expiry 与 refresh |
-| P1 | AWS、Azure、GCP 没有统一认证矩阵 | 每云覆盖 read/write、expiry、retry、endpoint/private network |
-| P1 | catalog service principal 与 delegated user 的行为不够明确 | cache key 包含 principal，明确 UC ACL 与 Doris RBAC 的边界 |
-| P1 | 教程混淆 External Location 与 External Table | 用本调研第 3 节重写解释与排障 |
-
-这里需要修正一个容易误读的说法：**Doris 不是完全不支持 Azure。** Doris 已有 Azure account key/OAuth 等静态存储配置；当前缺失的是 Databricks Iceberg REST 返回的 table-scoped `adls.sas-token.*` 及其 expiration/refresh 链路。
+这里需要修正一个容易误读的说法：**Doris 不是完全不支持 Azure。** Doris 已有 Azure account key/OAuth 等静态存储配置；当前未验证完整的是 Databricks Iceberg REST 返回的 table-scoped `adls.sas-token.*` 数据访问链路。
 
 ### 6.3 欧洲 Azure 现场的证据链
 
@@ -345,88 +312,13 @@ SHOW DATABASES / SHOW TABLES 成功
 3. UC 已签发限定表路径的 Azure SAS，`storage-credentials: []` 不等于没有凭证；
 4. “未新建 External Location”不是优先根因。
 
-当前代码审计发现：
-
-- `CredentialUtils` 接受 `azure.` 等前缀，但不接受 Databricks/Iceberg 使用的 `adls.`，SAS 会被过滤；
-- FE 依赖包含 `iceberg-core`、`iceberg-aws`，未包含 `iceberg-azure`；
-- 当前 Azure storage properties/BE client 主要覆盖 account key/OAuth 等既有形态，没有 table-scoped SAS 的完整传递与刷新；
-- vending 转换失败可能静默回退，使错误延迟表现为 manifest/Parquet 鉴权失败。
-
-这是高置信候选根因，不是最终诊断。关闭问题仍需要 Doris 版本/commit、完整 `SELECT` 错误、FE/BE 日志，以及 Doris 到目标 ADLS endpoint 的网络/防火墙验证。
+结合接口返回与 Doris 现状复核，当前高置信候选原因是：UC 已返回 Azure table-scoped SAS，但 Doris 尚未形成这类凭证从 REST 响应到 Iceberg 文件读取的已验证闭环。这不是最终诊断；仍需要 Doris 版本、完整 `SELECT` 错误、FE/BE 日志，以及 Doris 到目标 ADLS endpoint 的网络/防火墙结果才能关闭问题。
 
 ### 6.4 中国区输入的证据等级
 
 “2026 年 6 月某中国区 workspace 未部署 Iceberg REST、无 ETA”只能记录为特定现场和时间点的反馈，不能泛化为当前全部中国区能力。Azure 中国官方文档在 2026-07-24 已给出 Iceberg REST endpoint 和中国云专用域名。产品测试应记录 cloud、region、workspace、HTTP 状态和支持工单，按 workspace 探测能力，而不是静态判断整个区域支持或不支持。
 
-## 7. 推荐目标设计
-
-### 7.1 保持标准 Iceberg REST
-
-建议为 Databricks 增加自动或显式 profile，但不新增 catalog 类型。profile 负责：
-
-- endpoint、warehouse/catalog 和权限预检；
-- external data access、`EXTERNAL USE SCHEMA`、table capability 诊断；
-- default storage 不支持 vending 时给出可操作错误；
-- managed、foreign、Delta Iceberg reads 的读写能力展示；
-- Databricks partition/delete/type/property 限制校验；
-- 记录 credential source、scope、expiry、refresh outcome 等不含 secret 的可观测信息。
-
-### 7.2 建立共享的临时云凭证层
-
-Iceberg 与未来 Delta 可以共享 credential abstraction，但不能共享格式实现。凭证层至少表示：
-
-```text
-principal + table/path + operation + cloud + credential material + expiration
-```
-
-它需要覆盖 AWS STS、Azure ADLS SAS、GCP OAuth；支持 refresh、权限撤销和 FE/BE retry；显式 vending 失败时 fail-closed。catalog OAuth secret、PAT、SAS/session token 不得明文进入 edit log、query profile、普通日志或 `SHOW CREATE CATALOG`。
-
-## 8. 交付计划
-
-### M0：文档与兼容实验室
-
-- 修订 Unity Catalog 教程，解释 External Location、managed storage、managed table 和 vending；
-- 建立 AWS/Azure/GCP Databricks workspace 与脱敏 API fixtures；
-- 覆盖 managed/foreign Iceberg、Delta Iceberg reads 和 default storage negative case；
-- 正式流水线使用 OAuth M2M，PAT 只用于诊断。
-
-### M1：凭证正确性
-
-- 修复 Azure ADLS SAS 和 GCP credential 的转换、传递与 refresh；
-- expiration 进入 scan/credential handle；
-- 显式 vending fail-closed；
-- 长查询、排队、retry、FE failover 和权限撤销测试。
-
-### M2：Databricks capability 与产品化
-
-- managed Iceberg read/write 认证；
-- foreign Iceberg 和 Delta Iceberg reads 的只读认证；
-- DDL/DML capability gate、default storage 诊断；
-- service-principal/delegated-user cache 隔离；
-- 根据服务端支持评估 cross-engine ABAC planning。
-
-## 9. 验收标准与待验证项
-
-### 9.1 验收标准
-
-1. 只配置 Databricks OAuth、不配置长期 S3/ADLS/GCS secret，即可查询和写入符合条件的 managed Iceberg；
-2. 查询跨越临时凭证 TTL 后仍成功，或在不可续期场景给出确定且不泄密的错误；
-3. managed、foreign、Delta Iceberg reads 的读写能力严格符合服务端 capability；
-4. default storage 不支持 vending 时，在读取文件前给出可操作诊断；
-5. AWS、Azure、GCP 均有 contract、live 和长查询测试；
-6. 无 secret 出现在 edit log、profile、audit/general log、exception 或 `SHOW CREATE CATALOG`；
-7. service principal 与 delegated user 的权限和 cache isolation 测试通过。
-
-### 9.2 仍需通过 PoC/现场关闭
-
-- 各云、各 workspace storage 配置下 capability 和 credential 响应差异；
-- Azure/GCP refresh、private endpoint 与 FE/BE 网络拓扑；
-- foreign Iceberg credential vending 的官方文档差异；
-- Databricks managed Iceberg partition/type/property 限制的逐项映射；
-- 欧洲 Azure 案例的完整错误与网络验证；
-- 中国区不同 cloud/region/workspace 的实际可用性。
-
-## 10. 主要官方资料
+## 7. 主要官方资料
 
 ### Apache Doris
 
