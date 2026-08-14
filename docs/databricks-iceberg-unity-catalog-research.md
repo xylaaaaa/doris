@@ -280,6 +280,36 @@ ClickHouse 的 `DataLakeCatalog` 是开源 catalog engine；ClickHouse Cloud 在
 5. **治理需要 server-side planning。** 仅有文件凭证不能执行 UC row filter/column mask；Starburst 的实现证明这是独立能力，并伴随性能和功能限制。
 6. **商业支持必须带版本和支持矩阵。** Snowflake 已 GA；Starburst STS/LTS 不同；ClickHouse 仍 Beta/Experimental。Doris 不能用“能列表”代替 production-ready 定级。
 
+### 6.7 如何理解“完成度”和“产品化程度”
+
+这里的“完成度”和“产品化程度”不是指是否采用了不同协议，也不是简单比较开源与商业软件。Doris 与竞品使用的主链路相同：按表名访问 Unity Catalog，由 UC 返回 metadata、capability 和临时凭证，再由各自的 Iceberg/FileIO 执行层读取数据。差异在于这条链路覆盖了多少场景，以及能否作为稳定的产品承诺交付给客户。
+
+**完成度**关注协议和执行链路是否在支持矩阵内端到端正确：
+
+| 维度 | 功能完整应达到的状态 | Doris 当前差距 |
+| --- | --- | --- |
+| 云存储 | AWS STS、Azure SAS、GCP OAuth 均能从 REST 响应传递到执行层 | AWS 有基础；Azure table-scoped SAS 尚未闭环；GCP 未完整认证 |
+| 凭证生命周期 | 保存 expiration，支持排队、长查询、retry 和 FE/BE 故障场景下的 refresh | 凭证主要在 scan/sink 初始化时物化，缺少执行期 refresh 闭环 |
+| 失败语义 | 显式启用 vending 后，空凭证、格式错误、刷新失败均 fail-closed | 当前存在回退 base storage properties 的风险 |
+| 表能力 | managed、foreign、Delta Iceberg reads、default storage 的读写能力按服务端 capability 校验 | Databricks provider-aware capability gate 不完整 |
+| 治理策略 | 正确执行 UC row filter/column mask；不能执行时明确拒绝 | 尚未形成 cross-engine ABAC/server-side planning 支持 |
+| 兼容验证 | 按云、表类型、操作和版本覆盖 contract、live、长查询及 negative tests | Databricks live test 和三云认证矩阵不完整 |
+
+**产品化程度**关注客户是否可以在不了解 SAS、STS 和 FileIO 内部实现的情况下，安全、稳定地部署和运维：
+
+| 产品化能力 | 应达到的状态 |
+| --- | --- |
+| 配置与预检 | 用户只提供 workspace、catalog 和 OAuth；创建 catalog 时检查 external data access、UC 权限、table capability 和 storage vending |
+| 错误诊断 | 区分 catalog OAuth、UC ACL、credential vending、FileIO、对象存储网络和 token expiry，不把数据面错误延迟成模糊的文件读取失败 |
+| 可观测性 | 展示不含 secret 的 credential source、scope、expiration、refresh outcome，以及控制面/数据面耗时 |
+| 安全与隔离 | SAS/session token 不进入日志、profile、edit log 或 `SHOW CREATE CATALOG`；凭证和 metadata cache 按 principal/table/operation 隔离 |
+| 部署与运维 | 覆盖 private endpoint、proxy、endpoint/firewall、权限撤销、版本升级和 FE failover |
+| 支持承诺 | 给出带版本的 AWS/Azure/GCP × 表类型 × read/write 支持矩阵、限制和排障文档 |
+
+当前欧洲 Azure 现场已经完成 `SHOW TABLES -> loadTable -> UC 返回 ADLS SAS`，但在 `SELECT` 数据面失败。这说明 Doris 的总体架构和控制面主干已经存在，当前 Databricks managed Iceberg 支持处于“部分链路可用、尚未完成三云端到端认证”的阶段。修复 Azure SAS 只能关闭当前首要功能缺口；还需要补齐 refresh、fail-closed、capability、治理、安全、诊断和兼容矩阵，才能标为 production-ready。
+
+Snowflake 和 Starburst Enterprise 的领先主要体现在这些能力已经形成版本化支持范围、凭证生命周期、诊断或治理能力，而不是使用了另一套访问架构。ClickHouse 当前仍标为 Beta/Experimental，因此不能只根据“已提供 Unity Catalog 接口”判断其产品化程度高于 Doris。
+
 ## 7. 推荐目标设计
 
 ### 7.1 保持标准 Iceberg REST
