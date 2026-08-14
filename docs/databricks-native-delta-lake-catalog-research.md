@@ -4,7 +4,7 @@
 >
 > 状态：调研结论与实现路线建议，不是最终接口承诺
 >
-> 调研更新：2026-08-13
+> 调研更新：2026-08-14
 >
 > Doris 代码复核基线：`2e8fd03e8c0b19a65fab7fd94f7c0318afc28995`
 >
@@ -20,7 +20,7 @@
 
 4. **catalog-managed Delta 不能被实现成普通 `_delta_log` path scanner。** 开启 catalog commits 后，Unity Catalog 是提交协调和表状态的事实来源。正确读取需要处理 catalog 持有的 log tail；正确写入需要通过 catalog commits 协调版本和冲突，不能绕过 UC 直接抢占下一个 JSON log 版本。
 
-5. **建议优先复用 Delta Kernel，不要重新手写不断演进的 Delta protocol，也不要采用已弃用的 Delta Standalone。** 但 Kernel 不会自动补齐 Unity REST、Doris 身份模型和三云凭证。Java Kernel 放 FE 还是 Rust Kernel FFI 放 BE，需要通过 PoC 验证 `transformPhysicalData`、deletion vector 和 FE/BE snapshot 一致性的边界。
+5. **建议优先复用 Delta Kernel，不要重新手写不断演进的 Delta protocol，也不要采用已弃用的 Delta Standalone。** Delta 4.3 已提供 Java `delta-kernel-unitycatalog`，Rust Kernel 也有 Unity Catalog/catalog-managed companion crates，可以复用一部分 UC 与 commit 流程；但它们不会自动补齐 Doris 身份模型、三云生产适配和 FE/BE 执行边界。Java Kernel 放 FE 还是 Rust Kernel FFI 放 BE，需要通过 PoC 验证 `transformPhysicalData`、deletion vector 和 statement snapshot 一致性。
 
 6. **第一阶段应先交付正确的 native read，再逐级开放 write。** read 至少覆盖 checkpoint、reader features、column mapping、schema evolution、deletion vectors、time travel、catalog-held log tail 和 AWS/Azure/GCP 临时凭证；write 先做 external Delta，再做仍受 Databricks 预览状态约束的 catalog-managed write。
 
@@ -180,57 +180,72 @@ CREATE CATALOG delta_lake PROPERTIES (
 
 ## 5. 竞品调研：只看 Databricks Delta
 
+本节把证据分为三层：产品正式文档表示厂商当前承诺的支持范围；开源仓库 `master` 只能说明在研实现；根据协议和源码作出的判断会显式标注为“推断”。不能把 `master`、Beta/Preview 或一个合并格式的支持矩阵直接写成稳定产品能力。
+
 ### 5.1 总表
 
 | 产品 | Delta 实现与 UC 路径 | Managed/External | 写入与 commits | 对 Doris 的启示 |
 | --- | --- | --- | --- | --- |
-| Apache Spark + Delta/UC connector | Delta Spark 4.3+ 配合 Unity Catalog connector 0.5+ | external R/W；managed read；managed create/write 为 Preview | catalog-managed write 走 catalog commits；OAuth M2M 支持长任务刷新 | Databricks 官方参考数据流和正确性基线 |
-| Starburst Enterprise | 原生 Delta connector + Unity Catalog adapter | external 功能完整；普通 managed 只读；catalog-managed 有实验能力 | external DML 完整度高；catalog-managed DML 受 Preview/experimental 限制 | 最接近 Doris 目标：native log、credential refresh、feature matrix、catalog commits |
-| ClickHouse OSS/Cloud | DataLakeCatalog + Delta engine，主要非 Azure 路径迁往 Rust Delta Kernel | 官方 UC 指南主要支持 external location；managed Delta 不支持 | Delta INSERT/UC create 等文档状态有冲突；无 managed catalog commits 证据 | 采用 Kernel 的工程方向正确；列 catalog 不代表 managed data 可读 |
-| Snowflake | Delta Sharing、Delta Direct、Iceberg reads 等多条只读路径 | 以分享、path 或兼容 metadata 为主 | 未发现等价的 native UC managed Delta write catalog | 证明只读集成有多种路线，但不能代替 native managed Delta client |
+| Apache Spark + Delta/UC connector | 常规路径是 Delta Spark 4.3+ 配合 Unity Catalog connector 0.5+；不是以 Delta Kernel 为主实现 | external R/W；managed read；managed create/write 为 Preview | catalog-managed write 走 catalog commits；OAuth M2M 支持长任务刷新 | Databricks 官方参考数据流和正确性基线 |
+| Starburst Enterprise | Trino 自研 Delta 格式栈 + SEP 商业 Unity Catalog adapter | external 支持文档列出的 CRUD/DML；普通 managed 只读；catalog-managed 有实验能力 | catalog-managed DML 受 Preview/experimental 限制 | 最接近 Doris 目标：native log、credential refresh、feature matrix、catalog commits |
+| ClickHouse OSS/Cloud | DataLakeCatalog + DeltaLake engine + Rust Delta Kernel FFI；ClickHouse 原生读取 Parquet | 正式 UC 指南只承诺 external read；`master` 可发现 managed 类型并取得 READ credential，但未见 catalog-managed log-tail 集成 | 路径 Delta INSERT 为 Beta；native Unity adapter 未见 READ_WRITE/catalog commits | Kernel 与 native reader 的分层最值得参考，同时要避免把凭证前置链路等同于 managed 正确读取 |
+| Snowflake | Delta Direct 原生解析 Delta log；Delta Sharing、Iceberg reads 是另外两条协议路径 | Sharing 可覆盖被分享的 managed/external；Direct 只认 path；UniForm 可读 managed/external | 当前公开 Delta 路径均只读；没有 Unity REST Delta catalog commits | 格式解析可借鉴，但不能替代 native Unity adapter |
 | Doris 当前 | 实验性 Trino compatibility plugin | 没有认证的 Unity managed Delta native 路径 | 无 native catalog commits | 先完成 native read 正确性，再逐级开放 write |
 
 ### 5.2 Apache Spark：官方参考客户端
 
-Spark core 本身不内置 Unity Catalog client。Databricks 当前参考组合是 Delta Spark + Unity Catalog Spark connector，并把 Apache Spark 列为 Unity REST 的正式支持客户端。它形成完整分工：
+Spark core 本身不内置 Unity Catalog client。Databricks 当前参考组合是 Apache Spark 4.0/4.1、Delta Spark 4.3+ 与 Unity Catalog Spark connector 0.5+，并把 Apache Spark 列为 Unity REST 的正式支持客户端。它形成完整分工：
 
 ```text
-UC connector：表发现、权限、临时凭证、catalog interaction
-Delta Spark：Delta protocol、snapshot、read/write semantics
-Cloud filesystem：使用 scoped temporary credentials 访问文件
+unitycatalog-spark/UCSingleCatalog：Spark catalog 接入、name/namespace/table resolution、UC 调用入口
+unitycatalog-hadoop：credential-scoped filesystem、三云 vended credential 续期
+Delta Spark：Delta protocol、snapshot、read/write semantics，以及 UC managed 操作路由
+Unity 服务端：鉴权、授权裁决和 catalog commit validation
 ```
+
+Delta Spark 4.3 对 UC managed Delta 默认使用新的 UC Delta REST API，并把 load、create/CTAS、replace、DML 和 metadata update 路由到该 API。它同时提供了基于 Delta Kernel 的 DSv2 connector，但发布说明将这条路径标为 `Experimental`。因此，不能把 Spark 的常规生产路径描述成“Spark 直接使用 Delta Kernel”；这里承担完整 Delta 语义的是 Delta Spark。
 
 这应成为 Doris cross-engine correctness 的基准，但不意味着 Doris 必须采用 Spark 执行。Doris 可以用 Delta Kernel 加 native Parquet data path 实现相同协议语义。
 
 ### 5.3 Starburst Enterprise：最接近目标的商业实现
 
+Starburst Enterprise 的公开基础是 upstream Trino Delta connector。Trino 自己解析 `_delta_log`、checkpoint 和 snapshot，公开依赖中没有 Delta Kernel；SEP 在此基础上提供商业 Unity Catalog adapter。SEP 私有扩展没有公开源码，因此只能说公开证据支持“Trino 自研格式栈 + SEP Unity 扩展”，不能反向断言私有部分绝不复用 Kernel。
+
 Starburst Enterprise 文档明确区分：
 
-- external Delta 可 read/create/insert/update/delete/merge；
+- external Delta 可 read/create/insert/update/delete/merge/drop；
 - 未启用 catalog commits 的普通 managed Delta 只读；
-- catalog-managed Delta 可读取，并在开关下实验性支持部分 DML；
-- S3/GCS vended credentials 可按 table ID/location 限定，并在查询期间刷新。
+- catalog-managed Delta 可 read/insert/update/delete/merge/drop，但不支持从 Starburst 创建，表需先在 Databricks 创建；该能力仍受实验开关和 Preview 限制；
+- S3/GCS vended credentials 可按 table ID/location 限定，并在查询期间刷新；当前文档不能据此泛化到 Azure。
 
-这说明 `catalog.type=unity` 只是入口。商业级实现还必须同时具备 Delta transaction log、table features、credential lifecycle、server-side planning 和 catalog commits。Starburst 与 Databricks 页面在 Preview/experimental 用词和更新时间上存在差异，Doris 应以运行时 capability 和真实互操作测试为准。
+这说明选择 Unity 作为 metastore/catalog 只是入口。商业级实现还必须同时具备 Delta transaction log、table features、credential lifecycle 和 catalog commits；Doris 若要支持 Databricks row filter/column mask，还必须另外满足 server-side planning 的客户端要求。Starburst 与 Databricks 页面在 Preview/experimental 用词和更新时间上存在差异，Doris 应以运行时 capability 和真实互操作测试为准。
 
 upstream Trino 的通用 Delta connector 使用 HMS/Glue 等 metadata source，不会因为 Doris 已能加载 Trino plugin 就自动获得 Starburst Enterprise 的 Unity adapter、managed credential vending/refresh 或 catalog commits。
 
 ### 5.4 ClickHouse：Delta Kernel 的工程信号与边界
 
-ClickHouse 曾自行解析 Delta transaction log，后将主要路径迁移到官方 Rust Delta Kernel，以减少协议演进、deletion vectors 和 schema evolution 的维护负担。这支持 Doris 优先复用 Kernel 的判断。
+ClickHouse 采用“Catalog 控制面 + 原生 Delta 表引擎 + 进程内 Delta Kernel”的分层方案。`DataLakeCatalog` 连接 Unity Catalog，负责 namespace/table 发现、表路径与短期存储凭证；`DeltaLake` 引擎通过 C++/Rust FFI 调用 Rust Delta Kernel，解析协议并构造 snapshot/scan，向 ClickHouse 暴露有效文件、统计信息、deletion vector 和 schema transform 信息；Parquet 读取、相关下游处理及查询执行仍由 ClickHouse 完成。Kernel 静态编入 ClickHouse 二进制，并非独立服务。
 
-但 ClickHouse 也显示出两个边界：
+`DataLakeCatalog`、Unity adapter 和 Delta Kernel 集成本身可以在 ClickHouse OSS 中看到。公开资料未显示 ClickHouse Cloud 使用另一套 Delta reader；目前明确的 Cloud 增量主要包括托管连接 UI、Shared Catalog、无状态计算和 Cloud 专有分布式缓存。因此不能只凭 Cloud 产品名推导出额外的 Unity managed Delta 语义。
 
-- Azure 路径因 known issues 不是 Kernel 的无条件覆盖；
-- Unity Catalog 指南主要支持 external storage locations，并明确不支持该路径下的 managed Delta。
+按公开产品文档，`DeltaLake` 引擎可附着并查询已有 Delta 表；INSERT 是 Beta/需开关，仅支持 S3、GCS，Azure 写入、创建空表以及 DELETE/UPDATE/MERGE 不支持。ClickHouse 的 Unity 专项指南目前只说明 external-storage 表，并把 native Delta 章节明确写成“Read Delta”。通用 support matrix 虽把 “Unity Catalog / Delta, Iceberg / Create、INSERT Beta” 合并为一行，但没有区分 native Unity-Delta 与经 Iceberg REST 接入的 Iceberg，因此不足以证明 Unity-Delta 写入已经受支持。
 
-其总支持矩阵、writing guide 和 Unity 指南对 create/insert/Beta 的说法并不完全一致。保守结论应是 external read 已有公开支持；不能把它推导成 managed Delta、完整 DML 或 catalog commits 已支持。
+current `master` 源码比 Unity 指南更新：native Unity adapter 已接受 `TABLE_DELTA`（managed）和 `TABLE_DELTA_EXTERNAL`，并能获取 S3 temporary credentials 或 Azure SAS。ClickHouse Cloud 26.4 在 `Experimental Features` 下加入 Azure Delta Kernel，current master 也已启用该路径；但旧 support matrix 仍写 Azure 禁用 Kernel，存在尚未收敛的版本化文档冲突。凭证请求仍固定为 `operation=READ`，凭证重取 callback 明确只支持 S3，且未见 Unity `READ_WRITE`、建表或 managed table 所需 catalog commits。以上是源码与特定版本事实，不能外推为所有稳定版或 ClickHouse Cloud 环境的正式承诺。
 
-### 5.5 Snowflake：只读替代路线不是 native Delta
+这些源码只能证明表发现、location 和初始 READ credential 等前置链路。普通 managed 表是否能在具体发行版中正确读取仍需 PoC；对于 catalog-managed 表，尚未看到 ClickHouse 获取 Unity 持有的 log tail/latest catalog version 的证据，不能认定其已经满足协议正确读取。ClickHouse 自身尚未正式文档化 managed Delta，Databricks 支持客户端名单也没有 ClickHouse，因此应标为“待具体版本和云环境联调”。managed write 不能只靠路径级 Delta commit，还需要 Unity catalog commits；Azure 长查询中的 SAS 自动刷新也仍有源码层面的缺口。
 
-Snowflake 对 Databricks Delta 主要提供 Delta Sharing、Delta Direct/object-store path 和 Delta-to-Iceberg reads 等只读路径。这些适合分享、迁移或只读分析，但没有证据表明它提供等价的 Unity managed Delta native write catalog。
+### 5.5 Snowflake：有 native Delta log 读取，但没有 native Unity REST Delta catalog
 
-它对 Doris 的价值是帮助区分两个目标：如果只要尽快读取一份数据，Sharing/兼容副本/path 可以是产品选项；如果目标是按 UC 表名访问 managed Delta 并最终互操作写入，就仍需 native Unity + Delta protocol + catalog commits。
+Snowflake 的四条路径解决的是不同问题，不能合并称为 native Databricks Delta catalog：
+
+- **Delta Sharing**：连接 provider 显式创建的 share，而不是浏览任意 Unity Catalog。它可以消费被分享的 managed/external Delta，使用 sharing server 返回的 vended credentials；对应的 catalog-linked database 明确只读，不能在其中 create table，也不能对共享表执行 insert/update，并且不涉及 catalog commits。
+- **Delta Direct / object store**：Snowflake 直接读取对象存储中的 `_delta_log`、checkpoint 和 Parquet，再将其注册为 Snowflake Iceberg table。它确实具备 native Delta log 解析能力，但没有 Unity control plane、按 UC 表名发现、UC credential vending 或 catalog commits。该路径要求显式 storage path/external volume，且官方明确不支持从 Unity Catalog 的 Delta table definition 创建；Delta Direct table 只读。`ALLOW_WRITES=TRUE` 只允许写派生的 Iceberg metadata，不是 Delta data/log write。
+- **Iceberg reads / UniForm**：managed/external Delta 开启 Iceberg reads 后，由 Databricks 生成 Iceberg metadata；Snowflake 经 Unity Iceberg REST，并可使用 UC vended credentials（也可配置 external volume），作为 Iceberg client 读取。Databricks 矩阵明确两类 Delta 都是 read-only。这条链路访问 UC，但不是 native Delta protocol。
+- **Legacy Delta external table**：`CREATE EXTERNAL TABLE ... TABLE_FORMAT=DELTA` 在 refresh 时解析 `_delta_log`，但官方已标注未来 deprecated，Delta 自动刷新不支持，需要手工 refresh；它同样是 path/stage 只读能力。Compatibility Mode 也只是为 managed table 生成只读副本后让这类 reader 读取，并非访问原 managed table。
+
+Databricks 官方 integration matrix 中 Snowflake 的 Unity REST API 列为空，只有 Iceberg REST catalog 支持。因此截至当前公开资料，Snowflake 没有等价的 native Unity REST managed Delta + temporary credentials + catalog commits 实现；Snowflake 对 Unity Catalog 的可写能力是 Iceberg，不应外推为 Delta write。Snowflake 是闭源 SaaS，官方没有披露 Delta Direct 使用 Delta Kernel、delta-rs、自研解析器还是内部 fork，因而不能用它证明 Doris 应该或不应该引入某个格式库。
+
+它对 Doris 的价值是帮助区分两个目标：Delta Direct 证明“解析 Delta log 后接入自身 metadata/execution”可行；如果目标是按 UC 表名访问 managed Delta 并最终互操作写入，仍需 native Unity control plane、credential lifecycle 和 catalog commits。
 
 ## 6. 推荐的 Doris 目标架构
 
@@ -272,7 +287,13 @@ CREATE CATALOG dbx_delta PROPERTIES (
 
 [Delta Kernel](https://docs.delta.io/delta-kernel/) 是面向 connector 的官方 Java/Rust 库，覆盖 scan planning、schema transform、data skipping、deletion vectors 等协议细节。不要采用已经 [deprecated 的 Delta Standalone](https://docs.delta.io/delta-standalone/)。
 
-Kernel 并不等于完整 Databricks connector：Doris 仍需实现 Unity REST/auth/credential vending。Java 的 Unity catalog-managed client 仍带实验性边界；Rust Unity integration/FFI 的内建云凭证覆盖也不是三云完整成品。
+Java 方面，Delta 4.3 已发布 `delta-kernel-unitycatalog` artifact。其中实验性的 `UCCatalogManagedClient` 能参与 catalog-held commit 读取和 staged commit/finalize 流程，但需要注入具体 `UCClient`；连接、认证、request handling 和 credential lifecycle 仍由 connector 集成。
+
+Rust 方面，独立的 `delta-kernel-unity-catalog`、`unity-catalog-delta-rest-client` 等 companion crates 已覆盖 name-to-table ID/path、temporary credentials 和 catalog get/commit API；但 `TemporaryTableCredentials` 当前只暴露 AWS，credential expiry 后的 Engine 重建、冲突 rebase/retry 和 connector identity/cache 仍由集成方负责。建表所需的 staging reservation 和最终 finalize endpoint 尚未由该 REST client 暴露，也需要 connector-owned UC client。Rust FFI 暴露面是否足以让 Doris 不再增加一层 bridge，同样必须通过 PoC 证明。
+
+因此 Doris 不应预设 Unity/catalog-commit adapter 必须全部从零实现，也不能把任一 Kernel artifact 当成开箱即用的三云 Databricks connector。PoC 应同时验证 Java 与 Rust 的现成组件和版本边界。
+
+Kernel 仍不等于完整 Doris Databricks connector：Doris 需要把官方组件接入自己的 OAuth/身份模型、principal-aware cache、三云 credential lifecycle、FE/BE snapshot pinning、native reader/writer 和错误语义。相关 Unity 组件及外部写入能力仍存在版本与 Preview 边界，不能因为 artifact 已发布就跳过三云和并发互操作认证。
 
 | PoC 方案 | 优点 | 必须证明的风险 |
 | --- | --- | --- |
@@ -301,9 +322,10 @@ CDF、streaming、OPTIMIZE/VACUUM、Delta Sharing 和高级写入可以后续迭
 1. external Delta append；
 2. external Delta CTAS/CREATE；
 3. external Delta DELETE/UPDATE/MERGE；
-4. catalog-managed Delta append/create，通过 catalog commits；
-5. catalog-managed DML；
-6. 评估维护操作和更多 table features。
+4. catalog-managed Delta CREATE：先向 Unity reserve staging table，取得 table ID/location 和 `READ_WRITE` credential；写入 version 0；再向 Unity finalize table。version 0 不走 commits API；
+5. catalog-managed Delta append/write：version 1 及以后通过 staged commit、Unity ratify/publish；
+6. catalog-managed DML；
+7. 评估维护操作和更多 table features。
 
 每一阶段都需要 conflict、concurrency、idempotency 和 orphan-file 测试。不能复用“写 `_delta_log/<next-version>.json`”的 path writer 处理 catalog-managed table。Databricks 仍处于 Preview 的能力必须由显式实验开关保护。
 
@@ -360,10 +382,10 @@ metadata 的非敏感部分可在满足权限语义时共享；temporary credent
 
 ### M4：Catalog-managed write
 
-- 通过 catalog commits 实现 managed append/create；
+- 实现 managed CREATE 的 reserve/write-version-0/finalize，以及后续 append 的 catalog commits；Rust companion REST client 的 staging/finalize 缺口需要单独适配；
 - 再开放受支持的 DML；
 - 以服务端 capability 和 Preview 状态加实验开关；
-- 验证 conflict、多表/事务边界和失败恢复。
+- 验证 conflict、失败恢复和单表事务边界；对未实现的多表原子事务明确拒绝。
 
 ### M5：高级治理与生态
 
@@ -417,7 +439,10 @@ metadata 的非敏感部分可在满足权限语义时共享；temporary credent
 - [Delta Iceberg reads](https://docs.databricks.com/aws/en/delta/iceberg-reads)
 - [Compatibility Mode](https://docs.databricks.com/aws/en/external-access/compatibility-mode)
 - [Delta Kernel](https://docs.delta.io/delta-kernel/)
+- [Delta Lake 4.3.0 release（Delta Spark、Kernel Unity artifact）](https://github.com/delta-io/delta/releases/tag/v4.3.0)
 - [Delta Kernel Unity integration](https://docs.delta.io/kernel/rust/unity_catalog/overview.html)
+- [Delta Kernel Rust Unity reads and credential refresh](https://docs.delta.io/kernel/rust/unity_catalog/reading.html)
+- [Delta Kernel Rust Unity table creation](https://docs.delta.io/kernel/rust/unity_catalog/creating_tables.html)
 - [Delta Kernel catalog-managed reads](https://docs.delta.io/kernel/rust/catalog_managed/reading.html)
 - [Delta Kernel Rust FFI](https://docs.delta.io/kernel/rust/ffi/overview.html)
 - [Delta Kernel Java `UCCatalogManagedClient`](https://github.com/delta-io/delta/blob/master/kernel/unitycatalog/src/main/java/io/delta/kernel/unitycatalog/UCCatalogManagedClient.java)
@@ -429,9 +454,24 @@ metadata 的非敏感部分可在满足权限语义时共享；temporary credent
 - [Starburst Enterprise Delta Lake with Unity Catalog](https://docs.starburst.io/481-e/connector/starburst-delta-lake-unity.html)
 - [Starburst Enterprise Delta Lake connector](https://docs.starburst.io/481-e/connector/delta-lake.html)
 - [Trino Delta Lake connector](https://trino.io/docs/483/connector/delta-lake.html)
+- [Trino Delta transaction log implementation](https://github.com/trinodb/trino/blob/master/plugin/trino-delta-lake/src/main/java/io/trino/plugin/deltalake/transactionlog/TransactionLogAccess.java)
+- [Trino Delta connector dependencies](https://github.com/trinodb/trino/blob/master/plugin/trino-delta-lake/pom.xml)
 - [ClickHouse DataLakeCatalog](https://clickhouse.com/docs/reference/engines/database-engines/datalake)
 - [ClickHouse Unity Catalog guide](https://clickhouse.com/docs/guides/use-cases/data-warehousing/unity-catalog)
+- [ClickHouse data lake support matrix](https://clickhouse.com/docs/guides/use-cases/data-warehousing/support-matrix)
 - [ClickHouse DeltaLake engine](https://clickhouse.com/docs/reference/engines/table-engines/integrations/deltalake)
 - [ClickHouse integration with Rust Delta Kernel](https://clickhouse.com/blog/integrating-rust-delta-kernel)
+- [ClickHouse DataLakeCatalog control/data-plane layering](https://clickhouse.com/blog/query-your-catalog-clickhouse-cloud)
+- [ClickHouse Unity adapter source](https://github.com/ClickHouse/ClickHouse/blob/master/src/Databases/DataLake/UnityCatalog.cpp)
+- [ClickHouse Delta Kernel scan source](https://github.com/ClickHouse/ClickHouse/blob/master/src/Storages/ObjectStorage/DataLakes/DeltaLake/TableSnapshot.cpp)
+- [ClickHouse current master Delta Kernel cloud selection](https://github.com/ClickHouse/ClickHouse/blob/master/src/Storages/ObjectStorage/DataLakes/DeltaLakeMetadata.cpp)
+- [ClickHouse Cloud 26.4 Azure Delta Kernel release note](https://github.com/ClickHouse/clickhouse-docs/blob/main/docs/cloud/reference/01_changelog/02_release_notes/26_4.md)
 - [Snowflake Delta Sharing catalog integration](https://docs.snowflake.com/en/user-guide/tables-iceberg-configure-catalog-integration-delta-sharing)
 - [Snowflake Object Store / Delta Direct](https://docs.snowflake.com/en/user-guide/tables-iceberg-configure-catalog-integration-object-storage)
+- [Snowflake Delta Direct table semantics](https://docs.snowflake.com/en/sql-reference/sql/create-iceberg-table-delta)
+- [Snowflake Delta Direct read-only limitation](https://docs.snowflake.com/en/release-notes/2026/other/2026-07-02-delta-direct-variant-data-type)
+- [Snowflake Delta-based Iceberg metadata generation](https://docs.snowflake.com/en/user-guide/tables-iceberg-metadata)
+- [Snowflake legacy Delta external table](https://docs.snowflake.com/en/sql-reference/sql/create-external-table)
+- [Snowflake Unity Catalog through Iceberg REST](https://docs.snowflake.com/en/user-guide/tables-iceberg-configure-catalog-integration-rest-unity)
+- [Databricks Iceberg REST table-type matrix](https://docs.databricks.com/aws/en/external-access/iceberg)
+- [Databricks Unity Catalog integrations matrix](https://docs.databricks.com/aws/en/external-access/integrations)
