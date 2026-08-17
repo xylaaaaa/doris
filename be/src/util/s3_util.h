@@ -115,9 +115,9 @@ struct S3ClientConf {
                 "(ak={}, token={}, endpoint={}, region={}, bucket={}, max_connections={}, "
                 "request_timeout_ms={}, connect_timeout_ms={}, use_virtual_addressing={}, "
                 "cred_provider_type={},role_arn={}, external_id={}",
-                hide_access_key(ak), token, endpoint, region, bucket, max_connections,
-                request_timeout_ms, connect_timeout_ms, use_virtual_addressing, cred_provider_type,
-                role_arn, external_id);
+                hide_access_key(ak), token.empty() ? "<not set>" : "<set>", endpoint, region,
+                bucket, max_connections, request_timeout_ms, connect_timeout_ms,
+                use_virtual_addressing, cred_provider_type, role_arn, external_id);
     }
 };
 

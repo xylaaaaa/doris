@@ -35,7 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** Metadata facade backed by a single path-based Delta catalog adapter. */
+/** Metadata facade backed by a Delta catalog adapter. */
 public final class DeltaConnectorMetadata implements ConnectorMetadata {
 
     private final DeltaCatalogAdapter catalogAdapter;

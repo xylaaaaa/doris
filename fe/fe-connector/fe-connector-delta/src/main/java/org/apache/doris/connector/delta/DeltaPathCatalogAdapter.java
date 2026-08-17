@@ -103,6 +103,12 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
         }
     }
 
+    @Override
+    public String testConnection() {
+        DeltaKernelSnapshot snapshot = loadLatestSnapshot();
+        return "Delta snapshot version " + snapshot.getVersion() + " is readable";
+    }
+
     public String getDatabaseName() {
         return databaseName;
     }

@@ -17,13 +17,27 @@
 
 package org.apache.doris.connector.delta;
 
-/** Property names for the path-based Delta connector. */
+/** Property names for the native Delta connector. */
 public final class DeltaConnectorProperties {
 
     public static final String TYPE = "delta";
+    public static final String CATALOG_TYPE = "delta.catalog.type";
+    public static final String CATALOG_TYPE_PATH = "path";
+    public static final String CATALOG_TYPE_UNITY = "unity";
     public static final String TABLE_PATH = "delta.table.path";
     public static final String DATABASE = "delta.database";
     public static final String TABLE = "delta.table";
+    public static final String UNITY_URI = "unity.uri";
+    public static final String UNITY_CATALOG = "unity.catalog";
+    public static final String UNITY_TOKEN = "unity.token";
+
+    public static String catalogType(java.util.Map<String, String> properties) {
+        String configured = properties.get(CATALOG_TYPE);
+        if (configured != null && !configured.trim().isEmpty()) {
+            return configured.trim().toLowerCase(java.util.Locale.ROOT);
+        }
+        return properties.containsKey(TABLE_PATH) ? CATALOG_TYPE_PATH : CATALOG_TYPE_UNITY;
+    }
 
     private DeltaConnectorProperties() {
     }

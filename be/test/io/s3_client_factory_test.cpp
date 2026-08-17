@@ -33,6 +33,16 @@ class S3ClientFactoryTest : public testing::Test {
     FRIEND_TEST(S3ClientFactoryTest, S3ClientFactory);
 };
 
+TEST_F(S3ClientFactoryTest, S3ClientConfToStringRedactsSessionToken) {
+    S3ClientConf conf;
+    conf.token = "temporary-session-token-must-not-be-logged";
+
+    std::string rendered = conf.to_string();
+
+    EXPECT_EQ(rendered.find(conf.token), std::string::npos);
+    EXPECT_NE(rendered.find("token=<set>"), std::string::npos);
+}
+
 TEST_F(S3ClientFactoryTest, AwsCredentialsProvider) {
     S3ClientFactory& factory = S3ClientFactory::instance();
     S3ClientConf anonymous_conf;

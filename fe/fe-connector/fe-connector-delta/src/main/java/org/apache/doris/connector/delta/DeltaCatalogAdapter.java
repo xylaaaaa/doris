@@ -18,6 +18,7 @@
 package org.apache.doris.connector.delta;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /** Catalog-specific control-plane operations used by the Delta connector. */
@@ -37,4 +38,12 @@ public interface DeltaCatalogAdapter {
 
     /** Loads the snapshot pinned by a table handle. */
     DeltaKernelSnapshot loadSnapshot(DeltaTableHandle tableHandle);
+
+    /** Returns short-lived storage settings consumed by the backend for this table. */
+    default Map<String, String> getBackendStorageProperties(DeltaTableHandle tableHandle) {
+        return Map.of();
+    }
+
+    /** Verifies the catalog control plane or configured path. */
+    String testConnection();
 }

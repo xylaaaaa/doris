@@ -33,7 +33,7 @@ under the License.
     <packaging>jar</packaging>
     <name>Doris FE Connector - Delta Lake</name>
     <description>
-        Experimental path-based, read-only Delta Lake connector using Delta Kernel.
+        Experimental read-only Delta Lake connector using Delta Kernel with path and Unity adapters.
     </description>
 
     <dependencies>
@@ -56,6 +56,14 @@ under the License.
         <dependency>
             <groupId>io.delta</groupId>
             <artifactId>delta-kernel-defaults</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.unitycatalog</groupId>
+            <artifactId>unitycatalog-client</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.unitycatalog</groupId>
+            <artifactId>unitycatalog-hadoop</artifactId>
         </dependency>
         <dependency>
             <groupId>org.apache.hadoop</groupId>

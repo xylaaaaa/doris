@@ -88,7 +88,7 @@ its network perimeter *(maintainer, Q2)*.
 | Authenticated user in tenant T₁ trying to reach tenant T₂ data `[cloud]` | Untrusted across tenant boundary | **Yes** *(maintainer, M2)* — cross-tenant adversary |
 | `SUPER` / `ADMIN_PRIV` / database owner / operator-level user | Trusted *(maintainer, M3)* | No |
 | Cluster-internal RPC peer (FE↔BE, BE↔BE, FE↔Follower, FE↔Broker, FE↔MetaService) | Trusted by network isolation *(maintainer, Q1)* | No |
-| External catalog / storage system (Hive Metastore, Iceberg, JDBC source, S3, HDFS, Azure Blob) | Trusted by admin connection *(maintainer, Q8)* | No |
+| External catalog / storage system (Hive Metastore, Iceberg, Unity Catalog, JDBC source, S3, HDFS, Azure Blob) | Trusted by admin connection *(maintainer, Q8)* | No |
 
 **Component-family table.** Distinct threat profiles. `Surface` lists
 ports / inputs each family exposes; `In model?` ties to §4.3.
@@ -99,7 +99,7 @@ ports / inputs each family exposes; `In model?` ties to §4.3.
 | 2 | **BE core** (C++) | `be/src/` | **BE Arrow Flight 8050 (client-facing, M7)**; BRPC 8060, Webserver 8040, Heartbeat 9050, BE↔BE 9060 (internal) | **Yes** |
 | 3 | **Cloud variant** | `cloud/src/` | Meta Service (shared, multi-tenant), Recycler, Resource Manager | **Yes** *(maintainer, Q2, M2)* |
 | 4 | **FE auth providers** | `fe/fe-authentication/` | Pluggable: native, LDAP | **Yes** |
-| 5 | **FE connectors** (catalogs) | `fe/fe-connector/{iceberg,hudi,hms,jdbc,paimon,trino,maxcompute,es}` | Outbound to external systems; in-process JAR loading | **Yes** (memory safety only; data trusted per §4.6) |
+| 5 | **FE connectors** (catalogs) | `fe/fe-connector/{delta,iceberg,hudi,hms,jdbc,paimon,trino,maxcompute,es}` | Outbound to external systems; in-process JAR loading | **Yes** (memory safety only; data trusted per §4.6) |
 | 6 | **BE Java extensions** | `fe/be-java-extensions/` | In-process JVM in BE | **Yes** (memory safety; UDF code trusted per §4.6) |
 | 7 | **HDFS / FS broker client** | `fe/fe-filesystem/fe-filesystem-broker/` | Thrift RPC to external broker (cluster-internal); the in-tree `apache_hdfs_broker` daemon has been removed | **Yes** (internal trust per §4.4) |
 | 8 | Web UI | `ui/` + `webroot/` | Served via FE 8030 (auth gated) | **Yes** |
@@ -301,7 +301,7 @@ set)" is closed the same way per M11 → §4.9 / §4.10.
 | FE MySQL 9030 | username / auth response | **untrusted** *(maintainer, Q6)* | server-side: brute-force resistance is *not* default; operator must `CREATE USER ... FAILED_LOGIN_ATTEMPTS` per §4.10 |
 | FE MySQL 9030 | SQL text (post-auth) | **untrusted** *(maintainer, Q5)* | nothing — parser/planner memory-safe by §4.8 (2) |
 | FE MySQL 9030 | SQL semantic content (table / column / privilege requested) | **untrusted, RBAC-enforced** *(maintainer, Q5)* | nothing — RBAC enforced by §4.8 (4) |
-| FE MySQL 9030 | `iceberg.rest.uri` and similar URLs in `CREATE EXTERNAL CATALOG` | **post-auth, attacker-controllable** *(maintainer, M13)* | operator: only grant `CREATE CATALOG` privilege to admins; otherwise SSRF surface (§4.9) |
+| FE MySQL 9030 | `iceberg.rest.uri`, `unity.uri`, and similar URLs in `CREATE EXTERNAL CATALOG` | **post-auth, attacker-controllable** *(maintainer, M13)* | operator: only grant `CREATE CATALOG` privilege to admins; otherwise SSRF surface (§4.9) |
 | FE HTTP 8030 | request bytes (pre-auth) | **untrusted** | memory safety |
 | FE HTTP 8030 | request body (post-auth) | **untrusted within RBAC** | RBAC |
 | FE HTTP 8030 | `/api/show_proc`, admin REST surface | **post-auth, privileged** | RBAC; admin-only endpoints must check |
@@ -510,9 +510,10 @@ are not:**
   in plaintext config — operator's job.
 - **Decompression / deserialization bombs** in Parquet/ORC/Avro
   files — admin must trust the catalog source (§4.3 (5)).
-- **HTTP server-side request forgery (SSRF) via Iceberg REST
-  catalog URL** *(maintainer, M13)* — `CREATE EXTERNAL CATALOG ...
-  PROPERTIES("iceberg.rest.uri" = "http://...")` does not validate
+- **HTTP server-side request forgery (SSRF) via external catalog
+  URLs** *(maintainer, M13)* — `CREATE EXTERNAL CATALOG ...
+  PROPERTIES("iceberg.rest.uri" = "http://...")` and equivalent
+  `unity.uri` configurations do not validate
   or block localhost / private IPs. Operator must restrict
   `CREATE CATALOG` privilege to admins (§4.10, §4.11).
 - **`COPY INTO` / `OUTFILE` exfiltration** — write privileges to
@@ -568,7 +569,7 @@ The operator MUST:
 11. **Restrict `CREATE CATALOG` privilege** to administrators
     *(maintainer, M13)*. Granting it to a low-privilege user lets
     them issue HTTP requests from FE to attacker-chosen URLs (SSRF)
-    via Iceberg REST catalog. If you must grant it more broadly,
+    via Iceberg REST or Unity Catalog. If you must grant it more broadly,
     apply network egress controls at the FE host level.
 
 ---
@@ -674,7 +675,7 @@ periodic review). Triggers:
   §4.9 disclaimer drops, §4.11a entry drops.
 - `enable_java_udf` default flips off (M10): §4.10 (4) becomes
   conditional on a §4.5a non-default knob.
-- Iceberg REST URL gains validation / localhost-blocking (M13):
+- External catalog URLs gain validation / localhost-blocking (M13):
   SSRF moves from §4.9 attack-class to §4.8 property; §4.11 misuse
   drops.
 - A new catalog connector is added that touches data formats not

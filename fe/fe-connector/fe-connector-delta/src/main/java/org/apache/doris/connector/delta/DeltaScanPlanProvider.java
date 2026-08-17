@@ -76,6 +76,10 @@ public final class DeltaScanPlanProvider implements ConnectorScanPlanProvider {
                 scanProperties.put("location." + entry.getKey(), entry.getValue());
             }
         }
+        for (Map.Entry<String, String> entry : catalogAdapter
+                .getBackendStorageProperties((DeltaTableHandle) handle).entrySet()) {
+            scanProperties.put("location." + entry.getKey(), entry.getValue());
+        }
         return scanProperties;
     }
 

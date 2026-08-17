@@ -24,7 +24,7 @@ import org.apache.doris.connector.spi.ConnectorProvider;
 import java.net.URI;
 import java.util.Map;
 
-/** ServiceLoader entry point for the path-based Delta connector. */
+/** ServiceLoader entry point for the native Delta connector. */
 public class DeltaConnectorProvider implements ConnectorProvider {
 
     @Override
@@ -40,12 +40,51 @@ public class DeltaConnectorProvider implements ConnectorProvider {
 
     @Override
     public void validateProperties(Map<String, String> properties) {
+        String catalogType = DeltaConnectorProperties.catalogType(properties);
+        switch (catalogType) {
+            case DeltaConnectorProperties.CATALOG_TYPE_PATH:
+                validatePathProperties(properties);
+                return;
+            case DeltaConnectorProperties.CATALOG_TYPE_UNITY:
+                validateUnityProperties(properties);
+                return;
+            default:
+                throw new IllegalArgumentException(
+                        "Unsupported Delta catalog type '" + catalogType
+                                + "'; expected 'path' or 'unity'");
+        }
+    }
+
+    private static void validatePathProperties(Map<String, String> properties) {
         requireNonBlank(properties, DeltaConnectorProperties.TABLE_PATH);
         requireNonBlank(properties, DeltaConnectorProperties.DATABASE);
         requireNonBlank(properties, DeltaConnectorProperties.TABLE);
         URI tablePath = URI.create(properties.get(DeltaConnectorProperties.TABLE_PATH));
         if (!tablePath.isAbsolute()) {
             throw new IllegalArgumentException("Delta table path must be an absolute URI");
+        }
+    }
+
+    private static void validateUnityProperties(Map<String, String> properties) {
+        requireNonBlank(properties, DeltaConnectorProperties.UNITY_URI);
+        requireNonBlank(properties, DeltaConnectorProperties.UNITY_CATALOG);
+        requireNonBlank(properties, DeltaConnectorProperties.UNITY_TOKEN);
+        URI unityUri = URI.create(properties.get(DeltaConnectorProperties.UNITY_URI));
+        if (!unityUri.isAbsolute()
+                || (!("http".equalsIgnoreCase(unityUri.getScheme()))
+                && !("https".equalsIgnoreCase(unityUri.getScheme())))) {
+            throw new IllegalArgumentException(
+                    "Unity Catalog URI must be an absolute HTTP or HTTPS URI");
+        }
+        if (unityUri.getPath() != null && !unityUri.getPath().isEmpty()
+                && !"/".equals(unityUri.getPath())) {
+            throw new IllegalArgumentException(
+                    "Unity Catalog URI must be the Databricks workspace root without an API path");
+        }
+        if (unityUri.getUserInfo() != null || unityUri.getQuery() != null
+                || unityUri.getFragment() != null) {
+            throw new IllegalArgumentException(
+                    "Unity Catalog URI must not contain user info, query parameters, or a fragment");
         }
     }
 

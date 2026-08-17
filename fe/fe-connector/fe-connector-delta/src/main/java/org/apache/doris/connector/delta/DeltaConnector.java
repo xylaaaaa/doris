@@ -33,12 +33,12 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
-/** Path-based Delta connector implementation. */
+/** Native Delta connector with pluggable catalog adapters. */
 public final class DeltaConnector implements Connector {
 
     private final Map<String, String> properties;
     private final ConnectorContext context;
-    private final DeltaPathCatalogAdapter catalogAdapter;
+    private final DeltaCatalogAdapter catalogAdapter;
     private final DeltaConnectorMetadata metadata;
     private final DeltaScanPlanProvider scanPlanProvider;
 
@@ -46,13 +46,23 @@ public final class DeltaConnector implements Connector {
         this.properties = immutableCopy(properties);
         this.context = Objects.requireNonNull(context, "context");
 
-        String databaseName = this.properties.get(DeltaConnectorProperties.DATABASE);
-        String tableName = this.properties.get(DeltaConnectorProperties.TABLE);
-        String tablePath = this.properties.get(DeltaConnectorProperties.TABLE_PATH);
-        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
-                DefaultEngine.create(buildHadoopConfiguration(this.properties)));
-        this.catalogAdapter = new DeltaPathCatalogAdapter(
-                databaseName, tableName, tablePath, loader);
+        Configuration hadoopConfiguration = buildHadoopConfiguration(this.properties);
+        String catalogType = DeltaConnectorProperties.catalogType(this.properties);
+        if (DeltaConnectorProperties.CATALOG_TYPE_PATH.equals(catalogType)) {
+            DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
+                    DefaultEngine.create(hadoopConfiguration));
+            this.catalogAdapter = new DeltaPathCatalogAdapter(
+                    this.properties.get(DeltaConnectorProperties.DATABASE),
+                    this.properties.get(DeltaConnectorProperties.TABLE),
+                    this.properties.get(DeltaConnectorProperties.TABLE_PATH), loader);
+        } else {
+            UnityDeltaClient unityClient = UnityDeltaClient.create(
+                    this.properties.get(DeltaConnectorProperties.UNITY_URI),
+                    this.properties.get(DeltaConnectorProperties.UNITY_TOKEN));
+            this.catalogAdapter = new UnityDeltaCatalogAdapter(
+                    this.properties.get(DeltaConnectorProperties.UNITY_CATALOG),
+                    unityClient, hadoopConfiguration, this.properties);
+        }
         this.metadata = new DeltaConnectorMetadata(catalogAdapter, this.properties);
         this.scanPlanProvider = new DeltaScanPlanProvider(catalogAdapter, this.properties);
     }
@@ -70,16 +80,14 @@ public final class DeltaConnector implements Connector {
     @Override
     public ConnectorTestResult testConnection(ConnectorSession session) {
         try {
-            DeltaKernelSnapshot snapshot = catalogAdapter.loadLatestSnapshot();
-            return ConnectorTestResult.success(
-                    "Delta snapshot version " + snapshot.getVersion() + " is readable");
+            return ConnectorTestResult.success(catalogAdapter.testConnection());
         } catch (RuntimeException e) {
             return ConnectorTestResult.failure(e.getMessage());
         }
     }
 
     /** Returns the adapter for the scan planner and future catalog integrations. */
-    public DeltaPathCatalogAdapter getCatalogAdapter() {
+    public DeltaCatalogAdapter getCatalogAdapter() {
         return catalogAdapter;
     }
 
@@ -93,7 +101,7 @@ public final class DeltaConnector implements Connector {
         return context;
     }
 
-    private static Configuration buildHadoopConfiguration(Map<String, String> properties) {
+    static Configuration buildHadoopConfiguration(Map<String, String> properties) {
         Configuration configuration = new Configuration();
         for (Map.Entry<String, String> entry : properties.entrySet()) {
             if (isKernelConfigurationProperty(entry.getKey())) {
