@@ -18,6 +18,7 @@
 package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.Connector;
+import org.apache.doris.connector.api.ConnectorCapability;
 import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 import org.apache.doris.connector.spi.ConnectorContext;
@@ -91,6 +92,9 @@ public class UnityDeltaCatalogAdapterTest {
         Connector connector = provider.create(properties, connectorContext());
 
         Assertions.assertTrue(connector.testConnection(null).isSuccess());
+        Assertions.assertTrue(connector.defaultTestConnection());
+        Assertions.assertTrue(connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_VENDED_CREDENTIALS));
         Assertions.assertEquals(List.of("default"),
                 connector.getMetadata(null).listDatabaseNames(null));
         Assertions.assertEquals(List.of("events"),

@@ -18,6 +18,7 @@
 package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.Connector;
+import org.apache.doris.connector.api.ConnectorCapability;
 import org.apache.doris.connector.api.ConnectorMetadata;
 import org.apache.doris.connector.api.ConnectorSession;
 import org.apache.doris.connector.api.ConnectorTestResult;
@@ -30,9 +31,11 @@ import org.apache.hadoop.conf.Configuration;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /** Native Delta connector with pluggable catalog adapters. */
 public final class DeltaConnector implements Connector {
@@ -91,6 +94,22 @@ public final class DeltaConnector implements Connector {
     @Override
     public boolean defaultTestConnection() {
         return true;
+    }
+
+    @Override
+    public Set<ConnectorCapability> getCapabilities() {
+        EnumSet<ConnectorCapability> capabilities = EnumSet.of(
+                ConnectorCapability.SUPPORTS_PARTITION_PRUNING,
+                ConnectorCapability.SUPPORTS_MVCC_SNAPSHOT);
+        if (DeltaConnectorProperties.CATALOG_TYPE_UNITY.equals(
+                DeltaConnectorProperties.catalogType(properties))) {
+            capabilities.add(ConnectorCapability.SUPPORTS_VENDED_CREDENTIALS);
+        }
+        if (Boolean.parseBoolean(properties.getOrDefault(
+                DeltaConnectorProperties.WRITE_ENABLED, "false"))) {
+            capabilities.add(ConnectorCapability.SUPPORTS_INSERT);
+        }
+        return Collections.unmodifiableSet(capabilities);
     }
 
     /** Returns the adapter for the scan planner and future catalog integrations. */

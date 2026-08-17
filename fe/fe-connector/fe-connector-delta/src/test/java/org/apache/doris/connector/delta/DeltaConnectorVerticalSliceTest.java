@@ -18,6 +18,7 @@
 package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.Connector;
+import org.apache.doris.connector.api.ConnectorCapability;
 import org.apache.doris.connector.api.ConnectorColumn;
 import org.apache.doris.connector.api.ConnectorTableSchema;
 import org.apache.doris.connector.api.ConnectorType;
@@ -77,6 +78,12 @@ public class DeltaConnectorVerticalSliceTest {
         Connector connector = provider.create(properties, connectorContext());
         Assertions.assertTrue(connector.testConnection(null).isSuccess());
         Assertions.assertTrue(connector.defaultTestConnection());
+        Assertions.assertTrue(connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_PARTITION_PRUNING));
+        Assertions.assertTrue(connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_MVCC_SNAPSHOT));
+        Assertions.assertFalse(connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_VENDED_CREDENTIALS));
         Assertions.assertNotNull(connector.getScanPlanProvider());
         ConnectorTableHandle handle = connector.getMetadata(null)
                 .getTableHandle(null, "default", "events").orElseThrow();
