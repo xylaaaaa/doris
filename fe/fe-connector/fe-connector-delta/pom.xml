@@ -24,32 +24,41 @@ under the License.
 
     <parent>
         <groupId>org.apache.doris</groupId>
-        <artifactId>fe</artifactId>
+        <artifactId>fe-connector</artifactId>
         <version>${revision}</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>fe-connector</artifactId>
-    <packaging>pom</packaging>
-    <name>Doris FE Connector (Aggregator)</name>
+    <artifactId>fe-connector-delta</artifactId>
+    <packaging>jar</packaging>
+    <name>Doris FE Connector - Delta Lake</name>
     <description>
-        Aggregator POM for all Doris FE connector modules.
-        Contains NO Java code; only lists sub-modules.
+        Delta Lake connector proof of concept. This module is intentionally
+        isolated from fe-core while the Delta Kernel integration is evaluated.
     </description>
 
-    <modules>
-        <module>fe-connector-api</module>
-        <module>fe-connector-spi</module>
-        <module>fe-connector-es</module>
-        <module>fe-connector-trino</module>
-        <module>fe-connector-maxcompute</module>
-        <module>fe-connector-jdbc</module>
-        <module>fe-connector-hms</module>
-        <module>fe-connector-hive</module>
-        <module>fe-connector-paimon</module>
-        <module>fe-connector-hudi</module>
-        <module>fe-connector-iceberg</module>
-        <module>fe-connector-delta</module>
-    </modules>
+    <dependencies>
+        <dependency>
+            <groupId>io.delta</groupId>
+            <artifactId>delta-kernel-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.delta</groupId>
+            <artifactId>delta-kernel-defaults</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-common</artifactId>
+            <version>${hadoop.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 
+    <build>
+        <finalName>doris-fe-connector-delta</finalName>
+    </build>
 </project>
