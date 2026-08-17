@@ -1,6 +1,6 @@
 # data-eng-bench、dbt-doris Demo 与 Doris 后端可行性调研
 
-> 调研日期：2026-08-12；实施验证更新：2026-08-14
+> 调研日期：2026-08-12；实施验证更新：2026-08-14、2026-08-17
 >
 > data-eng-bench 基线：`master@53353547b9869d35d61b40fd6ee9397a7ac8ca80`
 >
@@ -8,7 +8,7 @@
 
 ## 1. 执行摘要
 
-结论可以压缩成五点：
+结论可以压缩成六点：
 
 1. [Snowflake-Labs/data-eng-bench](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80)
    是一个评测 **Coding Agent 能否正确完成 dbt 数据工程任务** 的 benchmark。
@@ -20,10 +20,12 @@
 3. Doris 可以成为第三个执行后端，但正确表述应是 **Doris backend compatibility /
    agent portability evaluation**。不能只替换连接串，也不能据此宣称 Doris 比
    DuckDB 或 Snowflake 更快。
-4. dbt-doris 缺少真正可执行、可重复、可进入 CI 的示例项目。应该先补一个独立的
-   五分钟 Demo，再移植 `data-eng-bench` 的单个简单任务；不建议直接从 103 个任务
-   全量移植开始。
-5. 当前 dbt-doris 的“已完善能力”分为上游已合入、本地已提交但未上游、工作区未提交
+4. Fork 中已经新增一个带 Doris sidecar、fixture、dbt model/test 和确定性 verifier 的 Harbor
+   tracer task，两条执行路径均为 `reward=1`。它可以作为发布 Demo 的实现依据，但仍需决定
+   最终放在 adapter 仓库、Doris 文档还是独立 examples 仓库。
+5. fast-30 的 30 个参考解法均已在 Doris 完成；原 DuckDB oracle 为 862/869，补齐 FIFO
+   后端语义后的 Doris oracle 为 869/869。它证明的是 golden-solution 兼容性，不是 Agent 分数。
+6. 当前 dbt-doris 的“已完善能力”分为上游已合入、本地已提交但未上游、工作区未提交
    三层。Demo 和对外文档必须固定 adapter commit、dbt Core 与 Doris 版本，不能把
    三层能力合并宣传。
 
@@ -31,9 +33,9 @@
 
 | 事项 | 建议 | 原因 |
 | --- | --- | --- |
-| 新增独立 dbt-doris 五分钟 Demo | **立即做** | 价值高、范围小，可补齐用户从安装到看到结果的断点 |
-| 将一个 data-eng-bench 任务跑在 Doris | **立即做兼容性试点** | 用真实任务验证端到端能力 |
-| 扩展到 5 类代表任务 | **单任务通过后做** | 可形成 SQL、类型、Package、Incremental、Snapshot 兼容矩阵 |
+| 正式发布 dbt-doris 五分钟 Demo | **基于已通过 tracer 收口** | 核心链路已有可执行证据，仍需确定产品入口和 CI |
+| 将一个 data-eng-bench 任务跑在 Doris | **已完成** | Harbor sidecar tracer 两条路径均为 `reward=1` |
+| fast-30 参考解法兼容性实验 | **已完成** | 30/30 graph、869/869 Doris oracle；下一步是正式 task variant 与 Agent trial |
 | 直接移植全部 103 个任务 | **条件式推进** | 当前有版本、双工程、数据装载、隔离、方言和 verifier 六类系统性成本 |
 | 直接把 Doris 结果提交现有官方榜单 | **暂不做** | 榜单无 backend 维度且 task digest 会变化 |
 | 用本仓库比较 Doris 与 DuckDB 查询性能 | **不做** | harness 的测量对象和变量控制都不支持数据库性能结论 |
@@ -838,6 +840,9 @@ backend 维度。新增 Doris connector、verifier 和任务工程会改变 dige
 
 退出条件：Doris golden solution 连续通过，重复 trial 不互相污染，再运行至少一个 Agent。
 
+截至 2026-08-14：golden solution 在本地集群和 Harbor sidecar 两条路径通过；多 attempt
+隔离验证和 Agent trial 尚未执行。
+
 ### P3：五类代表任务
 
 建议按能力而不是随机选题：
@@ -854,6 +859,9 @@ backend 维度。新增 Doris connector、verifier 和任务工程会改变 dige
 
 完成 backend abstraction 和公共 base project 适配后跑 `fast-30`。只有 golden solution 在全部
 已声明支持任务上通过，且装载、隔离与清理稳定，才评估 103 题全量移植。
+
+截至 2026-08-17：实验兼容层已完成 30/30 golden-solution graph 和 869/869 Doris oracle；
+正式 `DB_TYPE=doris` task variant、逐 trial 隔离和 Agent run 仍未完成。
 
 ### P5：选择上游方向
 
@@ -1007,10 +1015,109 @@ adapter 生成了 `DATE/BIGINT/DECIMAL` 列、Duplicate Key、按 `order_date` H
 这个结果证明了一个窄而重要的结论：目标 adapter、Doris Table materialization、跨 database
 source、metadata 查询、dbt data tests、重复物化和 Harbor sidecar 生命周期可以在该 tracer
 上协同工作。它尚未证明：Coding Agent 能独立解题、103 题兼容、当前 stable split FE/BE 部署、
-数据库性能或官方 leaderboard 可比性。下一道门禁应是同一任务的 Codex trial，再用当前 stable
-Doris 版本重复 oracle，并把成功与失败轨迹一起保留。
+数据库性能或官方 leaderboard 可比性。后续 fast-30 实验扩大了 golden solution 的覆盖面，
+但仍未跨过 Coding Agent trial、正式 Doris task variant 和逐 trial 隔离三道门禁。
 
-## 14. 最终建议
+## 14. 2026-08-17 fast-30 实验：30 个参考解法均在 Doris 完成
+
+### 14.1 先说结论
+
+本次把 canonical [`configs/fast-30.txt`](https://github.com/Snowflake-Labs/data-eng-bench/blob/53353547b9869d35d61b40fd6ee9397a7ac8ca80/configs/fast-30.txt)
+中的 30 题逐题迁移到 Doris，结果如下：
+
+| 口径 | 结果 | 能说明什么 |
+| --- | ---: | --- |
+| canonical solution model graph 在 Doris 完成 | 30/30 题 | adapter 和兼容层能执行 30 个参考解法的完整 dbt graph |
+| 使用原 DuckDB expected values | 862/869 cases，29/30 题 | 除 FIFO 外，原 verifier 与原 oracle 可直接通过 |
+| 使用完整 Doris FIFO oracle | 869/869 cases，30/30 题 | 按 Doris/Snowflake 的 NULL 语义，30 题业务断言全部通过 |
+
+这不是 Agent 准确率。运行的是 benchmark 自带参考解法，不是 Codex 临场解题；也没有把结果提交到
+官方 leaderboard。更准确的名称是“Doris 第三后端 golden-solution 兼容性实验”。逐题结果、
+兼容脚本、最小 dbt 工程和 FIFO oracle 保存在 fork 的
+[`985007b/experiments/doris-fast30`](https://github.com/xylaaaaa/data-eng-bench/tree/985007b0986d59a2b686d96197a34b5e48d7ee3f/experiments/doris-fast30)。
+
+### 14.2 固定环境与执行边界
+
+| 组件 | 实测版本或范围 |
+| --- | --- |
+| data-eng-bench 基线 | `53353547b9869d35d61b40fd6ee9397a7ac8ca80` |
+| Apache Doris | 4.0.3，单 FE/BE all-in-one sidecar |
+| dbt adapter | `dbt-for-apache-doris==1.1.0` |
+| dbt Core / Python | 1.12.2 / 3.12.13 |
+| 数据 | benchmark 的 `retail.duckdb`，LFS SHA-256 `bd2bb1b3...fc2ec2d` |
+
+30 题顺序复用一个专用 Doris sidecar。每题只从 DuckDB fixture 装载实际依赖的 relation，必要时
+用最小 dbt project 限制 parse graph，再由运行时 profile、SQL rewrite 和 Doris-backed verifier
+shim 连接 Doris。canonical task、solution 和 verifier 文件均未修改。
+
+事后依赖审计发现，cross-sell 首次运行有 4 张输入表继承自前序任务。为排除该状态泄漏，实验先
+删除 `main` 和 `analytics`，再显式装载全部 6 张输入表并创建目标 database；随后 4 个 dbt model
+和 18/18 canonical verifier 再次通过。这个补跑消除了已知的累计状态案例，但不能把其余顺序执行
+等同于 30 个独立 Harbor trial。
+
+这套做法适合发现兼容缺口，不是正式 Harbor backend：它没有每 trial 启动独立 Doris，也没有
+生成新的 canonical dataset digest。实验目录因此明确标为 research artifacts；可直接复现的产品
+Demo 仍是第 13 节的 `dbt-daily-order-summary-doris` Harbor task。
+
+### 14.3 覆盖到的能力
+
+这 30 题不只是简单 `SELECT`。通过项包含：
+
+- snapshot 首次构建、状态表和 merge 重跑；
+- receivables 源表 mutation 后重新构建；
+- 28-model marketing graph、21-model POS graph、42-model workforce graph；
+- view/table materialization、source/ref、多层 staging/intermediate/mart；
+- date/time、interval、window、percentile、`QUALIFY`、FULL OUTER JOIN、正则和递归逻辑改写；
+- 结果值、schema、metadata、幂等性和部分模型源码检查。
+
+它同时暴露出两类真实工作：一类属于 adapter/profile/materialization，另一类属于 benchmark 中
+DuckDB/Snowflake 双分支形成的 SQL 与 verifier 耦合。后者不能靠换一个 `profiles.yml` 解决。
+
+### 14.4 FIFO 的 7 个差异不是 adapter 执行失败
+
+唯一未原样通过 DuckDB oracle 的题是 `fifo-inventory-cogs`。参考 SQL 在 `LEFT JOIN` 后对可空的
+receipt 列直接调用 `LEAST/GREATEST`：
+
+```sql
+greatest(
+  0,
+  least(r.cumulative_qty_after, p.consumption_end)
+    - greatest(r.cumulative_qty_before, p.consumption_start)
+)
+```
+
+DuckDB 1.2.2 忽略 `LEAST/GREATEST` 的 NULL 参数；Doris 4.0.3 和 Snowflake 则传播 NULL。于是
+3,392 个没有匹配 receipt 的行在 DuckDB 中被额外算成 168,315 个已分配单位，在 Doris 中为 0：
+
+| 分配行 | 行数 | DuckDB allocated | Doris allocated |
+| --- | ---: | ---: | ---: |
+| 匹配 receipt | 631 | 19,511 | 19,511 |
+| 未匹配 receipt | 3,392 | 168,315 | 0 |
+| 合计 | 4,023 | 187,826 | 19,511 |
+
+在 DuckDB 中显式加入 `CASE WHEN r.receipt_id IS NULL THEN 0` 后，50 项结果与 Doris 全部一致。
+因此这里应分类为 benchmark SQL / DuckDB oracle 的跨后端可移植性缺陷，而不是 dbt adapter
+失败。上游更稳妥的修复是让 NULL 行为显式化，再为所有 backend 重建 oracle。原 Snowflake
+expected 文件还缺少 3 个 verifier key，会让对应测试提前返回；Doris 实验 oracle 补齐了全部
+50 项断言。
+
+行为依据：
+[参考 SQL](https://github.com/Snowflake-Labs/data-eng-bench/blob/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/fifo-inventory-cogs/solution/solve.sh#L283-L286)、
+[Doris `LEAST`](https://doris.apache.org/docs/dev/sql-manual/sql-functions/scalar-functions/conditional-functions/least/)、
+[Snowflake `LEAST`](https://docs.snowflake.com/en/sql-reference/functions/least)、
+[DuckDB NULL 行为讨论](https://github.com/duckdb/duckdb/issues/14239)。
+
+### 14.5 下一道门禁
+
+fast-30 结果把“参考解法能否在 Doris 上成立”从假设推进到了实证，但发布前仍应按以下顺序收口：
+
+1. 把实验兼容层收敛成显式 `DB_TYPE=doris` task variant 和共享 verifier abstraction；
+2. 每 trial 使用独立 Doris sidecar/database，并记录 task digest、镜像 digest、日志和 artifact；
+3. 修复 FIFO 的显式 NULL 语义并重建各 backend oracle；
+4. 在同一 Doris revision 上跑 Codex `k>=3`，把 pass rate 与失败分类和 golden-solution 结果分开报告；
+5. 再扩到 103 题，不用 fast-30 的 30/30 外推全量兼容性。
+
+## 15. 最终建议
 
 这是一个值得做的生态机会，但最佳切入点不是“把 DuckDB 全部替换成 Doris”。
 
@@ -1031,5 +1138,5 @@ Doris 版本重复 oracle，并把成功与失败轨迹一起保留。
 > 用一次 Harbor 任务耗时或通过率，宣称 Doris 与 DuckDB 的数据库性能优劣；或把本地提交、
 > 未提交测试和工作区文档统一写成 dbt-doris 已发布能力。
 
-按 P0 至 P3 推进后，我们既能补上用户当前最需要的 Demo，也能获得一个比“功能列表”更有说服力
-的、可重复的 dbt-doris 真实工程验证入口。
+当前 tracer 与 fast-30 已补上关键执行证据。继续完成 P0 至 P5 的剩余门禁后，我们才能把这些
+研究产物收敛为可进入发布与 CI、并能长期回归的 dbt-doris 真实工程验证入口。
