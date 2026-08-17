@@ -52,6 +52,10 @@ under the License.
                 <exclude>org.apache.doris:fe-filesystem-api</exclude>
                 <exclude>org.apache.doris:fe-thrift</exclude>
                 <exclude>org.apache.thrift:libthrift</exclude>
+                <!-- Hadoop and logging are provided by the FE parent classloader. -->
+                <exclude>org.apache.hadoop:*</exclude>
+                <exclude>org.apache.logging.log4j:*</exclude>
+                <exclude>org.slf4j:*</exclude>
             </excludes>
         </dependencySet>
     </dependencySets>
