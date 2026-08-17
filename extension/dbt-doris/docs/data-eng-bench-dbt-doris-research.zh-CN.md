@@ -4,7 +4,7 @@
 >
 > data-eng-bench 基线：`master@53353547b9869d35d61b40fd6ee9397a7ac8ca80`
 >
-> 结论口径：仓库明示事实、静态扫描结果、本地 Codex 会话记录和本文推断分别标注，避免把研发状态写成已发布能力。
+> 结论口径：仓库明示事实、静态扫描结果和本文推断分别标注，避免把研发状态写成已发布能力。
 
 ## 1. 执行摘要
 
@@ -40,74 +40,26 @@
 
 ## 2. 范围、方法与证据等级
 
-本文回答六个问题：
+本文回答五个问题：
 
-- 本地 Codex 关于 dbt、dbt-doris 的会话形成了什么能力主线？
 - `data-eng-bench` 是做什么的，dbt 和 DuckDB 分别扮演什么角色？
 - dbt-doris 当前究竟具备哪些已发布、已提交和实验能力？
 - 缺少的 dbt-doris Demo 应该长什么样？
 - DuckDB 版本的任务能否在 Doris 上运行，改造量和研究价值是什么？
 - Snowflake、dbt Labs、DuckDB、Doris 和 Harbor 是否发布了相关资料？
 
-本文采用四类证据：
+本文采用三类证据：
 
 - **仓库明示**：README、代码、配置、提交、CITATION、NOTICE 和官方文档直接陈述的事实。
 - **静态扫描**：在固定 commit 上用文件枚举和文本搜索得到的数字；这些不是项目官方指标。
-- **本地会话记录**：只读取顶层 Codex 会话，排除子 Agent 和审批转录；会话中的测试结果视为历史研发证据，不等于本次重新执行。
 - **本文推断**：基于上述证据给出的架构、实验设计和路线建议，均明确使用“建议”“预计”或“不能直接”等表述。
 
 GitHub 星标、Issue、网页内容和默认分支都会变化，因此本调研将 `data-eng-bench` 固定在提交
 [`53353547`](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80)。
 
-## 3. 本地 Codex 会话回顾：从能力盘点到发布质量
+## 3. data-eng-bench 到底是什么
 
-### 3.1 会话主线
-
-本地会话不是一次性开发，而是逐步收敛成四条主线：
-
-| 时间 | 主题 | 形成的结论或产物 |
-| --- | --- | --- |
-| 2026-07-24 | 能力盘点 | 建立能力清单，识别测试、物化和发布缺口 |
-| 2026-07-27 | v1/v2、Aggregate Key、异步 MV | 分开设计 Doris 物理模型、dbt 语义和 MV 生命周期 |
-| 2026-07-27 至 07-30 | Incremental | 补齐四类策略和 `on_schema_change` |
-| 2026-08-03 至 08-07 | MV、Snapshot、测试 | 补能力并区分代码存在与生态可交付 |
-| 2026-08-11 至 08-12 | 打包、PyPI、标准测试 | 关注构件、发布口径、contract 和复现性 |
-
-代表性顶层会话包括 `019f9222...`（首次能力盘点）、`019fa28c...`（Aggregate Key）、
-`019fa28d...`（基础能力）、`019fdb80...`（MV）、`019fdb8b...`（本地会话与 adopter
-实现对照）以及 `019ff4d0...`（dbt Unit Testing）。
-
-### 3.2 最新测试会话反映的演进
-
-最新 Unit Testing 会话先记录了一个真实 Doris 环境下的中间状态：官方测试组中 3 组通过，
-2 组分别暴露 PostgreSQL `TIMESTAMPTZ` fixture 的方言问题，以及有限长度 `VARCHAR`
-被测试输入截断的 adapter 缺陷。随后会话记录显示：改为 Doris 原生 fixture、修复行内
-`VARCHAR(n)` 处理、纳入官方测试后，专项测试达到 6/6，Functional Test 从 168 增至
-173 并达到 173/173。
-
-这个演进很有价值，因为它证明标准 contract 能发现自编测试遗漏的问题；但它仍有两个限制：
-
-- 本文没有重新运行该测试矩阵，这些数字是会话中的历史结果；
-- 对应的若干测试和 CI 文件当前仍在未提交工作区，不能称为上游或 PyPI 发布版保证。
-
-### 3.3 从会话得到的产品判断
-
-会话最终指向的不是“再加几个宏”，而是一个完整交付链：
-
-```text
-Adapter 语义
-  -> 标准 Contract / Functional Test
-  -> Doris 真实集群验证
-  -> 可安装构件与版本矩阵
-  -> 可运行 Demo
-  -> 真实项目兼容性评测
-```
-
-`data-eng-bench` 正好可用于最后一层，但它不能替代前面的 adapter 标准测试和最小 Demo。
-
-## 4. data-eng-bench 到底是什么
-
-### 4.1 定位
+### 3.1 定位
 
 仓库 [README](https://github.com/Snowflake-Labs/data-eng-bench/blob/53353547b9869d35d61b40fd6ee9397a7ac8ca80/README.md)
 将它定义为大型、现实零售数仓上的 dbt 数据工程 Coding Agent 评测。每个任务给 Agent
@@ -135,7 +87,7 @@ flowchart LR
 - 能否正确配置 materialization、test、snapshot 或 incremental；
 - 能否通过结构、行级结果、公式和幂等性验证。
 
-### 4.2 任务规模与类别
+### 3.2 任务规模与类别
 
 README 明示共有 103 个任务：
 
@@ -154,7 +106,7 @@ README 明示共有 103 个任务：
 verifier；一个最小实例可见
 [`dbt-fix-division-by-zero`](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-fix-division-by-zero)。
 
-### 4.3 dbt、DuckDB 和 Snowflake 的角色
+### 3.3 dbt、DuckDB 和 Snowflake 的角色
 
 | 组件 | 角色 | 不应被误解为 |
 | --- | --- | --- |
@@ -166,7 +118,7 @@ verifier；一个最小实例可见
 仓库明确说同时运行 DuckDB 与 Snowflake，可以帮助定位“通用建模错误”和“Snowflake
 特定错误”。这是一种后端可移植性对照，不是标准数据库性能实验。
 
-### 4.4 工程和数据规模
+### 3.4 工程和数据规模
 
 基础镜像固定了 `dbt-duckdb==1.10.0`、`dbt-snowflake==1.10.3`、
 `dbt-core>=1.8,<1.11`、`duckdb==1.2.2`，见
@@ -193,7 +145,7 @@ staging/intermediate 层。Snowflake 版本使用
 [`migrate_duckdb.py`](https://github.com/Snowflake-Labs/data-eng-bench/blob/53353547b9869d35d61b40fd6ee9397a7ac8ca80/base-image/migrate_duckdb.py)
 枚举 DuckDB schema/table、映射类型并上传；每个 trial 再创建独立数据库 clone。
 
-### 4.5 Verifier 与排行榜实际测什么
+### 3.5 Verifier 与排行榜实际测什么
 
 固定 commit 的静态扫描显示：
 
@@ -222,13 +174,13 @@ ARRAY/JSON/VARIANT、`QUALIFY`、Incremental 和 Snapshot 任务。这些数字�
 README 还特别标注 `dbt-fix-timezone-sales` 的 DuckDB verifier 可能受顺序影响，其单项结果
 只能作为参考。这也是解读通过率时需要保留任务级已知限制的例子。
 
-## 5. 完整示例：一项 dbt 任务如何被 Harness 执行
+## 4. 完整示例：一项 dbt 任务如何被 Harness 执行
 
 本节使用 easy 任务
 [`dbt-daily-order-summary`](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-daily-order-summary)
 展示一次完整评测。它要求 Agent 从零创建 dbt 项目，从 `ORDERS.ORDERS` 生成每日订单汇总表。
 
-### 5.1 这个例子中各组件分别负责什么
+### 4.1 这个例子中各组件分别负责什么
 
 | 组件 | 在本题中的职责 |
 | --- | --- |
@@ -244,7 +196,7 @@ README 还特别标注 `dbt-fix-timezone-sales` 的 DuckDB verifier 可能受顺
 这里的 **Harness 是 Harbor 加上该任务的容器、健康检查、测试入口和生命周期约定**；
 pytest 只负责判分，dbt 只负责转换，DuckDB 只负责执行 SQL。
 
-### 5.2 完整时序
+### 4.2 完整时序
 
 ```mermaid
 sequenceDiagram
@@ -286,7 +238,7 @@ harbor run \
 [`data-eng-bench-duckdb.codex.yaml`](https://github.com/Snowflake-Labs/data-eng-bench/blob/53353547b9869d35d61b40fd6ee9397a7ac8ca80/configs/data-eng-bench-duckdb.codex.yaml)
 固定了 DuckDB、Codex、模型配置、三次 attempt 和四个并发 trial。
 
-### 5.3 第一步：Harbor 读取题目和资源约束
+### 4.3 第一步：Harbor 读取题目和资源约束
 
 该任务的
 [`task.toml`](https://github.com/Snowflake-Labs/data-eng-bench/blob/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-daily-order-summary/task.toml)
@@ -301,7 +253,7 @@ harbor run \
 独立数据库 clone。也就是说，题目文件只描述“需要什么环境”，实际调度、超时和失败处理由
 Harbor 完成。
 
-### 5.4 第二步：构建独立容器并准备数据库
+### 4.4 第二步：构建独立容器并准备数据库
 
 该题的
 [`environment/Dockerfile`](https://github.com/Snowflake-Labs/data-eng-bench/blob/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-daily-order-summary/environment/Dockerfile)
@@ -318,7 +270,7 @@ FROM ghcr.io/snowflake-labs/data-eng-bench-base:1.0.0
 把 `DB_TYPE`、DuckDB 路径或 Snowflake 凭据传入容器，并让容器保持运行。每个 trial 使用
 独立容器和写层，因此 Agent 的文件及 DuckDB 写入不会直接污染另一个 trial。
 
-### 5.5 第三步：Agent 收到 ticket 并创建 dbt 项目
+### 4.5 第三步：Agent 收到 ticket 并创建 dbt 项目
 
 [`instruction.md`](https://github.com/Snowflake-Labs/data-eng-bench/blob/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-daily-order-summary/instruction.md)
 要求 Agent：
@@ -391,7 +343,7 @@ daily_analytics.daily_order_summary
 [`solution/solve.sh`](https://github.com/Snowflake-Labs/data-eng-bench/blob/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-daily-order-summary/solution/solve.sh)
 是维护者验证任务可解的 golden solution，不是正常评测时替 Agent 作答的脚本。
 
-### 5.6 第四步：Harbor 调用 verifier，而不是相信 Agent 的自述
+### 4.6 第四步：Harbor 调用 verifier，而不是相信 Agent 的自述
 
 Agent 结束后，Harbor 执行任务的
 [`tests/test.sh`](https://github.com/Snowflake-Labs/data-eng-bench/blob/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-daily-order-summary/tests/test.sh)：
@@ -423,7 +375,7 @@ where status not in ('CANCELLED', 'RETURNED', 'FAILED')
 
 这能识别“表建出来了，但忘记过滤状态”或“收入公式写错”等业务错误。
 
-### 5.7 第五步：生成 Reward、保存轨迹并清理
+### 4.7 第五步：生成 Reward、保存轨迹并清理
 
 `test.sh` 只有在 pytest 退出码为 0、通过数大于 0、且没有 skipped/failed 时才写：
 
@@ -443,7 +395,7 @@ AND 业务结果正确
 AND 重跑结果稳定
 ```
 
-### 5.8 同一流程换成 Doris 时，哪里需要变化
+### 4.8 同一流程换成 Doris 时，哪里需要变化
 
 Harbor、ticket、Agent 作答和 reward 机制原则上都可以保留，但 backend 集成层必须扩展：
 
@@ -469,9 +421,9 @@ Harbor、ticket、Agent 作答和 reward 机制原则上都可以保留，但 ba
 这个例子也说明新增 Doris 的核心不是另写一套 Harbor，而是让现有 Harness 能够可靠地准备、
 隔离、验证和清理 Doris backend。
 
-## 6. 他们发布了哪些相关资料
+## 5. 他们发布了哪些相关资料
 
-### 6.1 data-eng-bench 自身的一手资料
+### 5.1 data-eng-bench 自身的一手资料
 
 截至调研日，能够确认的一手资料主要是：
 
@@ -496,7 +448,7 @@ Harbor、ticket、Agent 作答和 reward 机制原则上都可以保留，但 ba
 `data-eng-bench` 的 Snowflake 官方博客、论文或产品文档**。这表示“截至日期和检索范围内
 未发现”，不表示它未来不会发布，也不表示内部没有材料。
 
-### 6.2 Snowflake 的内部 dbt-bench：相关线索，不是已证实血缘
+### 5.2 Snowflake 的内部 dbt-bench：相关线索，不是已证实血缘
 
 Snowflake 在公开仓库出现之前发布过一篇
 [CoCoEvolve 工程文章](https://www.snowflake.com/en/blog/engineering/optimize-snowflake-ai-systems-cocoevolve/)，
@@ -513,7 +465,7 @@ Snowflake 另有一篇
 展示 Agent 扫描表、生成 model/test、执行 `dbt build` 并验证结果。这解释了其产品侧为什么
 需要 Agent + dbt 的端到端评测，但同样不是公开 data-eng-bench 的方法说明。
 
-### 6.3 不要与 dbt Labs 的 ADE-bench 混淆
+### 5.3 不要与 dbt Labs 的 ADE-bench 混淆
 
 [dbt-labs/ade-bench](https://github.com/dbt-labs/ade-bench) 是同一问题域的另一个项目。
 [dbt Labs 的介绍文章](https://www.getdbt.com/blog/ade-bench-dbt-data-benchmarking)将其描述为
@@ -538,7 +490,7 @@ Snowflake 已发布多篇使用 ADE-bench 的文章，例如
 但文中明确指向 ADE-bench。它们能证明 Snowflake 重视 Agent 数据工程评测，不能证明
 `data-eng-bench` 已获得相同测试结果。
 
-### 6.4 dbt、DuckDB 与 Doris 的相关官方资料
+### 5.4 dbt、DuckDB 与 Doris 的相关官方资料
 
 [dbt Adapter 创建指南](https://docs.getdbt.com/guides/adapter-creation)要求 adapter 处理连接、
 Relation、Schema、Column、宏和 Materialization，以及 `MERGE`、`IF EXISTS`、Grant 等后端
@@ -566,9 +518,9 @@ Apache Doris 已有：
 带输入数据、完整项目、确定结果和 CI 的可执行 Demo；部分线上文档对 Incremental 的描述也
 落后于本地研发分支。
 
-## 7. dbt-doris 当前能力：必须分三层表述
+## 6. dbt-doris 当前能力：必须分三层表述
 
-### 7.1 上游/PyPI 基线
+### 6.1 上游/PyPI 基线
 
 PyPI 已发布 `dbt-doris 1.0.0`；Apache Doris 上游提交
 [`53795dbc`](https://github.com/apache/doris/commit/53795dbcf1bea68300488a2734aadc4b1d09b115)
@@ -585,7 +537,7 @@ PyPI 已发布 `dbt-doris 1.0.0`；Apache Doris 上游提交
 `database` 与 `schema` 在 dbt-doris 中不能被当成两个独立命名层。profile 中通常省略
 `database`，或确保它和 `schema` 一致；跨逻辑 schema 的项目必须专门验证关系渲染和权限。
 
-### 7.2 本地已提交、尚未进入 origin/master
+### 6.2 本地已提交、尚未进入 origin/master
 
 当前研发分支包含但上游 `origin/master` 不包含：
 
@@ -597,7 +549,7 @@ PyPI 已发布 `dbt-doris 1.0.0`；Apache Doris 上游提交
 `data-eng-bench` 的 `dbt-core<1.11` 存在直接版本冲突；基础试点应使用发布版兼容栈，
 增强能力试点则应使用独立 Doris 镜像，不能静默升级原有 DuckDB/Snowflake 基镜像。
 
-### 7.3 当前未提交工作区
+### 6.3 当前未提交工作区
 
 审计时工作区另有 18 个 tracked 修改（其中 17 个位于 `extension/dbt-doris`，另一个为 CI）
 和 17 个 `extension/dbt-doris` untracked 条目，涉及：
@@ -612,7 +564,7 @@ PyPI 已发布 `dbt-doris 1.0.0`；Apache Doris 上游提交
 已经支持”。未提交文档之间还存在 `microbatch`、`delete+insert`、`grants` 和 MV 刷新语义
 的冲突，发布前应先让代码、测试和文档使用同一事实源。
 
-### 7.4 Demo 缺口是真实的
+### 6.4 Demo 缺口是真实的
 
 `extension/dbt-doris` 当前没有 `examples/`、`demo/` 或独立 sample project。README 只有安装、
 profile 和少量能力入口，尚缺：
@@ -628,9 +580,9 @@ profile 和少量能力入口，尚缺：
 
 这正是用户从“安装 adapter”到“相信它能完成一个项目”之间的断层。
 
-## 8. 建议的 dbt-doris Demo
+## 7. 建议的 dbt-doris Demo
 
-### 8.1 第一层：五分钟、稳定能力 Demo
+### 7.1 第一层：五分钟、稳定能力 Demo
 
 建议新增 `extension/dbt-doris/examples/retail_quickstart/`，使用自有的小型合成数据，避免让
 入门 Demo 依赖 489 MB LFS 文件或 Snowflake 仓库的完整任务数据。
@@ -682,7 +634,7 @@ dbt build
 - 第一版不依赖第三方 dbt Package，只使用上游/PyPI 已稳定能力；
 - 在干净虚拟环境中安装 Wheel/Sdist 后执行 smoke。
 
-### 8.2 第二层：能力展示 Demo
+### 7.2 第二层：能力展示 Demo
 
 当对应提交进入目标发布版后，再增加 Incremental、Snapshot 和异步 MV 场景：
 
@@ -695,9 +647,9 @@ dbt build
 “五分钟 Demo”和“能力展示 Demo”应分开。前者追求稳定、短、可复制；后者追求覆盖，允许按
 版本加 Feature Gate。
 
-## 9. DuckDB 任务能否改用 Doris
+## 8. DuckDB 任务能否改用 Doris
 
-### 9.1 可以，但应增加第三后端而不是替换 DuckDB
+### 8.1 可以，但应增加第三后端而不是替换 DuckDB
 
 Doris 版本最有价值的研究问题是：
 
@@ -709,7 +661,7 @@ Doris 版本最有价值的研究问题是：
 DuckDB 仍应保留为低成本、密闭、快速定位通用建模错误的控制组。Doris 是分布式服务，会增加
 启动、网络、并发、资源和清理变量；删除 DuckDB 反而会失去很有价值的故障定位基线。
 
-### 9.2 不是替换连接串：八个改造面
+### 8.2 不是替换连接串：八个改造面
 
 | 改造面 | 当前假设 | Doris 所需工作 |
 | --- | --- | --- |
@@ -722,7 +674,7 @@ DuckDB 仍应保留为低成本、密闭、快速定位通用建模错误的控�
 | Verifier | 两种 connector/metadata | backend fixture、Doris 查询和类型归一化 |
 | 发布/榜单 | 固定 task digest，无 backend | 新 revision、backend 字段或独立榜单 |
 
-### 9.3 数据迁移建议
+### 8.3 数据迁移建议
 
 推荐先迁移任务依赖闭包，而不是第一天就搬完整 489 MB 和 2,356 个 SQL 模型：
 
@@ -741,7 +693,7 @@ Doris 的 dbt database/schema 是一级命名空间，而 benchmark 使用多个
 
 跨 database `source/ref`、权限和 `generate_schema_name` 必须进入 tracer task 的显式验收项。
 
-### 9.4 Trial 隔离建议
+### 8.4 Trial 隔离建议
 
 Doris 没有可直接照搬的 Snowflake zero-copy database clone。更可行的初始设计是：
 
@@ -755,7 +707,7 @@ Doris 没有可直接照搬的 Snowflake zero-copy database clone。更可行的
 这样可以减少 489 MB × 并发 trial 的重复装载，但仍需测试 Doris Compaction、Schema Change 和
 残留对象是否影响下一次试验。不要连接生产 Doris 集群。
 
-### 9.5 Verifier 应先抽象再扩展
+### 8.5 Verifier 应先抽象再扩展
 
 直接在 103 个 verifier 中增加第三组 `if DB_TYPE == 'doris'` 会继续放大 436 个分支。
 建议先形成统一接口：
@@ -783,9 +735,9 @@ Backend
 业务 oracle 应保持不变；只有后端表示差异可以归一化。若为了让 Doris 通过而改变业务期望，
 该任务已经不再与原任务等价。
 
-## 10. 公平性、指标与对外口径
+## 9. 公平性、指标与对外口径
 
-### 10.1 可以回答的问题
+### 9.1 可以回答的问题
 
 只有在同一个三后端 dataset revision 内，保证 task digest、Prompt、Agent、模型、
 Token/时间预算、并发和 golden solution 相同，Doris variant 才可以回答：
@@ -800,7 +752,7 @@ Token/时间预算、并发和 golden solution 相同，Doris variant 才可以�
 不能直接与官方 v1.0 已有 DuckDB/Snowflake 行做严格 A/B。比较三后端时应在新的统一 revision
 中重跑全部对照组；PR #2 已说明 Prompt 变化本身就会破坏新旧成绩的严格可比性。
 
-### 10.2 不能回答的问题
+### 9.2 不能回答的问题
 
 当前 harness 不能严谨回答：
 
@@ -817,7 +769,7 @@ Agent 推理、容器启动、dbt parse/compile、网络、Doris Compaction、Sn
 [TPC-H 指南](https://doris.apache.org/docs/3.x/benchmark/tpch/)；性能研究应沿这条受控实验线
 开展，不与 Agent benchmark 的 accuracy 混为一项指标。
 
-### 10.3 失败必须分层归因
+### 9.3 失败必须分层归因
 
 建议 Doris 试点输出以下失败分类，而不是只有 pass/fail：
 
@@ -832,7 +784,7 @@ Agent 推理、容器启动、dbt parse/compile、网络、Doris Compaction、Sn
 
 只有这样，Doris 成绩才会反过来推动 adapter 和产品改进，而不是成为一个无法解释的百分比。
 
-### 10.4 暂不进入现有官方榜单
+### 9.4 暂不进入现有官方榜单
 
 现有 leaderboard 要求 canonical dataset 和相同 task digest，但当前行元数据没有清晰的
 backend 维度。新增 Doris connector、verifier 和任务工程会改变 digest；若只用环境变量绕过，
@@ -854,7 +806,7 @@ backend 维度。新增 Doris connector、verifier 和任务工程会改变 dige
 仓库是 Apache-2.0，可以依法复用，但衍生数据集仍应保留 LICENSE/NOTICE 和 Snowflake 原始作品
 归属；正式提交前应先通过 Issue 与维护者确认 scope 和榜单语义。
 
-## 11. 推荐落地路线
+## 10. 推荐落地路线
 
 ### P0：统一 dbt-doris 的事实源
 
@@ -910,9 +862,9 @@ backend 维度。新增 Doris connector、verifier 和任务工程会改变 dige
   [ADE-bench](https://github.com/dbt-labs/ade-bench) 增加 Doris database variant；
 - 两条路线都应建立在独立 Demo 和 adapter 标准测试之上。
 
-## 12. Harness 到底是什么，怎样自己定义工作流
+## 11. Harness 到底是什么，怎样自己定义工作流
 
-### 12.1 本文语境中的 Harness
+### 11.1 本文语境中的 Harness
 
 广义上，Harness 是“把输入交给系统、执行一次试验、判分并保存证据”的运行与测量装置。
 在 `data-eng-bench` 的语境中，它不是某一个脚本，而是以下约定合在一起形成的
@@ -930,7 +882,7 @@ backend 维度。新增 Doris connector、verifier 和任务工程会改变 dige
 只有流程图而没有隔离、超时、verifier、reward 和 cleanup，仍不是一套可重复的 benchmark
 harness。
 
-### 12.2 用 Harbor 定义自己的工作流
+### 11.2 用 Harbor 定义自己的工作流
 
 定义工作流时先定测量对象，再写容器。一个最小闭环是：
 
@@ -961,7 +913,7 @@ sandbox、并发 trial、reward 协议、日志与数据集版本。团队仍要
 [Agents](https://www.harborframework.com/docs/agents)、
 [Cloud sandboxes](https://www.harborframework.com/docs/run-jobs/cloud-sandboxes)。
 
-## 13. 主流 Harness 与 Harbor 的区别
+## 12. 主流 Harness 与 Harbor 的区别
 
 当前没有所有团队统一采用的单一 Harness。容易混淆的项目实际分为三类：端到端 Agent eval
 runtime、特定 benchmark 的 grader，以及评测/可观测控制面。
@@ -996,7 +948,7 @@ Braintrust 或 LangSmith，而不是让后者替代 Doris trial 生命周期。
 [Phoenix](https://arize.com/docs/phoenix)、
 [W&B Weave](https://docs.wandb.ai/weave)。
 
-## 14. 2026-08-14 实施结果：Doris tracer 已跑通
+## 13. 2026-08-14 实施结果：Doris tracer 已跑通
 
 本次将上文 P2 从方案推进成了可执行证据：
 
@@ -1058,7 +1010,7 @@ source、metadata 查询、dbt data tests、重复物化和 Harbor sidecar 生�
 数据库性能或官方 leaderboard 可比性。下一道门禁应是同一任务的 Codex trial，再用当前 stable
 Doris 版本重复 oracle，并把成功与失败轨迹一起保留。
 
-## 15. 最终建议
+## 14. 最终建议
 
 这是一个值得做的生态机会，但最佳切入点不是“把 DuckDB 全部替换成 Doris”。
 
