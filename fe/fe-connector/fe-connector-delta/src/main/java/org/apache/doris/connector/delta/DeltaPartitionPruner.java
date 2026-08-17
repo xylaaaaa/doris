@@ -29,6 +29,7 @@ import org.apache.doris.connector.api.pushdown.ConnectorOr;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 
@@ -141,6 +142,10 @@ final class DeltaPartitionPruner {
         String typeName = column.getType().getTypeName();
         Object literalValue = literal.getValue();
         if (literalValue instanceof Boolean) {
+            if (!"true".equalsIgnoreCase(partitionValue)
+                    && !"false".equalsIgnoreCase(partitionValue)) {
+                return true;
+            }
             return Boolean.toString((Boolean) literalValue).equalsIgnoreCase(partitionValue);
         }
         if (isNumeric(typeName) && literalValue instanceof Number) {
@@ -151,8 +156,21 @@ final class DeltaPartitionPruner {
                 return true;
             }
         }
-        if (literalValue instanceof LocalDate || literalValue instanceof LocalDateTime) {
-            return literalValue.toString().equals(partitionValue);
+        if (literalValue instanceof LocalDate) {
+            try {
+                return LocalDate.parse(partitionValue).equals(literalValue);
+            } catch (DateTimeParseException e) {
+                return true;
+            }
+        }
+        if (literalValue instanceof LocalDateTime) {
+            try {
+                String normalized = partitionValue.indexOf(' ') >= 0
+                        ? partitionValue.replace(' ', 'T') : partitionValue;
+                return LocalDateTime.parse(normalized).equals(literalValue);
+            } catch (DateTimeParseException e) {
+                return true;
+            }
         }
         if (literalValue instanceof String) {
             return literalValue.equals(partitionValue);

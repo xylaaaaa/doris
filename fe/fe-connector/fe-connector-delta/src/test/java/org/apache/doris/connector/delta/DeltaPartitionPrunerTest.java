@@ -31,6 +31,8 @@ import org.apache.doris.connector.api.pushdown.ConnectorOr;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -90,6 +92,35 @@ public class DeltaPartitionPrunerTest {
                 ConnectorComparison.Operator.EQ, column, ConnectorLiteral.ofInt(1)), partitions));
         Assertions.assertFalse(mayMatch(new ConnectorComparison(
                 ConnectorComparison.Operator.EQ, column, ConnectorLiteral.ofInt(2)), partitions));
+    }
+
+    @Test
+    public void testDateTimeAndUnknownBooleanValuesAreConservative() {
+        Map<String, String> partitions = new LinkedHashMap<>();
+        partitions.put("day", "2024-01-02");
+        partitions.put("ts", "2024-01-02 03:04:05");
+        partitions.put("flag", "unexpected");
+
+        Assertions.assertTrue(mayMatch(new ConnectorComparison(
+                ConnectorComparison.Operator.EQ,
+                new ConnectorColumnRef("day", ConnectorType.of("DATEV2")),
+                ConnectorLiteral.ofDate(LocalDate.of(2024, 1, 2))), partitions));
+        Assertions.assertFalse(mayMatch(new ConnectorComparison(
+                ConnectorComparison.Operator.EQ,
+                new ConnectorColumnRef("day", ConnectorType.of("DATEV2")),
+                ConnectorLiteral.ofDate(LocalDate.of(2024, 1, 3))), partitions));
+        Assertions.assertTrue(mayMatch(new ConnectorComparison(
+                ConnectorComparison.Operator.EQ,
+                new ConnectorColumnRef("ts", ConnectorType.of("DATETIMEV2")),
+                ConnectorLiteral.ofDatetime(LocalDateTime.of(2024, 1, 2, 3, 4, 5))), partitions));
+        Assertions.assertFalse(mayMatch(new ConnectorComparison(
+                ConnectorComparison.Operator.EQ,
+                new ConnectorColumnRef("ts", ConnectorType.of("DATETIMEV2")),
+                ConnectorLiteral.ofDatetime(LocalDateTime.of(2024, 1, 2, 3, 4, 6))), partitions));
+        Assertions.assertTrue(mayMatch(new ConnectorComparison(
+                ConnectorComparison.Operator.EQ,
+                new ConnectorColumnRef("flag", ConnectorType.of("BOOLEAN")),
+                ConnectorLiteral.ofBoolean(true)), partitions));
     }
 
     @Test
