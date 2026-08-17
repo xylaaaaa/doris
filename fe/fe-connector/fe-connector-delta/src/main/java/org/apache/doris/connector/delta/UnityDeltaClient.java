@@ -68,15 +68,50 @@ final class UnityDeltaClient {
     private final DeltaTemporaryCredentialsApi credentialsApi;
 
     static UnityDeltaClient create(String workspaceUri, String token) {
+        return create(workspaceUri, Map.of("type", "static", "token", token));
+    }
+
+    static UnityDeltaClient create(Map<String, String> properties) {
+        String workspaceUri = requireProperty(properties, DeltaConnectorProperties.UNITY_URI);
+        String authType = properties.getOrDefault(
+                DeltaConnectorProperties.UNITY_AUTH_TYPE, "pat").trim().toLowerCase(
+                        java.util.Locale.ROOT);
+        Map<String, String> authProperties;
+        if ("pat".equals(authType)) {
+            authProperties = Map.of("type", "static",
+                    "token", requireProperty(properties, DeltaConnectorProperties.UNITY_TOKEN));
+        } else if ("oauth".equals(authType)) {
+            authProperties = Map.of("type", "oauth",
+                    "oauth.uri", requireProperty(properties, DeltaConnectorProperties.UNITY_OAUTH_URI),
+                    "oauth.clientId", requireProperty(
+                            properties, DeltaConnectorProperties.UNITY_OAUTH_CLIENT_ID),
+                    "oauth.clientSecret", requireProperty(
+                            properties, DeltaConnectorProperties.UNITY_OAUTH_CLIENT_SECRET));
+        } else {
+            throw new IllegalArgumentException(
+                    "Unsupported Unity authentication type '" + authType + "'");
+        }
+        return create(workspaceUri, authProperties);
+    }
+
+    private static UnityDeltaClient create(String workspaceUri,
+            Map<String, String> authProperties) {
         String normalizedUri = stripTrailingSlash(workspaceUri);
-        TokenProvider tokenProvider = TokenProvider.create(
-                Map.of("type", "static", "token", token));
+        TokenProvider tokenProvider = TokenProvider.create(authProperties);
         ApiClient apiClient = ApiClientBuilder.create()
                 .uri(normalizedUri)
                 .tokenProvider(tokenProvider)
                 .addAppVersion(APP_NAME, APP_VERSION)
                 .build();
         return new UnityDeltaClient(normalizedUri, tokenProvider, apiClient);
+    }
+
+    private static String requireProperty(Map<String, String> properties, String key) {
+        String value = properties.get(key);
+        if (value == null || value.trim().isEmpty()) {
+            throw new IllegalArgumentException("Missing required Unity property '" + key + "'");
+        }
+        return value;
     }
 
     UnityDeltaClient(String workspaceUri, TokenProvider tokenProvider, ApiClient apiClient) {

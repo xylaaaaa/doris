@@ -69,14 +69,27 @@ public class DeltaConnectorProvider implements ConnectorProvider {
     private static void validateUnityProperties(Map<String, String> properties) {
         requireNonBlank(properties, DeltaConnectorProperties.UNITY_URI);
         requireNonBlank(properties, DeltaConnectorProperties.UNITY_CATALOG);
-        requireNonBlank(properties, DeltaConnectorProperties.UNITY_TOKEN);
-        URI unityUri = URI.create(properties.get(DeltaConnectorProperties.UNITY_URI));
-        if (!unityUri.isAbsolute()
-                || (!("http".equalsIgnoreCase(unityUri.getScheme()))
-                && !("https".equalsIgnoreCase(unityUri.getScheme())))) {
-            throw new IllegalArgumentException(
-                    "Unity Catalog URI must be an absolute HTTP or HTTPS URI");
+        String authType = properties.getOrDefault(
+                DeltaConnectorProperties.UNITY_AUTH_TYPE, "pat").trim().toLowerCase(
+                        java.util.Locale.ROOT);
+        switch (authType) {
+            case "pat":
+                requireNonBlank(properties, DeltaConnectorProperties.UNITY_TOKEN);
+                break;
+            case "oauth":
+                requireNonBlank(properties, DeltaConnectorProperties.UNITY_OAUTH_URI);
+                requireNonBlank(properties, DeltaConnectorProperties.UNITY_OAUTH_CLIENT_ID);
+                requireNonBlank(properties, DeltaConnectorProperties.UNITY_OAUTH_CLIENT_SECRET);
+                validateHttpUri(properties.get(DeltaConnectorProperties.UNITY_OAUTH_URI),
+                        DeltaConnectorProperties.UNITY_OAUTH_URI);
+                break;
+            default:
+                throw new IllegalArgumentException(
+                        "Unsupported Unity authentication type '" + authType
+                                + "'; expected 'pat' or 'oauth'");
         }
+        URI unityUri = validateHttpUri(properties.get(DeltaConnectorProperties.UNITY_URI),
+                DeltaConnectorProperties.UNITY_URI);
         if (unityUri.getPath() != null && !unityUri.getPath().isEmpty()
                 && !"/".equals(unityUri.getPath())) {
             throw new IllegalArgumentException(
@@ -87,6 +100,22 @@ public class DeltaConnectorProvider implements ConnectorProvider {
             throw new IllegalArgumentException(
                     "Unity Catalog URI must not contain user info, query parameters, or a fragment");
         }
+    }
+
+    private static URI validateHttpUri(String value, String property) {
+        URI uri = URI.create(value);
+        if (!uri.isAbsolute()
+                || (!("http".equalsIgnoreCase(uri.getScheme()))
+                && !("https".equalsIgnoreCase(uri.getScheme())))) {
+            throw new IllegalArgumentException(
+                    "Unity property '" + property + "' must be an absolute HTTP or HTTPS URI");
+        }
+        if (uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null) {
+            throw new IllegalArgumentException(
+                    "Unity property '" + property
+                            + "' must not contain user info, query parameters, or a fragment");
+        }
+        return uri;
     }
 
     private static void requireNonBlank(Map<String, String> properties, String key) {

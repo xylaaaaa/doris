@@ -110,6 +110,45 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
+    public void testUnityOAuthClientCredentialsAuthentication() {
+        Map<String, String> properties = Map.of(
+                "type", "delta",
+                DeltaConnectorProperties.CATALOG_TYPE, DeltaConnectorProperties.CATALOG_TYPE_UNITY,
+                DeltaConnectorProperties.UNITY_URI, workspaceUri,
+                DeltaConnectorProperties.UNITY_AUTH_TYPE, "oauth",
+                DeltaConnectorProperties.UNITY_OAUTH_URI, workspaceUri + "/oauth/token",
+                DeltaConnectorProperties.UNITY_OAUTH_CLIENT_ID, "client-id",
+                DeltaConnectorProperties.UNITY_OAUTH_CLIENT_SECRET, "client-secret",
+                DeltaConnectorProperties.UNITY_CATALOG, "main");
+
+        DeltaConnectorProvider provider = new DeltaConnectorProvider();
+        provider.validateProperties(properties);
+        Connector connector = provider.create(properties, connectorContext());
+
+        Assertions.assertTrue(connector.testConnection(null).isSuccess());
+        Assertions.assertEquals(List.of("default"),
+                connector.getMetadata(null).listDatabaseNames(null));
+        Assertions.assertTrue(requestPaths.stream().anyMatch(
+                path -> path.equals("/oauth/token")));
+    }
+
+    @Test
+    public void testUnityOAuthPropertiesRequireCompleteCredentials() {
+        DeltaConnectorProvider provider = new DeltaConnectorProvider();
+        Map<String, String> properties = new java.util.HashMap<>(Map.of(
+                "type", "delta",
+                DeltaConnectorProperties.CATALOG_TYPE, DeltaConnectorProperties.CATALOG_TYPE_UNITY,
+                DeltaConnectorProperties.UNITY_URI, workspaceUri,
+                DeltaConnectorProperties.UNITY_AUTH_TYPE, "oauth",
+                DeltaConnectorProperties.UNITY_OAUTH_URI, workspaceUri + "/oauth/token",
+                DeltaConnectorProperties.UNITY_OAUTH_CLIENT_ID, "client-id",
+                DeltaConnectorProperties.UNITY_CATALOG, "main"));
+
+        Assertions.assertThrows(IllegalArgumentException.class,
+                () -> provider.validateProperties(properties));
+    }
+
+    @Test
     public void testOfficialDeltaCredentialEndpointAndBackendMappings() {
         UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
         DeltaCredentialsResponse response = client.getReadCredentials("main", "default", "events");
@@ -237,6 +276,13 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     private void handleRequest(HttpExchange exchange) throws IOException {
+        if (exchange.getRequestURI().getPath().equals("/oauth/token")) {
+            requestPaths.add(exchange.getRequestURI().getPath());
+            requestQueries.add(exchange.getRequestURI().getRawQuery());
+            respond(exchange, 200,
+                    "{\"access_token\":\"" + TEST_TOKEN + "\",\"expires_in\":3600}");
+            return;
+        }
         String authorization = exchange.getRequestHeaders().getFirst("Authorization");
         if (!("Bearer " + TEST_TOKEN).equals(authorization)) {
             respond(exchange, 401, "{\"error_code\":\"UNAUTHENTICATED\"}");

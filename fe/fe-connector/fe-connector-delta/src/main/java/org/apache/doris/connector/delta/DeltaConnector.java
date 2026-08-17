@@ -60,9 +60,7 @@ public final class DeltaConnector implements Connector {
                     this.properties.get(DeltaConnectorProperties.TABLE_PATH), loader);
             writer = new DeltaKernelWriter(engine);
         } else {
-            UnityDeltaClient unityClient = UnityDeltaClient.create(
-                    this.properties.get(DeltaConnectorProperties.UNITY_URI),
-                    this.properties.get(DeltaConnectorProperties.UNITY_TOKEN));
+            UnityDeltaClient unityClient = UnityDeltaClient.create(this.properties);
             this.catalogAdapter = new UnityDeltaCatalogAdapter(
                     this.properties.get(DeltaConnectorProperties.UNITY_CATALOG),
                     unityClient, hadoopConfiguration, this.properties);
