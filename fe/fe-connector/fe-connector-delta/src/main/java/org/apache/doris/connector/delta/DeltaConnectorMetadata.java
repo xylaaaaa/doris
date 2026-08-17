@@ -157,10 +157,11 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
             ConnectorTableHandle handle, List<ConnectorColumn> columns) {
         requireWriteEnabled();
         DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;
+        String applicationId = session == null ? null : session.getQueryId();
         if (writer != null) {
-            return writer.beginInsert(deltaHandle);
+            return writer.beginInsert(deltaHandle, applicationId);
         }
-        return catalogAdapter.beginInsert(deltaHandle);
+        return catalogAdapter.beginInsert(deltaHandle, applicationId);
     }
 
     @Override

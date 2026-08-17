@@ -50,7 +50,8 @@ public class DeltaKernelWriterTest {
         Engine engine = DefaultEngine.create(new Configuration());
         DeltaKernelWriter writer = new DeltaKernelWriter(engine);
         DeltaInsertHandle insert = writer.beginInsert(new DeltaTableHandle(
-                "default", "events", tableDirectory.toUri().toString(), 1));
+                "default", "events", tableDirectory.toUri().toString(), 1),
+                "doris-query-123");
 
         writer.finishInsert(insert, List.of(new ConnectorFileCommitInfo(
                 dataFile.toUri().toString(), 2, Files.size(dataFile),
@@ -65,6 +66,7 @@ public class DeltaKernelWriterTest {
                 "_delta_log/00000000000000000002.json"));
         Assertions.assertTrue(commit.contains("part-doris.parquet"));
         Assertions.assertTrue(commit.contains("Apache Doris native Delta connector"));
+        Assertions.assertTrue(commit.contains("doris-query-123"));
     }
 
     @Test

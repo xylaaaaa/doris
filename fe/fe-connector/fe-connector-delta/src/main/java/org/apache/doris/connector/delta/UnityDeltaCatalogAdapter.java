@@ -159,6 +159,12 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
 
     @Override
     public ConnectorInsertHandle beginInsert(DeltaTableHandle tableHandle) {
+        return beginInsert(tableHandle, null);
+    }
+
+    @Override
+    public ConnectorInsertHandle beginInsert(DeltaTableHandle tableHandle,
+            String applicationId) {
         if (!tableHandle.isExternalTable()) {
             throw new UnsupportedOperationException(
                     "Unity managed Delta INSERT requires catalog commits; "
@@ -170,7 +176,7 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
                 metadata.getLocation(), baseConfiguration);
         return new DeltaKernelWriter(
                 io.delta.kernel.defaults.engine.DefaultEngine.create(configuration))
-                .beginInsert(tableHandle);
+                .beginInsert(tableHandle, applicationId);
     }
 
     @Override

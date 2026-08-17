@@ -67,6 +67,7 @@ final class DeltaKernelWriter {
 
     private static final Logger LOG = LogManager.getLogger(DeltaKernelWriter.class);
     private static final String ENGINE_INFO = "Apache Doris native Delta connector";
+    private static final int MAX_COMMIT_RETRIES = 3;
 
     private final Engine engine;
 
@@ -75,13 +76,22 @@ final class DeltaKernelWriter {
     }
 
     DeltaInsertHandle beginInsert(DeltaTableHandle tableHandle) {
+        return beginInsert(tableHandle, null);
+    }
+
+    DeltaInsertHandle beginInsert(DeltaTableHandle tableHandle, String applicationId) {
         if (!tableHandle.isExternalTable()) {
             throw new UnsupportedOperationException(
                     "Unity managed Delta writes require catalog commits");
         }
-        Transaction transaction = Table.forPath(engine, tableHandle.getTablePath())
+        io.delta.kernel.TransactionBuilder transactionBuilder = Table.forPath(
+                engine, tableHandle.getTablePath())
                 .createTransactionBuilder(engine, ENGINE_INFO, Operation.WRITE)
-                .build(engine);
+                .withMaxRetries(MAX_COMMIT_RETRIES);
+        if (applicationId != null && !applicationId.isBlank()) {
+            transactionBuilder.withTransactionId(engine, applicationId, 0L);
+        }
+        Transaction transaction = transactionBuilder.build(engine);
         if (transaction.getReadTableVersion() != tableHandle.getSnapshotVersion()) {
             throw new DorisConnectorException("Delta table changed while preparing INSERT: expected version "
                     + tableHandle.getSnapshotVersion() + " but transaction read version "

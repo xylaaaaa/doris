@@ -55,7 +55,10 @@ public final class DeltaScanPlanProvider implements ConnectorScanPlanProvider {
         DeltaKernelSnapshot snapshot = catalogAdapter.loadSnapshot((DeltaTableHandle) handle);
         List<ConnectorScanRange> ranges = new ArrayList<>(snapshot.getActiveFiles().size());
         for (DeltaScanFile file : snapshot.getActiveFiles()) {
-            ranges.add(new DeltaScanRange(file));
+            if (filter.isEmpty() || DeltaPartitionPruner.mayMatch(
+                    file.getPartitionValues(), filter.get())) {
+                ranges.add(new DeltaScanRange(file));
+            }
         }
         return ranges;
     }

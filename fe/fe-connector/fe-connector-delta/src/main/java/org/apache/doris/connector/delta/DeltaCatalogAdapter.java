@@ -58,6 +58,12 @@ public interface DeltaCatalogAdapter {
                 "This Delta catalog adapter does not support INSERT");
     }
 
+    /** Starts an append transaction with a query-scoped idempotency identifier. */
+    default ConnectorInsertHandle beginInsert(DeltaTableHandle tableHandle,
+            String applicationId) {
+        return beginInsert(tableHandle);
+    }
+
     /** Whether this adapter can start an append transaction for at least one table. */
     default boolean supportsInsert() {
         return false;
