@@ -23,6 +23,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** A consistent Delta table snapshot and its active data files. */
 public class DeltaKernelSnapshot {
@@ -31,16 +32,20 @@ public class DeltaKernelSnapshot {
     private final StructType schema;
     private final List<String> partitionColumnNames;
     private final Map<String, String> tableProperties;
+    private final int minWriterVersion;
+    private final Set<String> writerFeatures;
     private final List<DeltaScanFile> activeFiles;
 
     public DeltaKernelSnapshot(String tablePath, long version, StructType schema,
             List<String> partitionColumnNames, Map<String, String> tableProperties,
-            List<DeltaScanFile> activeFiles) {
+            int minWriterVersion, Set<String> writerFeatures, List<DeltaScanFile> activeFiles) {
         this.tablePath = tablePath;
         this.version = version;
         this.schema = schema;
         this.partitionColumnNames = List.copyOf(partitionColumnNames);
         this.tableProperties = Collections.unmodifiableMap(new LinkedHashMap<>(tableProperties));
+        this.minWriterVersion = minWriterVersion;
+        this.writerFeatures = Set.copyOf(writerFeatures);
         this.activeFiles = List.copyOf(activeFiles);
     }
 
@@ -62,6 +67,14 @@ public class DeltaKernelSnapshot {
 
     public Map<String, String> getTableProperties() {
         return tableProperties;
+    }
+
+    public int getMinWriterVersion() {
+        return minWriterVersion;
+    }
+
+    public Set<String> getWriterFeatures() {
+        return writerFeatures;
     }
 
     public List<DeltaScanFile> getActiveFiles() {

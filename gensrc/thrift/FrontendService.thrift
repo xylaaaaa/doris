@@ -331,8 +331,8 @@ struct TReportExecStatusParams {
   31: optional list<TFragmentInstanceReport> fragment_instance_reports;
 
   32: optional list<DataSinks.TMCCommitData> mc_commit_datas
-
   33: optional string first_error_msg
+  34: optional list<DataSinks.TConnectorFileCommitData> connector_file_commit_datas
 }
 
 struct TFeResult {

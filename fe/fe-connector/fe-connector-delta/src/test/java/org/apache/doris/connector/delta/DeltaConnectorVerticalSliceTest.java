@@ -24,6 +24,7 @@ import org.apache.doris.connector.api.ConnectorType;
 import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 import org.apache.doris.connector.api.scan.ConnectorScanRange;
+import org.apache.doris.connector.api.write.ConnectorWriteConfig;
 import org.apache.doris.connector.spi.ConnectorContext;
 import org.apache.doris.connector.spi.ConnectorProvider;
 import org.apache.doris.thrift.TFileFormatType;
@@ -31,6 +32,7 @@ import org.apache.doris.thrift.TFileRangeDesc;
 import org.apache.doris.thrift.TTableFormatFileDesc;
 
 import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.DecimalType;
 import io.delta.kernel.types.IntegerType;
@@ -66,6 +68,9 @@ public class DeltaConnectorVerticalSliceTest {
 
         Assertions.assertThrows(IllegalArgumentException.class,
                 () -> provider.validateProperties(Map.of()));
+        Assertions.assertThrows(IllegalArgumentException.class,
+                () -> provider.validateProperties(Map.of(
+                        DeltaConnectorProperties.WRITE_ENABLED, "yes")));
 
         Map<String, String> properties = deltaProperties("delta/path_table");
         provider.validateProperties(properties);
@@ -91,6 +96,9 @@ public class DeltaConnectorVerticalSliceTest {
         Assertions.assertTrue(metadata.getTableHandle(null, "other", "events").isEmpty());
 
         ConnectorTableSchema schema = metadata.getTableSchema(null, handle);
+        DeltaKernelSnapshot snapshot = adapter.loadSnapshot((DeltaTableHandle) handle);
+        Assertions.assertEquals(2, snapshot.getMinWriterVersion());
+        Assertions.assertTrue(snapshot.getWriterFeatures().isEmpty());
         Assertions.assertEquals(List.of("id", "name"), schema.getColumns().stream()
                 .map(ConnectorColumn::getName).collect(Collectors.toList()));
         Assertions.assertEquals(List.of("BIGINT", "STRING"), schema.getColumns().stream()
@@ -162,6 +170,53 @@ public class DeltaConnectorVerticalSliceTest {
 
         Assertions.assertThrows(DorisConnectorException.class,
                 () -> DeltaTypeMapping.fromDeltaType(VariantType.VARIANT));
+    }
+
+    @Test
+    public void testInitialWriterRequiresCompleteSchemaOrder() throws Exception {
+        Map<String, String> properties = deltaProperties("delta/path_table");
+        properties.put(DeltaConnectorProperties.WRITE_ENABLED, "true");
+        properties.put("fs.s3a.access.key", "test-key");
+        properties.put(DeltaConnectorProperties.UNITY_TOKEN, "control-plane-secret");
+        DeltaPathCatalogAdapter adapter = pathAdapter(properties);
+        Engine engine = DefaultEngine.create(new Configuration());
+        DeltaConnectorMetadata metadata = new DeltaConnectorMetadata(
+                adapter, properties, new DeltaKernelWriter(engine));
+        DeltaTableHandle handle = adapter.getTableHandle("default", "events").orElseThrow();
+        List<ConnectorColumn> columns = metadata.getTableSchema(null, handle).getColumns();
+
+        ConnectorWriteConfig writeConfig = metadata.getWriteConfig(null, handle, columns);
+        Assertions.assertEquals("parquet", writeConfig.getFileFormat());
+        Assertions.assertEquals("test-key",
+                writeConfig.getProperties().get("fs.s3a.access.key"));
+        Assertions.assertFalse(writeConfig.getProperties().containsKey(
+                DeltaConnectorProperties.UNITY_TOKEN));
+        Assertions.assertThrows(UnsupportedOperationException.class,
+                () -> metadata.getWriteConfig(null, handle, List.of(columns.get(0))));
+        Assertions.assertThrows(UnsupportedOperationException.class,
+                () -> metadata.getWriteConfig(null, handle,
+                        List.of(columns.get(1), columns.get(0))));
+        ConnectorColumn wrongType = new ConnectorColumn(columns.get(0).getName(),
+                ConnectorType.of("STRING"), "", columns.get(0).isNullable(), null);
+        Assertions.assertThrows(UnsupportedOperationException.class,
+                () -> metadata.getWriteConfig(null, handle,
+                        List.of(wrongType, columns.get(1))));
+    }
+
+    @Test
+    public void testWriteTypeCompatibilityNormalizesDorisDecimalStorageWidth() {
+        ConnectorType deltaDecimal = ConnectorType.of("DECIMALV3", 12, 2);
+
+        Assertions.assertTrue(DeltaConnectorMetadata.hasCompatibleWriteType(
+                ConnectorType.of("INT"), ConnectorType.of("INT", 0, 0)));
+        Assertions.assertTrue(DeltaConnectorMetadata.hasCompatibleWriteType(
+                deltaDecimal, ConnectorType.of("DECIMAL64")));
+        Assertions.assertTrue(DeltaConnectorMetadata.hasCompatibleWriteType(
+                deltaDecimal, ConnectorType.of("DECIMAL64", 12, 2)));
+        Assertions.assertFalse(DeltaConnectorMetadata.hasCompatibleWriteType(
+                deltaDecimal, ConnectorType.of("DECIMAL32")));
+        Assertions.assertFalse(DeltaConnectorMetadata.hasCompatibleWriteType(
+                deltaDecimal, ConnectorType.of("DECIMAL64", 12, 3)));
     }
 
     private DeltaPathCatalogAdapter pathAdapter(Map<String, String> properties) {

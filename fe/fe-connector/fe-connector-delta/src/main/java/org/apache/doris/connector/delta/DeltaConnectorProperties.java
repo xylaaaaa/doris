@@ -30,6 +30,7 @@ public final class DeltaConnectorProperties {
     public static final String UNITY_URI = "unity.uri";
     public static final String UNITY_CATALOG = "unity.catalog";
     public static final String UNITY_TOKEN = "unity.token";
+    public static final String WRITE_ENABLED = "delta.write.enabled";
 
     public static String catalogType(java.util.Map<String, String> properties) {
         String configured = properties.get(CATALOG_TYPE);

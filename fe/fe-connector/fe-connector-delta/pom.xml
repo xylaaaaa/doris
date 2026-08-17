@@ -33,7 +33,7 @@ under the License.
     <packaging>jar</packaging>
     <name>Doris FE Connector - Delta Lake</name>
     <description>
-        Experimental read-only Delta Lake connector using Delta Kernel with path and Unity adapters.
+        Experimental native Delta Lake connector using Delta Kernel with path and Unity adapters.
     </description>
 
     <dependencies>

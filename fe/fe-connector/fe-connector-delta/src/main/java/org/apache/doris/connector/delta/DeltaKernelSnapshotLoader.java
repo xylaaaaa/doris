@@ -26,6 +26,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
@@ -84,6 +85,7 @@ public class DeltaKernelSnapshotLoader {
     private DeltaKernelSnapshot loadSnapshot(
             Snapshot snapshot, boolean catalogManagedRead) throws IOException {
         validateSupportedTableFeatures(snapshot, catalogManagedRead);
+        Protocol protocol = ((SnapshotImpl) snapshot).getProtocol();
         Scan scan = snapshot.getScanBuilder().build();
         List<DeltaScanFile> activeFiles = new ArrayList<>();
         List<String> partitionColumns = snapshot.getPartitionColumnNames();
@@ -117,7 +119,8 @@ public class DeltaKernelSnapshotLoader {
         }
         activeFiles.sort(Comparator.comparing(DeltaScanFile::getPath));
         return new DeltaKernelSnapshot(snapshot.getPath(), snapshot.getVersion(),
-                snapshot.getSchema(), partitionColumns, snapshot.getTableProperties(), activeFiles);
+                snapshot.getSchema(), partitionColumns, snapshot.getTableProperties(),
+                protocol.getMinWriterVersion(), protocol.getWriterFeatures(), activeFiles);
     }
 
     private static Map<String, String> orderedPartitionValues(Row row,

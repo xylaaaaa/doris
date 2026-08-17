@@ -54,6 +54,7 @@ import org.apache.doris.resource.workloadgroup.QueueToken;
 import org.apache.doris.resource.workloadgroup.WorkloadGroup;
 import org.apache.doris.service.arrowflight.results.FlightSqlEndpointsLocation;
 import org.apache.doris.system.Backend;
+import org.apache.doris.thrift.TConnectorFileCommitData;
 import org.apache.doris.thrift.TErrorTabletInfo;
 import org.apache.doris.thrift.TNetworkAddress;
 import org.apache.doris.thrift.TPipelineFragmentParamsList;
@@ -328,6 +329,11 @@ public class NereidsCoordinator extends Coordinator {
     @Override
     public List<TTabletCommitInfo> getCommitInfos() {
         return coordinatorContext.asLoadProcessor().loadContext.getCommitInfos();
+    }
+
+    @Override
+    public List<TConnectorFileCommitData> getConnectorFileCommitDatas() {
+        return coordinatorContext.asLoadProcessor().loadContext.getConnectorFileCommitDatas();
     }
 
     @Override

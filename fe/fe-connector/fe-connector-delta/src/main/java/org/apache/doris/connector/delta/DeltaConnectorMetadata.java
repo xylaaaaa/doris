@@ -21,14 +21,20 @@ import org.apache.doris.connector.api.ConnectorColumn;
 import org.apache.doris.connector.api.ConnectorMetadata;
 import org.apache.doris.connector.api.ConnectorSession;
 import org.apache.doris.connector.api.ConnectorTableSchema;
+import org.apache.doris.connector.api.ConnectorType;
 import org.apache.doris.connector.api.handle.ConnectorColumnHandle;
+import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 import org.apache.doris.connector.api.handle.NamedColumnHandle;
+import org.apache.doris.connector.api.write.ConnectorFileCommitInfo;
+import org.apache.doris.connector.api.write.ConnectorWriteConfig;
+import org.apache.doris.connector.api.write.ConnectorWriteType;
 
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,11 +46,21 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
 
     private final DeltaCatalogAdapter catalogAdapter;
     private final Map<String, String> properties;
+    private final DeltaKernelWriter writer;
+    private final boolean writeEnabled;
 
     public DeltaConnectorMetadata(DeltaCatalogAdapter catalogAdapter,
             Map<String, String> properties) {
+        this(catalogAdapter, properties, null);
+    }
+
+    public DeltaConnectorMetadata(DeltaCatalogAdapter catalogAdapter,
+            Map<String, String> properties, DeltaKernelWriter writer) {
         this.catalogAdapter = catalogAdapter;
         this.properties = Collections.unmodifiableMap(new LinkedHashMap<>(properties));
+        this.writer = writer;
+        this.writeEnabled = Boolean.parseBoolean(
+                properties.getOrDefault(DeltaConnectorProperties.WRITE_ENABLED, "false"));
     }
 
     @Override
@@ -97,6 +113,144 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
     @Override
     public Map<String, String> getProperties() {
         return properties;
+    }
+
+    @Override
+    public boolean supportsInsert() {
+        return writeEnabled && writer != null;
+    }
+
+    @Override
+    public ConnectorWriteConfig getWriteConfig(ConnectorSession session,
+            ConnectorTableHandle handle, List<ConnectorColumn> columns) {
+        requireWriteEnabled();
+        DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;
+        DeltaKernelSnapshot snapshot = catalogAdapter.loadSnapshot(deltaHandle);
+        if (!snapshot.getPartitionColumnNames().isEmpty()) {
+            throw new UnsupportedOperationException(
+                    "The initial native Delta writer supports only unpartitioned tables");
+        }
+        if (snapshot.getMinWriterVersion() > 2 || !snapshot.getWriterFeatures().isEmpty()) {
+            throw new UnsupportedOperationException(
+                    "The initial native Delta writer supports only baseline writer protocol; "
+                            + "table requires minWriterVersion=" + snapshot.getMinWriterVersion()
+                            + ", writerFeatures=" + snapshot.getWriterFeatures());
+        }
+        List<ConnectorColumn> tableColumns = toColumns(snapshot.getSchema());
+        if (!hasSameWriteSchema(tableColumns, columns)) {
+            throw new UnsupportedOperationException(
+                    "The initial native Delta writer requires every table column in schema order; "
+                            + "expected " + tableColumns + " but received " + columns);
+        }
+        return ConnectorWriteConfig.builder(ConnectorWriteType.FILE_WRITE)
+                .fileFormat("parquet")
+                .compression("snappy")
+                .writeLocation(deltaHandle.getTablePath())
+                .properties(getBackendStorageProperties(deltaHandle))
+                .build();
+    }
+
+    @Override
+    public ConnectorInsertHandle beginInsert(ConnectorSession session,
+            ConnectorTableHandle handle, List<ConnectorColumn> columns) {
+        requireWriteEnabled();
+        return writer.beginInsert((DeltaTableHandle) handle);
+    }
+
+    @Override
+    public void finishFileInsert(ConnectorSession session, ConnectorInsertHandle handle,
+            Collection<ConnectorFileCommitInfo> files) {
+        requireWriteEnabled();
+        writer.finishInsert((DeltaInsertHandle) handle, files);
+    }
+
+    private void requireWriteEnabled() {
+        if (!supportsInsert()) {
+            throw new UnsupportedOperationException(
+                    "Native Delta INSERT requires a path catalog with delta.write.enabled=true");
+        }
+    }
+
+    private Map<String, String> getBackendStorageProperties(DeltaTableHandle tableHandle) {
+        Map<String, String> storageProperties = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : properties.entrySet()) {
+            if (DeltaScanPlanProvider.isBackendStorageProperty(entry.getKey())) {
+                storageProperties.put(entry.getKey(), entry.getValue());
+            }
+        }
+        storageProperties.putAll(catalogAdapter.getBackendStorageProperties(tableHandle));
+        return storageProperties;
+    }
+
+    private static boolean hasSameWriteSchema(List<ConnectorColumn> tableColumns,
+            List<ConnectorColumn> insertColumns) {
+        if (tableColumns.size() != insertColumns.size()) {
+            return false;
+        }
+        for (int i = 0; i < tableColumns.size(); i++) {
+            ConnectorColumn expected = tableColumns.get(i);
+            ConnectorColumn actual = insertColumns.get(i);
+            if (!expected.getName().equals(actual.getName())
+                    || !hasCompatibleWriteType(expected.getType(), actual.getType())
+                    || expected.isNullable() != actual.isNullable()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static boolean hasCompatibleWriteType(ConnectorType expected, ConnectorType actual) {
+        if (expected.equals(actual)) {
+            return true;
+        }
+        if (isDecimalV3(expected.getTypeName()) && isDecimalV3(actual.getTypeName())) {
+            return decimalPrecisionMatchesStorageWidth(expected.getPrecision(), actual)
+                    && parameterMatches(expected.getPrecision(), actual.getPrecision())
+                    && parameterMatches(expected.getScale(), actual.getScale());
+        }
+        if (!expected.getTypeName().equals(actual.getTypeName())
+                || !parameterMatches(expected.getPrecision(), actual.getPrecision())
+                || !parameterMatches(expected.getScale(), actual.getScale())
+                || !expected.getFieldNames().equals(actual.getFieldNames())
+                || expected.getChildren().size() != actual.getChildren().size()) {
+            return false;
+        }
+        for (int i = 0; i < expected.getChildren().size(); i++) {
+            if (!hasCompatibleWriteType(expected.getChildren().get(i), actual.getChildren().get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isDecimalV3(String typeName) {
+        return "DECIMALV3".equals(typeName) || "DECIMAL32".equals(typeName)
+                || "DECIMAL64".equals(typeName) || "DECIMAL128".equals(typeName)
+                || "DECIMAL256".equals(typeName);
+    }
+
+    private static boolean decimalPrecisionMatchesStorageWidth(
+            int expectedPrecision, ConnectorType actual) {
+        if (expectedPrecision < 0 || actual.getPrecision() >= 0
+                || "DECIMALV3".equals(actual.getTypeName())) {
+            return true;
+        }
+        switch (actual.getTypeName()) {
+            case "DECIMAL32":
+                return expectedPrecision <= 9;
+            case "DECIMAL64":
+                return expectedPrecision >= 10 && expectedPrecision <= 18;
+            case "DECIMAL128":
+                return expectedPrecision >= 19 && expectedPrecision <= 38;
+            case "DECIMAL256":
+                return expectedPrecision >= 39 && expectedPrecision <= 76;
+            default:
+                return false;
+        }
+    }
+
+    private static boolean parameterMatches(int expected, int actual) {
+        return expected < 0 || actual < 0 || expected == actual;
     }
 
     private static List<ConnectorColumn> toColumns(StructType schema) {

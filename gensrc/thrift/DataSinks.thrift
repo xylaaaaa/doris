@@ -384,6 +384,8 @@ struct THiveTableSink {
     10: optional bool overwrite
     11: optional THiveSerDeProperties serde_properties
     12: optional list<Types.TNetworkAddress> broker_addresses;
+    // Routes file results to ConnectorWriteOps instead of an HMS transaction.
+    13: optional bool connector_file_sink
 }
 
 enum TUpdateMode {
@@ -407,6 +409,14 @@ struct THivePartitionUpdate {
     5: optional i64 row_count
     6: optional i64 file_size
     7: optional list<TS3MPUPendingUpload> s3_mpu_pending_uploads
+}
+
+struct TConnectorFileCommitData {
+    1: required string file_path
+    2: required i64 row_count
+    3: required i64 file_size
+    4: required i64 modification_time
+    5: optional map<string, string> partition_values
 }
 
 enum TFileContent {

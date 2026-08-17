@@ -40,6 +40,7 @@ public class DeltaConnectorProvider implements ConnectorProvider {
 
     @Override
     public void validateProperties(Map<String, String> properties) {
+        validateBooleanProperty(properties, DeltaConnectorProperties.WRITE_ENABLED);
         String catalogType = DeltaConnectorProperties.catalogType(properties);
         switch (catalogType) {
             case DeltaConnectorProperties.CATALOG_TYPE_PATH:
@@ -92,6 +93,14 @@ public class DeltaConnectorProvider implements ConnectorProvider {
         String value = properties.get(key);
         if (value == null || value.trim().isEmpty()) {
             throw new IllegalArgumentException("Missing required Delta catalog property '" + key + "'");
+        }
+    }
+
+    private static void validateBooleanProperty(Map<String, String> properties, String key) {
+        String value = properties.get(key);
+        if (value != null && !"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+            throw new IllegalArgumentException(
+                    "Delta catalog property '" + key + "' must be true or false");
         }
     }
 }

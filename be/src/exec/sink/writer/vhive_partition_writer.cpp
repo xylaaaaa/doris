@@ -27,6 +27,7 @@
 #include "io/file_factory.h"
 #include "io/fs/s3_file_writer.h"
 #include "runtime/runtime_state.h"
+#include "util/time.h"
 
 namespace doris {
 
@@ -34,13 +35,15 @@ VHivePartitionWriter::VHivePartitionWriter(const TDataSink& t_sink, std::string 
                                            TUpdateMode::type update_mode,
                                            const VExprContextSPtrs& write_output_expr_ctxs,
                                            std::vector<std::string> write_column_names,
-                                           WriteInfo write_info, std::string file_name,
-                                           int file_name_index,
+                                           WriteInfo write_info,
+                                           std::map<std::string, std::string> partition_values,
+                                           std::string file_name, int file_name_index,
                                            TFileFormatType::type file_format_type,
                                            TFileCompressType::type hive_compress_type,
                                            const THiveSerDeProperties* hive_serde_properties,
                                            const std::map<std::string, std::string>& hadoop_conf)
         : _partition_name(std::move(partition_name)),
+          _partition_values(std::move(partition_values)),
           _update_mode(update_mode),
           _write_output_expr_ctxs(write_output_expr_ctxs),
           _write_column_names(std::move(write_column_names)),
@@ -50,7 +53,9 @@ VHivePartitionWriter::VHivePartitionWriter(const TDataSink& t_sink, std::string 
           _file_format_type(file_format_type),
           _hive_compress_type(hive_compress_type),
           _hive_serde_properties(hive_serde_properties),
-          _hadoop_conf(hadoop_conf) {}
+          _hadoop_conf(hadoop_conf),
+          _connector_file_sink(t_sink.hive_table_sink.__isset.connector_file_sink &&
+                               t_sink.hive_table_sink.connector_file_sink) {}
 
 Status VHivePartitionWriter::open(RuntimeState* state, RuntimeProfile* operator_profile) {
     _state = state;
@@ -64,7 +69,7 @@ Status VHivePartitionWriter::open(RuntimeState* state, RuntimeProfile* operator_
             .path = fmt::format("{}/{}", _write_info.write_path, _get_target_file_name()),
             .fs_name {}};
     _fs = DORIS_TRY(FileFactory::create_fs(fs_properties, file_description));
-    io::FileWriterOptions file_writer_options = {.used_by_s3_committer = true};
+    io::FileWriterOptions file_writer_options = {.used_by_s3_committer = !_connector_file_sink};
     RETURN_IF_ERROR(_fs->create_file(file_description.path, &_file_writer, &file_writer_options));
 
     switch (_file_format_type) {
@@ -146,10 +151,25 @@ Status VHivePartitionWriter::close(const Status& status) {
         }
     }
     if (status_ok) {
-        auto partition_update = _build_partition_update();
-        _state->add_hive_partition_updates(partition_update);
+        if (_connector_file_sink) {
+            _state->add_connector_file_commit_data(_build_connector_file_commit_data());
+        } else {
+            _state->add_hive_partition_updates(_build_partition_update());
+        }
     }
     return result_status;
+}
+
+TConnectorFileCommitData VHivePartitionWriter::_build_connector_file_commit_data() const {
+    TConnectorFileCommitData commit_data;
+    commit_data.__set_file_path(
+            fmt::format("{}/{}", _write_info.write_path, _get_target_file_name()));
+    commit_data.__set_row_count(_row_count);
+    DCHECK(_file_format_transformer != nullptr);
+    commit_data.__set_file_size(_file_format_transformer->written_len());
+    commit_data.__set_modification_time(UnixMillis());
+    commit_data.__set_partition_values(_partition_values);
+    return commit_data;
 }
 
 Status VHivePartitionWriter::write(Block& block) {
@@ -224,8 +244,8 @@ void VHivePartitionWriter::_add_s3_mpu_pending_upload_for_rollback() {
     _state->add_hive_partition_updates(hive_partition_update);
 }
 
-std::string VHivePartitionWriter::_get_file_extension(TFileFormatType::type file_format_type,
-                                                      TFileCompressType::type write_compress_type) {
+std::string VHivePartitionWriter::_get_file_extension(
+        TFileFormatType::type file_format_type, TFileCompressType::type write_compress_type) const {
     std::string compress_name;
     switch (write_compress_type) {
     case TFileCompressType::SNAPPYBLOCK: {
@@ -276,7 +296,7 @@ std::string VHivePartitionWriter::_get_file_extension(TFileFormatType::type file
     return fmt::format("{}{}", compress_name, file_format_name);
 }
 
-std::string VHivePartitionWriter::_get_target_file_name() {
+std::string VHivePartitionWriter::_get_target_file_name() const {
     return fmt::format("{}-{}{}", _file_name, _file_name_index,
                        _get_file_extension(_file_format_type, _hive_compress_type));
 }

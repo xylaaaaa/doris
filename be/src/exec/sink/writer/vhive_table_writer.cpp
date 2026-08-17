@@ -385,9 +385,15 @@ std::shared_ptr<VHivePartitionWriter> VHiveTableWriter::_create_partition_writer
             column_names.emplace_back(hive_table_sink.columns[i].name);
         }
     }
+    std::map<std::string, std::string> connector_partition_values;
+    for (int i = 0; i < _partition_columns_input_index.size(); ++i) {
+        connector_partition_values.emplace(
+                hive_table_sink.columns[_partition_columns_input_index[i]].name,
+                partition_values[i]);
+    }
     return std::make_shared<VHivePartitionWriter>(
             _t_sink, std::move(partition_name), update_mode, _write_output_vexpr_ctxs,
-            std::move(column_names), std::move(write_info),
+            std::move(column_names), std::move(write_info), std::move(connector_partition_values),
             (file_name == nullptr) ? _compute_file_name() : *file_name, file_name_index,
             file_format_type, write_compress_type, &hive_table_sink.serde_properties,
             hive_table_sink.hadoop_config);

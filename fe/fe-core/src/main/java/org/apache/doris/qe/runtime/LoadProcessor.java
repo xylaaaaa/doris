@@ -234,6 +234,9 @@ public class LoadProcessor extends AbstractJobProcessor {
             ((MCTransaction) Env.getCurrentEnv().getGlobalExternalTransactionInfoMgr().getTxnById(txnId))
                     .updateMCCommitData(params.getMcCommitDatas());
         }
+        if (params.isSetConnectorFileCommitDatas()) {
+            loadContext.updateConnectorFileCommitDatas(params.getConnectorFileCommitDatas());
+        }
 
         if (fragmentTask.isDone()) {
             if (LOG.isDebugEnabled()) {

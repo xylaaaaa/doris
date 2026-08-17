@@ -43,6 +43,7 @@ import org.apache.logging.log4j.Logger;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -182,6 +183,7 @@ public class PluginDrivenTableSink extends BaseExternalTableDataSink {
             throws AnalysisException {
         Map<String, String> props = writeConfig.getProperties();
         THiveTableSink tSink = new THiveTableSink();
+        tSink.setConnectorFileSink(true);
 
         // DB and table names
         tSink.setDbName(props.getOrDefault(PROP_DB_NAME, targetTable.getDbName()));
@@ -222,8 +224,7 @@ public class PluginDrivenTableSink extends BaseExternalTableDataSink {
             locationParams.setOriginalWritePath(
                     props.getOrDefault(PROP_ORIGINAL_WRITE_PATH, writePath));
             locationParams.setTargetPath(targetPath);
-            LocationPath locationPath = LocationPath.of(targetPath,
-                    targetTable.getCatalog().getCatalogProperty().getStoragePropertiesMap());
+            LocationPath locationPath = LocationPath.of(targetPath);
             TFileType fileType = locationPath.getTFileTypeForBE();
             locationParams.setFileType(fileType);
             tSink.setLocation(locationParams);
@@ -240,17 +241,15 @@ public class PluginDrivenTableSink extends BaseExternalTableDataSink {
         }
 
         // Hadoop/storage config for BE access
-        Map<String, String> beStorageProps = targetTable.getCatalog()
-                .getCatalogProperty().getBackendStorageProperties();
-        tSink.setHadoopConfig(beStorageProps);
-
-        // Any extra connector-specific properties: pass through via hadoop_config
+        // The connector owns storage normalization. Avoid interpreting its catalog type as HMS.
+        Map<String, String> hadoopConfig = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : props.entrySet()) {
             String key = entry.getKey();
             if (!isWellKnownProperty(key)) {
-                tSink.putToHadoopConfig(key, entry.getValue());
+                hadoopConfig.put(key, entry.getValue());
             }
         }
+        tSink.setHadoopConfig(hadoopConfig);
 
         tDataSink = new TDataSink(TDataSinkType.HIVE_TABLE_SINK);
         tDataSink.setHiveTableSink(tSink);

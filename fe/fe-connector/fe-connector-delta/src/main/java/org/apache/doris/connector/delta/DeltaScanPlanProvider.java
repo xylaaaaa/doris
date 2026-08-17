@@ -83,7 +83,7 @@ public final class DeltaScanPlanProvider implements ConnectorScanPlanProvider {
         return scanProperties;
     }
 
-    private static boolean isBackendStorageProperty(String key) {
+    static boolean isBackendStorageProperty(String key) {
         return key.startsWith("fs.") || key.startsWith("dfs.") || key.startsWith("hadoop.")
                 || key.startsWith("hive.") || key.startsWith("s3.") || key.startsWith("s3a.")
                 || key.startsWith("cos.") || key.startsWith("oss.") || key.startsWith("obs.")

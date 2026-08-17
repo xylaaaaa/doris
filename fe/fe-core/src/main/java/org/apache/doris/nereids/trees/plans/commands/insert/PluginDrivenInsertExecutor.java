@@ -27,18 +27,20 @@ import org.apache.doris.connector.api.ConnectorSession;
 import org.apache.doris.connector.api.ConnectorWriteOps;
 import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
+import org.apache.doris.connector.api.write.ConnectorFileCommitInfo;
 import org.apache.doris.connector.api.write.ConnectorWriteType;
 import org.apache.doris.datasource.ConnectorColumnConverter;
 import org.apache.doris.datasource.ExternalTable;
 import org.apache.doris.datasource.PluginDrivenExternalCatalog;
 import org.apache.doris.nereids.NereidsPlanner;
 import org.apache.doris.qe.ConnectContext;
+import org.apache.doris.thrift.TConnectorFileCommitData;
 import org.apache.doris.transaction.TransactionType;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -106,7 +108,16 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
     @Override
     protected void doBeforeCommit() throws UserException {
         if (writeOps != null && insertHandle != null) {
-            writeOps.finishInsert(connectorSession, insertHandle, Collections.emptyList());
+            List<ConnectorFileCommitInfo> files = coordinator.getConnectorFileCommitDatas().stream()
+                    .map(PluginDrivenInsertExecutor::toConnectorFileCommitInfo)
+                    .collect(Collectors.toList());
+            validateReportedFiles(resolvedWriteType, emptyInsert, files, table.getName());
+            loadedRows = files.stream().mapToLong(ConnectorFileCommitInfo::getRowCount).sum();
+            if (resolvedWriteType == ConnectorWriteType.FILE_WRITE) {
+                writeOps.finishFileInsert(connectorSession, insertHandle, files);
+            } else {
+                writeOps.finishInsert(connectorSession, insertHandle, List.of());
+            }
         }
     }
 
@@ -168,5 +179,22 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
 
     private static ConnectorColumn toConnectorColumn(Column col) {
         return ConnectorColumnConverter.toConnectorColumn(col);
+    }
+
+    private static ConnectorFileCommitInfo toConnectorFileCommitInfo(
+            TConnectorFileCommitData commitData) {
+        return new ConnectorFileCommitInfo(commitData.getFilePath(), commitData.getRowCount(),
+                commitData.getFileSize(), commitData.getModificationTime(),
+                commitData.isSetPartitionValues()
+                        ? new LinkedHashMap<>(commitData.getPartitionValues())
+                        : new LinkedHashMap<>());
+    }
+
+    static void validateReportedFiles(ConnectorWriteType writeType, boolean emptyInsert,
+            List<ConnectorFileCommitInfo> files, String tableName) throws UserException {
+        if (writeType == ConnectorWriteType.FILE_WRITE && !emptyInsert && files.isEmpty()) {
+            throw new UserException("File connector did not report any data files for non-empty INSERT into "
+                    + tableName);
+        }
     }
 }

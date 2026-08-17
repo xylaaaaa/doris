@@ -21,6 +21,7 @@ import org.apache.doris.connector.api.handle.ConnectorDeleteHandle;
 import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 import org.apache.doris.connector.api.handle.ConnectorMergeHandle;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
+import org.apache.doris.connector.api.write.ConnectorFileCommitInfo;
 import org.apache.doris.connector.api.write.ConnectorWriteConfig;
 
 import java.util.Collection;
@@ -105,6 +106,19 @@ public interface ConnectorWriteOps {
             ConnectorInsertHandle handle,
             Collection<byte[]> fragments) {
         throw new DorisConnectorException("INSERT not supported");
+    }
+
+    /**
+     * Commits a file-based insert using data files produced by BE nodes.
+     *
+     * @param session current session
+     * @param handle the insert handle from {@link #beginInsert}
+     * @param files data files produced by BE nodes
+     */
+    default void finishFileInsert(ConnectorSession session,
+            ConnectorInsertHandle handle,
+            Collection<ConnectorFileCommitInfo> files) {
+        throw new DorisConnectorException("File INSERT not supported");
     }
 
     /**

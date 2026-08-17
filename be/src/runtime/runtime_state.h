@@ -523,6 +523,17 @@ public:
         _hive_partition_updates.emplace_back(hive_partition_update);
     }
 
+    std::vector<TConnectorFileCommitData> connector_file_commit_datas() const {
+        std::lock_guard<std::mutex> lock(_connector_file_commit_datas_mutex);
+        return _connector_file_commit_datas;
+    }
+
+    void add_connector_file_commit_data(
+            const TConnectorFileCommitData& connector_file_commit_data) {
+        std::lock_guard<std::mutex> lock(_connector_file_commit_datas_mutex);
+        _connector_file_commit_datas.emplace_back(connector_file_commit_data);
+    }
+
     std::vector<TIcebergCommitData> iceberg_commit_datas() const {
         std::lock_guard<std::mutex> lock(_iceberg_commit_datas_mutex);
         return _iceberg_commit_datas;
@@ -968,6 +979,9 @@ private:
 
     mutable std::mutex _hive_partition_updates_mutex;
     std::vector<THivePartitionUpdate> _hive_partition_updates;
+
+    mutable std::mutex _connector_file_commit_datas_mutex;
+    std::vector<TConnectorFileCommitData> _connector_file_commit_datas;
 
     mutable std::mutex _iceberg_commit_datas_mutex;
     std::vector<TIcebergCommitData> _iceberg_commit_datas;

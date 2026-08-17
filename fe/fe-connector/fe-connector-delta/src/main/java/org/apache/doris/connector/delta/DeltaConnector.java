@@ -25,6 +25,7 @@ import org.apache.doris.connector.api.scan.ConnectorScanPlanProvider;
 import org.apache.doris.connector.spi.ConnectorContext;
 
 import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
 import org.apache.hadoop.conf.Configuration;
 
 import java.io.IOException;
@@ -48,13 +49,16 @@ public final class DeltaConnector implements Connector {
 
         Configuration hadoopConfiguration = buildHadoopConfiguration(this.properties);
         String catalogType = DeltaConnectorProperties.catalogType(this.properties);
+        DeltaKernelWriter writer = null;
         if (DeltaConnectorProperties.CATALOG_TYPE_PATH.equals(catalogType)) {
+            Engine engine = DefaultEngine.create(hadoopConfiguration);
             DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
-                    DefaultEngine.create(hadoopConfiguration));
+                    engine);
             this.catalogAdapter = new DeltaPathCatalogAdapter(
                     this.properties.get(DeltaConnectorProperties.DATABASE),
                     this.properties.get(DeltaConnectorProperties.TABLE),
                     this.properties.get(DeltaConnectorProperties.TABLE_PATH), loader);
+            writer = new DeltaKernelWriter(engine);
         } else {
             UnityDeltaClient unityClient = UnityDeltaClient.create(
                     this.properties.get(DeltaConnectorProperties.UNITY_URI),
@@ -63,7 +67,7 @@ public final class DeltaConnector implements Connector {
                     this.properties.get(DeltaConnectorProperties.UNITY_CATALOG),
                     unityClient, hadoopConfiguration, this.properties);
         }
-        this.metadata = new DeltaConnectorMetadata(catalogAdapter, this.properties);
+        this.metadata = new DeltaConnectorMetadata(catalogAdapter, this.properties, writer);
         this.scanPlanProvider = new DeltaScanPlanProvider(catalogAdapter, this.properties);
     }
 
