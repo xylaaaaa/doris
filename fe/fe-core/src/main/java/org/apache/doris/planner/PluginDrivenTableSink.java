@@ -202,7 +202,14 @@ public class PluginDrivenTableSink extends BaseExternalTableDataSink {
                             : THiveColumnType.REGULAR);
             targetColumns.add(tHiveColumn);
         }
+        if (targetColumns.stream()
+                .filter(column -> column.getColumnType() == THiveColumnType.PARTITION_KEY)
+                .count() != partNames.size()) {
+            throw new AnalysisException("Connector partition columns do not match target table schema: "
+                    + writeConfig.getPartitionColumns());
+        }
         tSink.setColumns(targetColumns);
+        tSink.setConnectorPartitionColumns(writeConfig.getPartitionColumns());
 
         // File format
         if (writeConfig.getFileFormat() != null) {

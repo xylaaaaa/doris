@@ -131,6 +131,7 @@ public class DeltaConnectorVerticalSliceTest {
     @Test
     public void testPartitionValuesFollowDeltaPartitionColumnOrder() throws Exception {
         Map<String, String> properties = deltaProperties("delta/partitioned_table");
+        properties.put(DeltaConnectorProperties.WRITE_ENABLED, "true");
         DeltaPathCatalogAdapter adapter = pathAdapter(properties);
         DeltaTableHandle handle = adapter.getTableHandle("default", "events").orElseThrow();
         DeltaScanPlanProvider scanProvider = new DeltaScanPlanProvider(adapter, properties);
@@ -152,6 +153,29 @@ public class DeltaConnectorVerticalSliceTest {
         Assertions.assertEquals(List.of("p2", "p1"), thriftRange.getColumnsFromPathKeys());
         Assertions.assertEquals(List.of("two", "one"), thriftRange.getColumnsFromPath());
         Assertions.assertEquals(List.of(false, false), thriftRange.getColumnsFromPathIsNull());
+
+        DeltaConnectorMetadata metadata = new DeltaConnectorMetadata(adapter, properties,
+                new DeltaKernelWriter(DefaultEngine.create(new Configuration())));
+        List<ConnectorColumn> columns = metadata.getTableSchema(null, handle).getColumns();
+        Assertions.assertEquals(List.of("p2", "p1"),
+                metadata.getWriteConfig(null, handle, columns).getPartitionColumns());
+    }
+
+    @Test
+    public void testDeltaPartitionLiteralIsNotConfusedWithNull() {
+        Map<String, String> partitionValues = new LinkedHashMap<>();
+        partitionValues.put("p1", "__HIVE_DEFAULT_PARTITION__");
+        partitionValues.put("p2", null);
+        DeltaScanRange range = new DeltaScanRange(
+                new DeltaScanFile("file:///tmp/part.parquet", 1, 0, partitionValues));
+
+        TFileRangeDesc thriftRange = new TFileRangeDesc();
+        range.populateRangeParams(new TTableFormatFileDesc(), thriftRange);
+
+        Assertions.assertEquals(List.of("p1", "p2"), thriftRange.getColumnsFromPathKeys());
+        Assertions.assertEquals(List.of("__HIVE_DEFAULT_PARTITION__", "\\N"),
+                thriftRange.getColumnsFromPath());
+        Assertions.assertEquals(List.of(false, true), thriftRange.getColumnsFromPathIsNull());
     }
 
     @Test

@@ -17,7 +17,6 @@
 
 package org.apache.doris.connector.delta;
 
-import org.apache.doris.connector.api.scan.ConnectorPartitionValues;
 import org.apache.doris.connector.api.scan.ConnectorScanRange;
 import org.apache.doris.connector.api.scan.ConnectorScanRangeType;
 import org.apache.doris.thrift.TFileFormatType;
@@ -103,15 +102,15 @@ public final class DeltaScanRange implements ConnectorScanRange {
         if (!partitionValues.isEmpty()) {
             List<String> keys = new ArrayList<>(partitionValues.size());
             List<String> values = new ArrayList<>(partitionValues.size());
+            List<Boolean> isNull = new ArrayList<>(partitionValues.size());
             for (Map.Entry<String, String> entry : partitionValues.entrySet()) {
                 keys.add(entry.getKey());
-                values.add(entry.getValue());
+                values.add(entry.getValue() == null ? "\\N" : entry.getValue());
+                isNull.add(entry.getValue() == null);
             }
-            ConnectorPartitionValues.Normalized normalized =
-                    ConnectorPartitionValues.normalize(values);
             rangeDesc.setColumnsFromPathKeys(keys);
-            rangeDesc.setColumnsFromPath(normalized.getValues());
-            rangeDesc.setColumnsFromPathIsNull(normalized.getIsNull());
+            rangeDesc.setColumnsFromPath(values);
+            rangeDesc.setColumnsFromPathIsNull(isNull);
         }
     }
 }

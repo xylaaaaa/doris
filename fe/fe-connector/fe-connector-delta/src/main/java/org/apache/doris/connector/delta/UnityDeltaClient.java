@@ -142,6 +142,19 @@ final class UnityDeltaClient {
 
     Configuration buildReadHadoopConfiguration(String catalogName, String schemaName,
             String tableName, String location, Configuration baseConfiguration) {
+        return buildHadoopConfiguration(catalogName, schemaName, tableName, location,
+                baseConfiguration, UCCredentialHadoopConfs.TableOperation.READ);
+    }
+
+    Configuration buildWriteHadoopConfiguration(String catalogName, String schemaName,
+            String tableName, String location, Configuration baseConfiguration) {
+        return buildHadoopConfiguration(catalogName, schemaName, tableName, location,
+                baseConfiguration, UCCredentialHadoopConfs.TableOperation.READ_WRITE);
+    }
+
+    private Configuration buildHadoopConfiguration(String catalogName, String schemaName,
+            String tableName, String location, Configuration baseConfiguration,
+            UCCredentialHadoopConfs.TableOperation operation) {
         Configuration configuration = new Configuration(baseConfiguration);
         String scheme = storageScheme(location);
         if ("file".equals(scheme)) {
@@ -157,7 +170,7 @@ final class UnityDeltaClient {
                     .hadoopConf(configuration)
                     .addAppVersions(APP_VERSIONS)
                     .buildForTable(catalogName, schemaName, tableName,
-                            UCCredentialHadoopConfs.TableOperation.READ, location);
+                            operation, location);
             credentialProperties.forEach(configuration::set);
             return configuration;
         } catch (ApiException e) {
@@ -169,12 +182,25 @@ final class UnityDeltaClient {
 
     DeltaCredentialsResponse getReadCredentials(
             String catalogName, String schemaName, String tableName) {
+        return getCredentials(catalogName, schemaName, tableName, DeltaCredentialOperation.READ);
+    }
+
+    DeltaCredentialsResponse getWriteCredentials(
+            String catalogName, String schemaName, String tableName) {
+        return getCredentials(catalogName, schemaName, tableName,
+                DeltaCredentialOperation.READ_WRITE);
+    }
+
+    private DeltaCredentialsResponse getCredentials(
+            String catalogName, String schemaName, String tableName,
+            DeltaCredentialOperation operation) {
         try {
             return credentialsApi.getTableCredentials(
-                    DeltaCredentialOperation.READ, catalogName, schemaName, tableName);
+                    operation, catalogName, schemaName, tableName);
         } catch (ApiException e) {
             throw requestFailure(
-                    "vend backend read credentials for Delta table '" + catalogName + "."
+                    "vend backend " + operation.getValue() + " credentials for Delta table '"
+                            + catalogName + "."
                             + schemaName + "." + tableName + "'", e);
         }
     }

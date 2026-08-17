@@ -32,15 +32,23 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
     private final long snapshotVersion;
     private final String catalogTableId;
     private final boolean catalogManaged;
+    private final boolean externalTable;
 
     public DeltaTableHandle(String databaseName, String tableName,
             String tablePath, long snapshotVersion) {
-        this(databaseName, tableName, tablePath, snapshotVersion, null, false);
+        this(databaseName, tableName, tablePath, snapshotVersion, null, false, true);
     }
 
     public DeltaTableHandle(String databaseName, String tableName,
             String tablePath, long snapshotVersion, String catalogTableId,
             boolean catalogManaged) {
+        this(databaseName, tableName, tablePath, snapshotVersion, catalogTableId,
+                catalogManaged, !catalogManaged);
+    }
+
+    public DeltaTableHandle(String databaseName, String tableName,
+            String tablePath, long snapshotVersion, String catalogTableId,
+            boolean catalogManaged, boolean externalTable) {
         this.databaseName = Objects.requireNonNull(databaseName, "databaseName");
         this.tableName = Objects.requireNonNull(tableName, "tableName");
         this.tablePath = Objects.requireNonNull(tablePath, "tablePath");
@@ -50,6 +58,7 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
         this.snapshotVersion = snapshotVersion;
         this.catalogTableId = catalogTableId;
         this.catalogManaged = catalogManaged;
+        this.externalTable = externalTable;
         if (catalogManaged && catalogTableId == null) {
             throw new IllegalArgumentException(
                     "Catalog-managed Delta table handle requires a catalog table ID");
@@ -80,6 +89,10 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
         return catalogManaged;
     }
 
+    public boolean isExternalTable() {
+        return externalTable;
+    }
+
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -91,6 +104,7 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
         DeltaTableHandle that = (DeltaTableHandle) other;
         return snapshotVersion == that.snapshotVersion
                 && catalogManaged == that.catalogManaged
+                && externalTable == that.externalTable
                 && databaseName.equals(that.databaseName)
                 && tableName.equals(that.tableName)
                 && tablePath.equals(that.tablePath)
@@ -100,13 +114,13 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
     @Override
     public int hashCode() {
         return Objects.hash(databaseName, tableName, tablePath, snapshotVersion,
-                catalogTableId, catalogManaged);
+                catalogTableId, catalogManaged, externalTable);
     }
 
     @Override
     public String toString() {
         return "DeltaTableHandle{" + databaseName + "." + tableName
                 + ", path=" + tablePath + ", version=" + snapshotVersion
-                + ", catalogManaged=" + catalogManaged + "}";
+                + ", catalogManaged=" + catalogManaged + ", external=" + externalTable + "}";
     }
 }

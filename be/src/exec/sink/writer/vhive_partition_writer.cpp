@@ -31,19 +31,18 @@
 
 namespace doris {
 
-VHivePartitionWriter::VHivePartitionWriter(const TDataSink& t_sink, std::string partition_name,
-                                           TUpdateMode::type update_mode,
-                                           const VExprContextSPtrs& write_output_expr_ctxs,
-                                           std::vector<std::string> write_column_names,
-                                           WriteInfo write_info,
-                                           std::map<std::string, std::string> partition_values,
-                                           std::string file_name, int file_name_index,
-                                           TFileFormatType::type file_format_type,
-                                           TFileCompressType::type hive_compress_type,
-                                           const THiveSerDeProperties* hive_serde_properties,
-                                           const std::map<std::string, std::string>& hadoop_conf)
+VHivePartitionWriter::VHivePartitionWriter(
+        const TDataSink& t_sink, std::string partition_name, TUpdateMode::type update_mode,
+        const VExprContextSPtrs& write_output_expr_ctxs,
+        std::vector<std::string> write_column_names, WriteInfo write_info,
+        std::map<std::string, std::string> partition_values,
+        std::set<std::string> null_partition_columns, std::string file_name, int file_name_index,
+        TFileFormatType::type file_format_type, TFileCompressType::type hive_compress_type,
+        const THiveSerDeProperties* hive_serde_properties,
+        const std::map<std::string, std::string>& hadoop_conf)
         : _partition_name(std::move(partition_name)),
           _partition_values(std::move(partition_values)),
+          _null_partition_columns(std::move(null_partition_columns)),
           _update_mode(update_mode),
           _write_output_expr_ctxs(write_output_expr_ctxs),
           _write_column_names(std::move(write_column_names)),
@@ -69,6 +68,9 @@ Status VHivePartitionWriter::open(RuntimeState* state, RuntimeProfile* operator_
             .path = fmt::format("{}/{}", _write_info.write_path, _get_target_file_name()),
             .fs_name {}};
     _fs = DORIS_TRY(FileFactory::create_fs(fs_properties, file_description));
+    if (_connector_file_sink) {
+        RETURN_IF_ERROR(_fs->create_directory(_write_info.write_path));
+    }
     io::FileWriterOptions file_writer_options = {.used_by_s3_committer = !_connector_file_sink};
     RETURN_IF_ERROR(_fs->create_file(file_description.path, &_file_writer, &file_writer_options));
 
@@ -169,6 +171,7 @@ TConnectorFileCommitData VHivePartitionWriter::_build_connector_file_commit_data
     commit_data.__set_file_size(_file_format_transformer->written_len());
     commit_data.__set_modification_time(UnixMillis());
     commit_data.__set_partition_values(_partition_values);
+    commit_data.__set_null_partition_columns(_null_partition_columns);
     return commit_data;
 }
 

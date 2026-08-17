@@ -55,6 +55,7 @@ public class UnityDeltaCatalogAdapterTest {
     private String catalogManagedLocation;
     private String catalogManagedTableId;
     private final List<String> requestPaths = new ArrayList<>();
+    private final List<String> requestQueries = new ArrayList<>();
 
     @BeforeEach
     public void startServer() throws Exception {
@@ -124,6 +125,10 @@ public class UnityDeltaCatalogAdapterTest {
         Assertions.assertTrue(requestPaths.stream().anyMatch(path -> path.endsWith(
                 "/delta/v1/catalogs/main/schemas/default/tables/events/credentials")));
 
+        client.getWriteCredentials("main", "default", "events");
+        Assertions.assertTrue(requestQueries.stream().anyMatch(
+                query -> query != null && query.contains("operation=READ_WRITE")));
+
         DeltaCredentialsResponse azureResponse = credentials(
                 "abfss://container@account.dfs.core.windows.net/tables/events",
                 new DeltaStorageCredentialConfig().azureSasToken("azure-sas"));
@@ -166,7 +171,23 @@ public class UnityDeltaCatalogAdapterTest {
                         .map(file -> Paths.get(URI.create(file.getPath()))
                                 .getFileName().toString())
                         .sorted()
-                        .collect(java.util.stream.Collectors.toList()));
+                .collect(java.util.stream.Collectors.toList()));
+    }
+
+    @Test
+    public void testManagedUnityInsertFailsClosedBeforeRequestingWriteCredentials() {
+        UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
+        UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
+                "main", client, new org.apache.hadoop.conf.Configuration(), Map.of(
+                        DeltaConnectorProperties.WRITE_ENABLED, "true"));
+        DeltaTableHandle handle = adapter.getTableHandle("default", "catalog_managed")
+                .orElseThrow();
+
+        Assertions.assertFalse(handle.isExternalTable());
+        Assertions.assertThrows(UnsupportedOperationException.class,
+                () -> adapter.beginInsert(handle));
+        Assertions.assertTrue(requestQueries.stream().noneMatch(
+                query -> query != null && query.contains("operation=READ_WRITE")));
     }
 
     @Test
@@ -214,6 +235,7 @@ public class UnityDeltaCatalogAdapterTest {
         }
         String path = exchange.getRequestURI().getPath();
         requestPaths.add(path);
+        requestQueries.add(exchange.getRequestURI().getRawQuery());
         if (path.equals("/api/2.1/unity-catalog/schemas")) {
             respond(exchange, 200,
                     "{\"schemas\":[{\"name\":\"default\",\"catalog_name\":\"main\"}]}");

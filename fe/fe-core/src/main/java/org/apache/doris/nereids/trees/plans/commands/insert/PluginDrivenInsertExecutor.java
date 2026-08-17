@@ -43,6 +43,7 @@ import org.apache.logging.log4j.Logger;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -187,7 +188,10 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
                 commitData.getFileSize(), commitData.getModificationTime(),
                 commitData.isSetPartitionValues()
                         ? new LinkedHashMap<>(commitData.getPartitionValues())
-                        : new LinkedHashMap<>());
+                        : new LinkedHashMap<>(),
+                commitData.isSetNullPartitionColumns()
+                        ? Set.copyOf(commitData.getNullPartitionColumns())
+                        : Set.of());
     }
 
     static void validateReportedFiles(ConnectorWriteType writeType, boolean emptyInsert,

@@ -19,22 +19,24 @@ package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 
-import io.delta.kernel.DataWriteContext;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 
 /** FE-owned Delta transaction state for one blind append. */
 final class DeltaInsertHandle implements ConnectorInsertHandle {
 
+    private final DeltaKernelWriter writer;
     private final Transaction transaction;
     private final Row transactionState;
-    private final DataWriteContext writeContext;
 
-    DeltaInsertHandle(Transaction transaction, Row transactionState,
-            DataWriteContext writeContext) {
+    DeltaInsertHandle(DeltaKernelWriter writer, Transaction transaction, Row transactionState) {
+        this.writer = writer;
         this.transaction = transaction;
         this.transactionState = transactionState;
-        this.writeContext = writeContext;
+    }
+
+    DeltaKernelWriter getWriter() {
+        return writer;
     }
 
     Transaction getTransaction() {
@@ -43,9 +45,5 @@ final class DeltaInsertHandle implements ConnectorInsertHandle {
 
     Row getTransactionState() {
         return transactionState;
-    }
-
-    DataWriteContext getWriteContext() {
-        return writeContext;
     }
 }

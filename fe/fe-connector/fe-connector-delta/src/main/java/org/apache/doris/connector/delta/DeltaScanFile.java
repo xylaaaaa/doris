@@ -21,6 +21,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /** A Delta add-file entry with the partition values needed by a file scan. */
 public final class DeltaScanFile {
@@ -28,6 +30,7 @@ public final class DeltaScanFile {
     private final long size;
     private final long modificationTime;
     private final Map<String, String> partitionValues;
+    private final Set<String> nullPartitionColumns;
 
     public DeltaScanFile(String path, long size, long modificationTime,
             Map<String, String> partitionValues) {
@@ -36,6 +39,10 @@ public final class DeltaScanFile {
         this.modificationTime = modificationTime;
         this.partitionValues = Collections.unmodifiableMap(
                 new LinkedHashMap<>(partitionValues));
+        this.nullPartitionColumns = Collections.unmodifiableSet(partitionValues.entrySet().stream()
+                .filter(entry -> entry.getValue() == null)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet()));
     }
 
     public String getPath() {
@@ -52,5 +59,9 @@ public final class DeltaScanFile {
 
     public Map<String, String> getPartitionValues() {
         return partitionValues;
+    }
+
+    public Set<String> getNullPartitionColumns() {
+        return nullPartitionColumns;
     }
 }

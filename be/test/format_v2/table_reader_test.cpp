@@ -405,6 +405,39 @@ TEST(TableReaderTest, LastProjectionDetachesNestedMapWithoutCopyingStrings) {
     EXPECT_EQ(detached_values.get_chars().data(), original_value_bytes);
 }
 
+TEST(TableReaderTest, ProjectionAlignsNullableFileColumnToRequiredTableColumn) {
+    auto nested = ColumnInt64::create();
+    nested->insert_value(10);
+    nested->insert_value(20);
+    auto null_map = ColumnUInt8::create(2, 0);
+    auto source = ColumnNullable::create(std::move(nested), std::move(null_map));
+    const auto nullable_type = make_nullable(std::make_shared<DataTypeInt64>());
+    const auto required_type = std::make_shared<DataTypeInt64>();
+
+    Block block;
+    block.insert({source, nullable_type, "id"});
+
+    ColumnMapping mapping;
+    mapping.global_index = GlobalIndex(0);
+    mapping.table_column_name = "id";
+    mapping.file_column_name = "id";
+    mapping.file_local_id = 0;
+    mapping.file_type = nullable_type;
+    mapping.table_type = required_type;
+    mapping.projection =
+            VExprContext::create_shared(VSlotRef::create_shared(0, 0, -1, nullable_type, "id"));
+
+    TableReaderMaterializeTestHelper reader;
+    ColumnPtr result;
+    ASSERT_TRUE(reader._materialize_mapping_column(mapping, &block, 2, &result,
+                                                   /*take_projection_result=*/true)
+                        .ok());
+    const auto& values = assert_cast<const ColumnInt64&>(*result);
+    ASSERT_EQ(values.size(), 2);
+    EXPECT_EQ(values.get_element(0), 10);
+    EXPECT_EQ(values.get_element(1), 20);
+}
+
 VExprSPtr table_int32_sum_expr(int left_slot_id, int left_column_id, int right_slot_id,
                                int right_column_id) {
     const auto int_type = std::make_shared<DataTypeInt32>();

@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /** Metadata for one data file produced by a connector file sink. */
 public final class ConnectorFileCommitInfo implements Serializable {
@@ -33,9 +34,16 @@ public final class ConnectorFileCommitInfo implements Serializable {
     private final long fileSize;
     private final long modificationTime;
     private final Map<String, String> partitionValues;
+    private final Set<String> nullPartitionColumns;
 
     public ConnectorFileCommitInfo(String filePath, long rowCount, long fileSize,
             long modificationTime, Map<String, String> partitionValues) {
+        this(filePath, rowCount, fileSize, modificationTime, partitionValues, Set.of());
+    }
+
+    public ConnectorFileCommitInfo(String filePath, long rowCount, long fileSize,
+            long modificationTime, Map<String, String> partitionValues,
+            Set<String> nullPartitionColumns) {
         this.filePath = Objects.requireNonNull(filePath, "filePath");
         if (rowCount < 0) {
             throw new IllegalArgumentException("rowCount must be non-negative");
@@ -51,6 +59,12 @@ public final class ConnectorFileCommitInfo implements Serializable {
         this.modificationTime = modificationTime;
         this.partitionValues = Collections.unmodifiableMap(
                 new LinkedHashMap<>(Objects.requireNonNull(partitionValues, "partitionValues")));
+        this.nullPartitionColumns = Set.copyOf(
+                Objects.requireNonNull(nullPartitionColumns, "nullPartitionColumns"));
+        if (!this.partitionValues.keySet().containsAll(this.nullPartitionColumns)) {
+            throw new IllegalArgumentException(
+                    "nullPartitionColumns must be a subset of partitionValues keys");
+        }
     }
 
     public String getFilePath() {
@@ -71,5 +85,9 @@ public final class ConnectorFileCommitInfo implements Serializable {
 
     public Map<String, String> getPartitionValues() {
         return partitionValues;
+    }
+
+    public Set<String> getNullPartitionColumns() {
+        return nullPartitionColumns;
     }
 }

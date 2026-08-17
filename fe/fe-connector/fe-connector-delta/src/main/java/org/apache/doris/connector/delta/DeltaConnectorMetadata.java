@@ -117,7 +117,7 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
 
     @Override
     public boolean supportsInsert() {
-        return writeEnabled && writer != null;
+        return writeEnabled && (writer != null || catalogAdapter.supportsInsert());
     }
 
     @Override
@@ -125,11 +125,12 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
             ConnectorTableHandle handle, List<ConnectorColumn> columns) {
         requireWriteEnabled();
         DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;
-        DeltaKernelSnapshot snapshot = catalogAdapter.loadSnapshot(deltaHandle);
-        if (!snapshot.getPartitionColumnNames().isEmpty()) {
+        if (!deltaHandle.isExternalTable()) {
             throw new UnsupportedOperationException(
-                    "The initial native Delta writer supports only unpartitioned tables");
+                    "Unity managed Delta writes require catalog commits; "
+                            + "the native connector currently supports external append only");
         }
+        DeltaKernelSnapshot snapshot = catalogAdapter.loadSnapshot(deltaHandle);
         if (snapshot.getMinWriterVersion() > 2 || !snapshot.getWriterFeatures().isEmpty()) {
             throw new UnsupportedOperationException(
                     "The initial native Delta writer supports only baseline writer protocol; "
@@ -146,7 +147,8 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
                 .fileFormat("parquet")
                 .compression("snappy")
                 .writeLocation(deltaHandle.getTablePath())
-                .properties(getBackendStorageProperties(deltaHandle))
+                .partitionColumns(snapshot.getPartitionColumnNames())
+                .properties(getBackendStoragePropertiesForWrite(deltaHandle))
                 .build();
     }
 
@@ -154,31 +156,38 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
     public ConnectorInsertHandle beginInsert(ConnectorSession session,
             ConnectorTableHandle handle, List<ConnectorColumn> columns) {
         requireWriteEnabled();
-        return writer.beginInsert((DeltaTableHandle) handle);
+        DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;
+        if (writer != null) {
+            return writer.beginInsert(deltaHandle);
+        }
+        return catalogAdapter.beginInsert(deltaHandle);
     }
 
     @Override
     public void finishFileInsert(ConnectorSession session, ConnectorInsertHandle handle,
             Collection<ConnectorFileCommitInfo> files) {
         requireWriteEnabled();
-        writer.finishInsert((DeltaInsertHandle) handle, files);
+        DeltaInsertHandle deltaHandle = (DeltaInsertHandle) handle;
+        deltaHandle.getWriter().finishInsert(deltaHandle, files);
     }
 
     private void requireWriteEnabled() {
         if (!supportsInsert()) {
             throw new UnsupportedOperationException(
-                    "Native Delta INSERT requires a path catalog with delta.write.enabled=true");
+                    "Native Delta INSERT requires delta.write.enabled=true and a supported "
+                            + "external table");
         }
     }
 
-    private Map<String, String> getBackendStorageProperties(DeltaTableHandle tableHandle) {
+    private Map<String, String> getBackendStoragePropertiesForWrite(
+            DeltaTableHandle tableHandle) {
         Map<String, String> storageProperties = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : properties.entrySet()) {
             if (DeltaScanPlanProvider.isBackendStorageProperty(entry.getKey())) {
                 storageProperties.put(entry.getKey(), entry.getValue());
             }
         }
-        storageProperties.putAll(catalogAdapter.getBackendStorageProperties(tableHandle));
+        storageProperties.putAll(catalogAdapter.getBackendStoragePropertiesForWrite(tableHandle));
         return storageProperties;
     }
 

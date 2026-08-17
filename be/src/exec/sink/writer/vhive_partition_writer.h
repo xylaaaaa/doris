@@ -19,6 +19,8 @@
 
 #include <gen_cpp/DataSinks_types.h>
 
+#include <set>
+
 #include "core/column/column.h"
 #include "exprs/vexpr_fwd.h"
 #include "format/transformer/vfile_format_transformer.h"
@@ -51,7 +53,8 @@ public:
                          TUpdateMode::type update_mode,
                          const VExprContextSPtrs& write_output_expr_ctxs,
                          std::vector<std::string> write_column_names, WriteInfo write_info,
-                         std::map<std::string, std::string> partition_values, std::string file_name,
+                         std::map<std::string, std::string> partition_values,
+                         std::set<std::string> null_partition_columns, std::string file_name,
                          int file_name_index, TFileFormatType::type file_format_type,
                          TFileCompressType::type hive_compress_type,
                          const THiveSerDeProperties* hive_serde_properties,
@@ -88,6 +91,7 @@ private:
     std::string _partition_name;
 
     std::map<std::string, std::string> _partition_values;
+    std::set<std::string> _null_partition_columns;
 
     TUpdateMode::type _update_mode;
 

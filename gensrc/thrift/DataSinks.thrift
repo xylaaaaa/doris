@@ -386,6 +386,8 @@ struct THiveTableSink {
     12: optional list<Types.TNetworkAddress> broker_addresses;
     // Routes file results to ConnectorWriteOps instead of an HMS transaction.
     13: optional bool connector_file_sink
+    // Preserves the table format's declared partition column order.
+    14: optional list<string> connector_partition_columns
 }
 
 enum TUpdateMode {
@@ -417,6 +419,7 @@ struct TConnectorFileCommitData {
     3: required i64 file_size
     4: required i64 modification_time
     5: optional map<string, string> partition_values
+    6: optional set<string> null_partition_columns
 }
 
 enum TFileContent {

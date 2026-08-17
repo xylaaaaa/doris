@@ -35,6 +35,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 public class DeltaKernelWriterTest {
 
@@ -81,6 +82,42 @@ public class DeltaKernelWriterTest {
     }
 
     @Test
+    public void testPartitionedAppendPreservesOrderAndNullValues() throws Exception {
+        Path tableDirectory = copyFixture(
+                "delta/partitioned_table/_delta_log",
+                List.of("00000000000000000000.json"));
+        Path regularFile = tableDirectory.resolve("p2=two/p1=one/part-regular.parquet");
+        Path nullFile = tableDirectory.resolve(
+                "p2=__HIVE_DEFAULT_PARTITION__/p1=__HIVE_DEFAULT_PARTITION__/part-null.parquet");
+        Files.createDirectories(regularFile.getParent());
+        Files.createDirectories(nullFile.getParent());
+        Files.write(regularFile, new byte[] {1, 2, 3});
+        Files.write(nullFile, new byte[] {4, 5, 6});
+        Engine engine = DefaultEngine.create(new Configuration());
+        DeltaKernelWriter writer = new DeltaKernelWriter(engine);
+        DeltaInsertHandle insert = writer.beginInsert(new DeltaTableHandle(
+                "default", "events", tableDirectory.toUri().toString(), 0));
+
+        writer.finishInsert(insert, List.of(
+                commitInfo(regularFile, Map.of("p1", "one", "p2", "two"), Set.of()),
+                commitInfo(nullFile,
+                        Map.of("p1", "__HIVE_DEFAULT_PARTITION__",
+                                "p2", "__HIVE_DEFAULT_PARTITION__"),
+                        Set.of("p2"))));
+
+        DeltaKernelSnapshot snapshot = new DeltaKernelSnapshotLoader(engine)
+                .loadLatest(tableDirectory.toUri().toString());
+        Assertions.assertEquals(1, snapshot.getVersion());
+        Assertions.assertTrue(snapshot.getActiveFiles().stream()
+                .anyMatch(file -> file.getPath().contains("p2=two/p1=one/part-regular.parquet")));
+        String commit = Files.readString(tableDirectory.resolve(
+                "_delta_log/00000000000000000001.json"));
+        Assertions.assertTrue(commit.contains("p2=two/p1=one/part-regular.parquet"));
+        Assertions.assertTrue(commit.contains("\"p1\":\"__HIVE_DEFAULT_PARTITION__\""));
+        Assertions.assertTrue(commit.contains("\"p2\":null"));
+    }
+
+    @Test
     public void testBeginInsertRejectsChangedSnapshot() throws Exception {
         Path tableDirectory = copyPathTableFixture();
         Engine engine = DefaultEngine.create(new Configuration());
@@ -92,13 +129,22 @@ public class DeltaKernelWriterTest {
     }
 
     private Path copyPathTableFixture() throws Exception {
-        URL fixture = Objects.requireNonNull(
-                getClass().getClassLoader().getResource("delta/path_table/_delta_log"));
+        return copyFixture("delta/path_table/_delta_log", List.of(
+                "00000000000000000000.json", "00000000000000000001.json"));
+    }
+
+    private ConnectorFileCommitInfo commitInfo(Path file, Map<String, String> partitionValues,
+            Set<String> nullPartitionColumns) throws Exception {
+        return new ConnectorFileCommitInfo(file.toUri().toString(), 1, Files.size(file),
+                Files.getLastModifiedTime(file).toMillis(), partitionValues, nullPartitionColumns);
+    }
+
+    private Path copyFixture(String resource, List<String> fileNames) throws Exception {
+        URL fixture = Objects.requireNonNull(getClass().getClassLoader().getResource(resource));
         Path sourceLog = Paths.get(fixture.toURI());
         Path targetLog = tempDirectory.resolve("table-" + System.nanoTime()).resolve("_delta_log");
         Files.createDirectories(targetLog);
-        for (String fileName : List.of(
-                "00000000000000000000.json", "00000000000000000001.json")) {
+        for (String fileName : fileNames) {
             Files.copy(sourceLog.resolve(fileName), targetLog.resolve(fileName),
                     StandardCopyOption.REPLACE_EXISTING);
         }

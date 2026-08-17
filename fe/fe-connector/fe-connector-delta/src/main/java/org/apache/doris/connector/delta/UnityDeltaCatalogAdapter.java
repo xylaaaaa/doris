@@ -18,12 +18,14 @@
 package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.DorisConnectorException;
+import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import io.unitycatalog.client.delta.model.DeltaTableMetadata;
+import io.unitycatalog.client.delta.model.DeltaTableType;
 import org.apache.hadoop.conf.Configuration;
 
 import java.io.IOException;
@@ -34,7 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** Read-only Unity Catalog adapter for managed and external Delta tables. */
+/** Unity Catalog adapter for Delta reads and external-table append writes. */
 final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
     private static final String CATALOG_MANAGED_PROPERTY = "delta.feature.catalogManaged";
 
@@ -100,7 +102,8 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
                             + "; refusing to plan an inconsistent table state");
         }
         return Optional.of(new DeltaTableHandle(databaseName, tableName,
-                metadata.getLocation(), snapshot.getVersion(), tableId, catalogManaged));
+                metadata.getLocation(), snapshot.getVersion(), tableId, catalogManaged,
+                metadata.getTableType() == DeltaTableType.EXTERNAL));
     }
 
     @Override
@@ -139,6 +142,41 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
                 metadata.getLocation(), client.getReadCredentials(
                         catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName()),
                 catalogProperties);
+    }
+
+    @Override
+    public Map<String, String> getBackendStoragePropertiesForWrite(
+            DeltaTableHandle tableHandle) {
+        DeltaTableMetadata metadata = resolveExistingTable(tableHandle);
+        if ("file".equalsIgnoreCase(URI.create(metadata.getLocation()).getScheme())) {
+            return Map.of();
+        }
+        return UnityDeltaStorageProperties.toBackendProperties(
+                metadata.getLocation(), client.getWriteCredentials(
+                        catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName()),
+                catalogProperties);
+    }
+
+    @Override
+    public ConnectorInsertHandle beginInsert(DeltaTableHandle tableHandle) {
+        if (!tableHandle.isExternalTable()) {
+            throw new UnsupportedOperationException(
+                    "Unity managed Delta INSERT requires catalog commits; "
+                            + "only external Delta append is enabled");
+        }
+        DeltaTableMetadata metadata = resolveExistingTable(tableHandle);
+        Configuration configuration = client.buildWriteHadoopConfiguration(
+                catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName(),
+                metadata.getLocation(), baseConfiguration);
+        return new DeltaKernelWriter(
+                io.delta.kernel.defaults.engine.DefaultEngine.create(configuration))
+                .beginInsert(tableHandle);
+    }
+
+    @Override
+    public boolean supportsInsert() {
+        return Boolean.parseBoolean(catalogProperties.getOrDefault(
+                DeltaConnectorProperties.WRITE_ENABLED, "false"));
     }
 
     @Override

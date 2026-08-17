@@ -1385,6 +1385,11 @@ protected:
                 ColumnPtr result_column = current_block->get_by_position(res_id).column;
                 *column = _detach_column(std::move(result_column));
             }
+            // Projection results are materialized directly from the file block, so they need the
+            // same nullability normalization as direct file-column mappings. In particular, a
+            // Parquet optional field can be mapped to a required Doris column when this batch has
+            // no NULL values.
+            RETURN_IF_ERROR(_align_column_nullability(column, mapping.table_type));
             return Status::OK();
         }
         if (mapping.default_expr != nullptr) {

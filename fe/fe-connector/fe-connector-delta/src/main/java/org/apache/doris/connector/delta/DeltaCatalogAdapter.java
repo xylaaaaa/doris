@@ -17,6 +17,8 @@
 
 package org.apache.doris.connector.delta;
 
+import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,6 +44,23 @@ public interface DeltaCatalogAdapter {
     /** Returns short-lived storage settings consumed by the backend for this table. */
     default Map<String, String> getBackendStorageProperties(DeltaTableHandle tableHandle) {
         return Map.of();
+    }
+
+    /** Returns storage settings with the scope required for a connector write. */
+    default Map<String, String> getBackendStoragePropertiesForWrite(
+            DeltaTableHandle tableHandle) {
+        return getBackendStorageProperties(tableHandle);
+    }
+
+    /** Starts a catalog-specific append transaction when the adapter owns the credentials. */
+    default ConnectorInsertHandle beginInsert(DeltaTableHandle tableHandle) {
+        throw new UnsupportedOperationException(
+                "This Delta catalog adapter does not support INSERT");
+    }
+
+    /** Whether this adapter can start an append transaction for at least one table. */
+    default boolean supportsInsert() {
+        return false;
     }
 
     /** Verifies the catalog control plane or configured path. */
