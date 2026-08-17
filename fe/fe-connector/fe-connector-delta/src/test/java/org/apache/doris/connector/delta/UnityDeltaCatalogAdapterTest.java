@@ -129,7 +129,12 @@ public class UnityDeltaCatalogAdapterTest {
         Assertions.assertTrue(requestPaths.stream().anyMatch(path -> path.endsWith(
                 "/delta/v1/catalogs/main/schemas/default/tables/events/credentials")));
 
-        client.getWriteCredentials("main", "default", "events");
+        DeltaCredentialsResponse writeResponse = client.getWriteCredentials(
+                "main", "default", "events");
+        Map<String, String> writeProperties = UnityDeltaStorageProperties.toBackendProperties(
+                "s3://delta-bucket/tables/events", writeResponse,
+                Map.of("s3.region", "us-west-2"), DeltaCredentialOperation.READ_WRITE);
+        Assertions.assertEquals("temporary-ak", writeProperties.get("AWS_ACCESS_KEY"));
         Assertions.assertTrue(requestQueries.stream().anyMatch(
                 query -> query != null && query.contains("operation=READ_WRITE")));
 
