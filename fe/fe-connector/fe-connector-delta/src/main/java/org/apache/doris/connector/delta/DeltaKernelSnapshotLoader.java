@@ -24,6 +24,7 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -34,10 +35,23 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 /** Loads a filesystem-managed Delta table snapshot through Delta Kernel. */
 public class DeltaKernelSnapshotLoader {
     private static final String COLUMN_MAPPING_MODE = "delta.columnMapping.mode";
+    private static final String CATALOG_MANAGED_FEATURE = "catalogManaged";
+    private static final Set<String> UNSUPPORTED_DIRECT_PARQUET_READER_FEATURES = Set.of(
+            "columnMapping",
+            "deletionVectors",
+            "geospatial",
+            "typeWidening",
+            "typeWidening-preview",
+            "variantShredding",
+            "variantShredding-preview",
+            "variantType",
+            "variantType-preview");
 
     private final Engine engine;
 
@@ -116,6 +130,20 @@ public class DeltaKernelSnapshotLoader {
     }
 
     private static void validateSupportedTableFeatures(Snapshot snapshot) {
+        Set<String> readerFeatures = ((SnapshotImpl) snapshot).getProtocol().getReaderFeatures();
+        if (readerFeatures.contains(CATALOG_MANAGED_FEATURE)) {
+            throw new UnsupportedOperationException(
+                    "Catalog-managed Delta tables must be loaded through a catalog-aware adapter");
+        }
+
+        Set<String> unsupportedFeatures = new TreeSet<>(readerFeatures);
+        unsupportedFeatures.retainAll(UNSUPPORTED_DIRECT_PARQUET_READER_FEATURES);
+        if (!unsupportedFeatures.isEmpty()) {
+            throw new UnsupportedOperationException(
+                    "Delta reader features require physical-row transforms that are not supported "
+                            + "by the Doris native Parquet scan: " + unsupportedFeatures);
+        }
+
         String mappingMode = snapshot.getTableProperties().getOrDefault(COLUMN_MAPPING_MODE, "none");
         if (!"none".equalsIgnoreCase(mappingMode)) {
             throw new UnsupportedOperationException(

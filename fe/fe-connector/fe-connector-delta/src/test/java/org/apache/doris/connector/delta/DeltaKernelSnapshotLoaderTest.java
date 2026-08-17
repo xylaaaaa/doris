@@ -74,4 +74,33 @@ public class DeltaKernelSnapshotLoaderTest {
 
         Assertions.assertTrue(exception.getMessage().contains("column mapping"));
     }
+
+    @Test
+    public void testRejectReaderFeaturesThatNeedPhysicalTransforms() throws Exception {
+        URL fixture = Objects.requireNonNull(getClass().getClassLoader()
+                .getResource("delta/unsupported_reader_feature_table"));
+        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
+                DefaultEngine.create(new Configuration()));
+
+        UnsupportedOperationException exception = Assertions.assertThrows(
+                UnsupportedOperationException.class,
+                () -> loader.loadLatest(Paths.get(fixture.toURI()).toUri().toString()));
+
+        Assertions.assertTrue(exception.getMessage().contains("typeWidening"));
+        Assertions.assertTrue(exception.getMessage().contains("physical-row transforms"));
+    }
+
+    @Test
+    public void testRejectCatalogManagedTableFromPathAdapter() throws Exception {
+        URL fixture = Objects.requireNonNull(
+                getClass().getClassLoader().getResource("delta/catalog_managed_table"));
+        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
+                DefaultEngine.create(new Configuration()));
+
+        UnsupportedOperationException exception = Assertions.assertThrows(
+                UnsupportedOperationException.class,
+                () -> loader.loadLatest(Paths.get(fixture.toURI()).toUri().toString()));
+
+        Assertions.assertTrue(exception.getMessage().contains("catalog-aware adapter"));
+    }
 }
