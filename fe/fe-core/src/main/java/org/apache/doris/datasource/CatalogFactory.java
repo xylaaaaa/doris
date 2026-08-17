@@ -50,7 +50,7 @@ public class CatalogFactory {
     // Only these catalog types are routed through the SPI connector path.
     // Other types (hms, iceberg, paimon, trino-connector, hudi, max_compute) still use
     // their built-in ExternalCatalog implementations until their ConnectorProviders are fully ready.
-    private static final Set<String> SPI_READY_TYPES = ImmutableSet.of("jdbc", "es");
+    private static final Set<String> SPI_READY_TYPES = ImmutableSet.of("jdbc", "es", "delta");
 
     /**
      * create the catalog instance from catalog log.
@@ -188,5 +188,4 @@ public class CatalogFactory {
         return catalog;
     }
 }
-
 

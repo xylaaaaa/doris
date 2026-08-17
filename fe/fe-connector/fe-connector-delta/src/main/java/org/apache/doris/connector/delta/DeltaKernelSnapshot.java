@@ -18,21 +18,29 @@
 package org.apache.doris.connector.delta;
 
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.FileStatus;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** A consistent Delta table snapshot and its active data files. */
 public class DeltaKernelSnapshot {
     private final String tablePath;
     private final long version;
     private final StructType schema;
-    private final List<FileStatus> activeFiles;
+    private final List<String> partitionColumnNames;
+    private final Map<String, String> tableProperties;
+    private final List<DeltaScanFile> activeFiles;
 
-    public DeltaKernelSnapshot(String tablePath, long version, StructType schema, List<FileStatus> activeFiles) {
+    public DeltaKernelSnapshot(String tablePath, long version, StructType schema,
+            List<String> partitionColumnNames, Map<String, String> tableProperties,
+            List<DeltaScanFile> activeFiles) {
         this.tablePath = tablePath;
         this.version = version;
         this.schema = schema;
+        this.partitionColumnNames = List.copyOf(partitionColumnNames);
+        this.tableProperties = Collections.unmodifiableMap(new LinkedHashMap<>(tableProperties));
         this.activeFiles = List.copyOf(activeFiles);
     }
 
@@ -48,7 +56,15 @@ public class DeltaKernelSnapshot {
         return schema;
     }
 
-    public List<FileStatus> getActiveFiles() {
+    public List<String> getPartitionColumnNames() {
+        return partitionColumnNames;
+    }
+
+    public Map<String, String> getTableProperties() {
+        return tableProperties;
+    }
+
+    public List<DeltaScanFile> getActiveFiles() {
         return activeFiles;
     }
 }

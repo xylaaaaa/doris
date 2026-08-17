@@ -1443,7 +1443,8 @@ Status FileScanner::_init_parquet_reader(FileMetaCache* file_meta_cache_ptr,
                 });
         init_status = static_cast<GenericReader*>(hive_reader.get())->init_reader(&pctx);
         _cur_reader = std::move(hive_reader);
-    } else if (range.table_format_params.table_format_type == "tvf") {
+    } else if (range.table_format_params.table_format_type == "tvf" ||
+               range.table_format_params.table_format_type == "delta") {
         if (!parquet_reader) {
             parquet_reader = ParquetReader::create_unique(
                     _profile, *_params, range, _state->batch_size(), &_state->timezone_obj(),

@@ -45,10 +45,33 @@ public class DeltaKernelSnapshotLoaderTest {
                 Paths.get(java.net.URI.create(snapshot.getTablePath())).toAbsolutePath().normalize()
                         .toString());
         Assertions.assertEquals(List.of("id", "name"), snapshot.getSchema().fieldNames());
+        Assertions.assertEquals(List.of(), snapshot.getPartitionColumnNames());
         Assertions.assertEquals(
                 List.of("part-00001.parquet", "part-00002.parquet"),
                 snapshot.getActiveFiles().stream()
                         .map(file -> Paths.get(java.net.URI.create(file.getPath())).getFileName().toString())
                         .collect(Collectors.toList()));
+
+        DeltaKernelSnapshot versionZero = loader.loadVersion(tablePath, 0);
+        Assertions.assertEquals(0, versionZero.getVersion());
+        Assertions.assertEquals(
+                List.of("part-00000.parquet", "part-00001.parquet"),
+                versionZero.getActiveFiles().stream()
+                        .map(file -> Paths.get(java.net.URI.create(file.getPath())).getFileName().toString())
+                        .collect(Collectors.toList()));
+    }
+
+    @Test
+    public void testRejectColumnMappingUntilPhysicalTransformIsSupported() throws Exception {
+        URL fixture = Objects.requireNonNull(
+                getClass().getClassLoader().getResource("delta/column_mapping_table"));
+        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
+                DefaultEngine.create(new Configuration()));
+
+        UnsupportedOperationException exception = Assertions.assertThrows(
+                UnsupportedOperationException.class,
+                () -> loader.loadLatest(Paths.get(fixture.toURI()).toUri().toString()));
+
+        Assertions.assertTrue(exception.getMessage().contains("column mapping"));
     }
 }
