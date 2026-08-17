@@ -122,6 +122,10 @@ public class UnityDeltaCatalogAdapterTest {
         Assertions.assertEquals("s3.us-west-2.amazonaws.com", aws.get("AWS_ENDPOINT"));
         Assertions.assertEquals("us-west-2", aws.get("AWS_REGION"));
         Assertions.assertFalse(aws.containsValue(TEST_TOKEN));
+        Assertions.assertThrows(IllegalArgumentException.class,
+                () -> UnityDeltaStorageProperties.toBackendProperties(
+                        "s3://delta-bucket/tables/events", response, Map.of(),
+                        DeltaCredentialOperation.READ_WRITE));
         Assertions.assertTrue(requestPaths.stream().anyMatch(path -> path.endsWith(
                 "/delta/v1/catalogs/main/schemas/default/tables/events/credentials")));
 
@@ -256,9 +260,12 @@ public class UnityDeltaCatalogAdapterTest {
             return;
         }
         if (path.endsWith("/tables/events/credentials")) {
+            String operation = exchange.getRequestURI().getRawQuery() != null
+                    && exchange.getRequestURI().getRawQuery().contains("READ_WRITE")
+                    ? "READ_WRITE" : "READ";
             respond(exchange, 200, "{\"storage-credentials\":[{"
                     + "\"prefix\":\"s3://delta-bucket/tables/events\","
-                    + "\"operation\":\"READ\",\"config\":{"
+                    + "\"operation\":\"" + operation + "\",\"config\":{"
                     + "\"s3.access-key-id\":\"temporary-ak\","
                     + "\"s3.secret-access-key\":\"temporary-sk\","
                     + "\"s3.session-token\":\"temporary-session\"},"

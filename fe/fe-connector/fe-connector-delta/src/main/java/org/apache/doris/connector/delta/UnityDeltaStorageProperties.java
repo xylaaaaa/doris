@@ -17,6 +17,7 @@
 
 package org.apache.doris.connector.delta;
 
+import io.unitycatalog.client.delta.model.DeltaCredentialOperation;
 import io.unitycatalog.client.delta.model.DeltaCredentialsResponse;
 import io.unitycatalog.client.delta.model.DeltaStorageCredential;
 import io.unitycatalog.client.model.AwsCredentials;
@@ -40,6 +41,12 @@ final class UnityDeltaStorageProperties {
 
     static Map<String, String> toBackendProperties(String location,
             DeltaCredentialsResponse response, Map<String, String> catalogProperties) {
+        return toBackendProperties(location, response, catalogProperties, null);
+    }
+
+    static Map<String, String> toBackendProperties(String location,
+            DeltaCredentialsResponse response, Map<String, String> catalogProperties,
+            DeltaCredentialOperation expectedOperation) {
         URI locationUri = URI.create(location);
         if ("file".equalsIgnoreCase(locationUri.getScheme())) {
             return Map.of();
@@ -47,6 +54,11 @@ final class UnityDeltaStorageProperties {
 
         DeltaStorageCredential credential = DeltaStorageCredentialUtil.selectForLocation(
                 location, response.getStorageCredentials());
+        if (expectedOperation != null && credential.getOperation() != expectedOperation) {
+            throw new IllegalArgumentException(
+                    "Unity Catalog returned a " + credential.getOperation()
+                            + " credential for a " + expectedOperation + " operation");
+        }
         if (credential.getExpirationTimeMs() != null
                 && credential.getExpirationTimeMs() <= System.currentTimeMillis()) {
             throw new IllegalArgumentException(

@@ -23,6 +23,7 @@ import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.unitycatalog.client.delta.model.DeltaCredentialOperation;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import io.unitycatalog.client.delta.model.DeltaTableMetadata;
 import io.unitycatalog.client.delta.model.DeltaTableType;
@@ -141,7 +142,7 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
         return UnityDeltaStorageProperties.toBackendProperties(
                 metadata.getLocation(), client.getReadCredentials(
                         catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName()),
-                catalogProperties);
+                catalogProperties, DeltaCredentialOperation.READ);
     }
 
     @Override
@@ -154,7 +155,7 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
         return UnityDeltaStorageProperties.toBackendProperties(
                 metadata.getLocation(), client.getWriteCredentials(
                         catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName()),
-                catalogProperties);
+                catalogProperties, DeltaCredentialOperation.READ_WRITE);
     }
 
     @Override
