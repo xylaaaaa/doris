@@ -58,6 +58,10 @@ under the License.
             <artifactId>delta-kernel-defaults</artifactId>
         </dependency>
         <dependency>
+            <groupId>io.delta</groupId>
+            <artifactId>delta-kernel-unitycatalog</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.unitycatalog</groupId>
             <artifactId>unitycatalog-client</artifactId>
         </dependency>

@@ -1379,6 +1379,11 @@ under the License.
                 <version>${delta-kernel.version}</version>
             </dependency>
             <dependency>
+                <groupId>io.delta</groupId>
+                <artifactId>delta-kernel-unitycatalog</artifactId>
+                <version>${delta-kernel.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>io.unitycatalog</groupId>
                 <artifactId>unitycatalog-client</artifactId>
                 <version>${unitycatalog.version}</version>

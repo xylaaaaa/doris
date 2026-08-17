@@ -19,7 +19,9 @@ package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.DorisConnectorException;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import io.unitycatalog.client.delta.model.DeltaTableMetadata;
 import org.apache.hadoop.conf.Configuration;
@@ -77,18 +79,28 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
         if (response.isEmpty()) {
             return Optional.empty();
         }
-        DeltaTableMetadata metadata = validatedMetadata(response.get(), databaseName, tableName);
-        DeltaKernelSnapshot snapshot = loadLatestSnapshot(
-                databaseName, tableName, metadata.getLocation());
+        DeltaLoadTableResponse loadResponse = response.get();
+        DeltaTableMetadata metadata = validatedMetadata(loadResponse, databaseName, tableName);
+        boolean catalogManaged = isCatalogManaged(loadResponse);
+        String tableId = metadata.getTableUuid() == null
+                ? null : metadata.getTableUuid().toString();
+        if (catalogManaged && tableId == null) {
+            throw new DorisConnectorException(
+                    "Catalog-managed Unity Delta table has no table UUID: "
+                            + catalogName + "." + databaseName + "." + tableName);
+        }
+        DeltaKernelSnapshot snapshot = loadInitialSnapshot(
+                databaseName, tableName, tableId, metadata.getLocation(), loadResponse,
+                catalogManaged);
         Long catalogVersion = response.get().getLatestTableVersion();
         if (catalogVersion != null && catalogVersion != snapshot.getVersion()) {
-            throw new UnsupportedOperationException(
+            throw new DorisConnectorException(
                     "Unity Catalog reports Delta version " + catalogVersion
-                            + " but the storage log exposes version " + snapshot.getVersion()
-                            + "; catalog-held log tails are not supported yet");
+                            + " but the resolved snapshot is version " + snapshot.getVersion()
+                            + "; refusing to plan an inconsistent table state");
         }
         return Optional.of(new DeltaTableHandle(databaseName, tableName,
-                metadata.getLocation(), snapshot.getVersion()));
+                metadata.getLocation(), snapshot.getVersion(), tableId, catalogManaged));
     }
 
     @Override
@@ -97,9 +109,18 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
         Configuration configuration = client.buildReadHadoopConfiguration(
                 catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName(),
                 metadata.getLocation(), baseConfiguration);
+        Engine engine = DefaultEngine.create(configuration);
+        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(engine);
         try {
-            return new DeltaKernelSnapshotLoader(DefaultEngine.create(configuration))
-                    .loadVersion(metadata.getLocation(), tableHandle.getSnapshotVersion());
+            if (tableHandle.isCatalogManaged()) {
+                Snapshot snapshot = client.loadCatalogManagedSnapshot(
+                        engine, tableHandle.getCatalogTableId(), metadata.getLocation(),
+                        catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName(),
+                        Optional.of(tableHandle.getSnapshotVersion()));
+                return loader.loadCatalogManagedSnapshot(snapshot);
+            }
+            return loader.loadVersion(
+                    metadata.getLocation(), tableHandle.getSnapshotVersion());
         } catch (IOException e) {
             throw new DorisConnectorException(
                     "Failed to load Unity Delta snapshot version "
@@ -127,13 +148,27 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
                 + schemaCount + " schema(s)";
     }
 
-    private DeltaKernelSnapshot loadLatestSnapshot(
-            String databaseName, String tableName, String location) {
+    private DeltaKernelSnapshot loadInitialSnapshot(String databaseName, String tableName,
+            String tableId, String location, DeltaLoadTableResponse response,
+            boolean catalogManaged) {
         Configuration configuration = client.buildReadHadoopConfiguration(
                 catalogName, databaseName, tableName, location, baseConfiguration);
+        Engine engine = DefaultEngine.create(configuration);
+        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(engine);
         try {
-            return new DeltaKernelSnapshotLoader(DefaultEngine.create(configuration))
-                    .loadLatest(location);
+            if (catalogManaged) {
+                Long latestVersion = response.getLatestTableVersion();
+                if (latestVersion == null) {
+                    throw new DorisConnectorException(
+                            "Catalog-managed Unity Delta response has no latest table version for '"
+                                    + catalogName + "." + databaseName + "." + tableName + "'");
+                }
+                Snapshot snapshot = client.loadCatalogManagedSnapshot(
+                        engine, tableId, location, catalogName, databaseName, tableName,
+                        Optional.of(latestVersion));
+                return loader.loadCatalogManagedSnapshot(snapshot);
+            }
+            return loader.loadLatest(location);
         } catch (IOException e) {
             throw new DorisConnectorException(
                     "Failed to load latest Unity Delta snapshot for '" + catalogName + "."
@@ -154,6 +189,14 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
                     "Unity Delta table location changed while planning '" + catalogName + "."
                             + tableHandle.getDatabaseName() + "." + tableHandle.getTableName() + "'");
         }
+        String currentTableId = metadata.getTableUuid() == null
+                ? null : metadata.getTableUuid().toString();
+        if (tableHandle.getCatalogTableId() != null
+                && !tableHandle.getCatalogTableId().equals(currentTableId)) {
+            throw new DorisConnectorException(
+                    "Unity Delta table identity changed while planning '" + catalogName + "."
+                            + tableHandle.getDatabaseName() + "." + tableHandle.getTableName() + "'");
+        }
         return metadata;
     }
 
@@ -171,14 +214,14 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
                     "Unity Delta load response has no absolute storage location for "
                             + databaseName + "." + tableName);
         }
-        String catalogManaged = metadata.getProperties().get(CATALOG_MANAGED_PROPERTY);
-        if ("supported".equalsIgnoreCase(catalogManaged)
-                || (response.getCommits() != null && !response.getCommits().isEmpty())) {
-            throw new UnsupportedOperationException(
-                    "Catalog-managed Unity Delta tables require the UC catalog log tail; "
-                            + "path-only snapshot loading is intentionally disabled");
-        }
         return metadata;
+    }
+
+    private static boolean isCatalogManaged(DeltaLoadTableResponse response) {
+        String catalogManaged = response.getMetadata().getProperties()
+                .get(CATALOG_MANAGED_PROPERTY);
+        return "supported".equalsIgnoreCase(catalogManaged)
+                || (response.getCommits() != null && !response.getCommits().isEmpty());
     }
 
     private static String requireNonBlank(String value, String name) {

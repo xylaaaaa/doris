@@ -30,9 +30,17 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
     private final String tableName;
     private final String tablePath;
     private final long snapshotVersion;
+    private final String catalogTableId;
+    private final boolean catalogManaged;
 
     public DeltaTableHandle(String databaseName, String tableName,
             String tablePath, long snapshotVersion) {
+        this(databaseName, tableName, tablePath, snapshotVersion, null, false);
+    }
+
+    public DeltaTableHandle(String databaseName, String tableName,
+            String tablePath, long snapshotVersion, String catalogTableId,
+            boolean catalogManaged) {
         this.databaseName = Objects.requireNonNull(databaseName, "databaseName");
         this.tableName = Objects.requireNonNull(tableName, "tableName");
         this.tablePath = Objects.requireNonNull(tablePath, "tablePath");
@@ -40,6 +48,12 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
             throw new IllegalArgumentException("Delta snapshot version must be non-negative");
         }
         this.snapshotVersion = snapshotVersion;
+        this.catalogTableId = catalogTableId;
+        this.catalogManaged = catalogManaged;
+        if (catalogManaged && catalogTableId == null) {
+            throw new IllegalArgumentException(
+                    "Catalog-managed Delta table handle requires a catalog table ID");
+        }
     }
 
     public String getDatabaseName() {
@@ -58,6 +72,14 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
         return snapshotVersion;
     }
 
+    public String getCatalogTableId() {
+        return catalogTableId;
+    }
+
+    public boolean isCatalogManaged() {
+        return catalogManaged;
+    }
+
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -68,19 +90,23 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
         }
         DeltaTableHandle that = (DeltaTableHandle) other;
         return snapshotVersion == that.snapshotVersion
+                && catalogManaged == that.catalogManaged
                 && databaseName.equals(that.databaseName)
                 && tableName.equals(that.tableName)
-                && tablePath.equals(that.tablePath);
+                && tablePath.equals(that.tablePath)
+                && Objects.equals(catalogTableId, that.catalogTableId);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(databaseName, tableName, tablePath, snapshotVersion);
+        return Objects.hash(databaseName, tableName, tablePath, snapshotVersion,
+                catalogTableId, catalogManaged);
     }
 
     @Override
     public String toString() {
         return "DeltaTableHandle{" + databaseName + "." + tableName
-                + ", path=" + tablePath + ", version=" + snapshotVersion + "}";
+                + ", path=" + tablePath + ", version=" + snapshotVersion
+                + ", catalogManaged=" + catalogManaged + "}";
     }
 }

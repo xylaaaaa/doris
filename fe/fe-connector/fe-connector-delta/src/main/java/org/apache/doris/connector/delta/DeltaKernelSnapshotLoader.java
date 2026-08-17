@@ -61,7 +61,7 @@ public class DeltaKernelSnapshotLoader {
 
     public DeltaKernelSnapshot load(String tablePath) throws IOException {
         Snapshot snapshot = Table.forPath(engine, tablePath).getLatestSnapshot(engine);
-        return load(snapshot);
+        return loadSnapshot(snapshot, false);
     }
 
     public DeltaKernelSnapshot loadLatest(String tablePath) throws IOException {
@@ -70,15 +70,20 @@ public class DeltaKernelSnapshotLoader {
 
     public DeltaKernelSnapshot load(String tablePath, long version) throws IOException {
         Snapshot snapshot = Table.forPath(engine, tablePath).getSnapshotAsOfVersion(engine, version);
-        return load(snapshot);
+        return loadSnapshot(snapshot, false);
     }
 
     public DeltaKernelSnapshot loadVersion(String tablePath, long version) throws IOException {
         return load(tablePath, version);
     }
 
-    private DeltaKernelSnapshot load(Snapshot snapshot) throws IOException {
-        validateSupportedTableFeatures(snapshot);
+    DeltaKernelSnapshot loadCatalogManagedSnapshot(Snapshot snapshot) throws IOException {
+        return loadSnapshot(snapshot, true);
+    }
+
+    private DeltaKernelSnapshot loadSnapshot(
+            Snapshot snapshot, boolean catalogManagedRead) throws IOException {
+        validateSupportedTableFeatures(snapshot, catalogManagedRead);
         Scan scan = snapshot.getScanBuilder().build();
         List<DeltaScanFile> activeFiles = new ArrayList<>();
         List<String> partitionColumns = snapshot.getPartitionColumnNames();
@@ -129,9 +134,10 @@ public class DeltaKernelSnapshotLoader {
         return orderedValues;
     }
 
-    private static void validateSupportedTableFeatures(Snapshot snapshot) {
+    private static void validateSupportedTableFeatures(
+            Snapshot snapshot, boolean catalogManagedRead) {
         Set<String> readerFeatures = ((SnapshotImpl) snapshot).getProtocol().getReaderFeatures();
-        if (readerFeatures.contains(CATALOG_MANAGED_FEATURE)) {
+        if (readerFeatures.contains(CATALOG_MANAGED_FEATURE) && !catalogManagedRead) {
             throw new UnsupportedOperationException(
                     "Catalog-managed Delta tables must be loaded through a catalog-aware adapter");
         }

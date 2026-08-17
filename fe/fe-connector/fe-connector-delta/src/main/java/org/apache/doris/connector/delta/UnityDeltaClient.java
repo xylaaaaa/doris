@@ -19,6 +19,11 @@ package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.DorisConnectorException;
 
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
@@ -39,6 +44,7 @@ import io.unitycatalog.client.model.TableType;
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs;
 import org.apache.hadoop.conf.Configuration;
 
+import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,6 +54,10 @@ import java.util.Optional;
 /** Thin wrapper around the official Unity Catalog Java client. */
 final class UnityDeltaClient {
     private static final int PAGE_SIZE = 1000;
+    private static final String APP_NAME = "Apache-Doris";
+    private static final String APP_VERSION = "native-delta";
+    private static final Map<String, String> APP_VERSIONS =
+            Map.of(APP_NAME, APP_VERSION);
 
     private final String workspaceUri;
     private final TokenProvider tokenProvider;
@@ -64,7 +74,7 @@ final class UnityDeltaClient {
         ApiClient apiClient = ApiClientBuilder.create()
                 .uri(normalizedUri)
                 .tokenProvider(tokenProvider)
-                .addAppVersion("Apache-Doris", "native-delta")
+                .addAppVersion(APP_NAME, APP_VERSION)
                 .build();
         return new UnityDeltaClient(normalizedUri, tokenProvider, apiClient);
     }
@@ -145,7 +155,7 @@ final class UnityDeltaClient {
                     .enableCredentialRenewal(true)
                     .enableCredentialScopedFs(true)
                     .hadoopConf(configuration)
-                    .addAppVersions(Map.of("Apache-Doris", "native-delta"))
+                    .addAppVersions(APP_VERSIONS)
                     .buildForTable(catalogName, schemaName, tableName,
                             UCCredentialHadoopConfs.TableOperation.READ, location);
             credentialProperties.forEach(configuration::set);
@@ -166,6 +176,20 @@ final class UnityDeltaClient {
             throw requestFailure(
                     "vend backend read credentials for Delta table '" + catalogName + "."
                             + schemaName + "." + tableName + "'", e);
+        }
+    }
+
+    Snapshot loadCatalogManagedSnapshot(Engine engine, String tableId, String tablePath,
+            String catalogName, String schemaName, String tableName,
+            Optional<Long> version) throws IOException {
+        UCTableIdentifier tableIdentifier =
+                new UCTableIdentifier(catalogName, schemaName, tableName);
+        try (UCDeltaTokenBasedRestClient catalogClient =
+                new UCDeltaTokenBasedRestClient(
+                        workspaceUri, tokenProvider, APP_VERSIONS)) {
+            return new UCCatalogManagedClient(catalogClient).loadSnapshot(
+                    engine, tableId, tablePath, tableIdentifier,
+                    version, Optional.empty());
         }
     }
 

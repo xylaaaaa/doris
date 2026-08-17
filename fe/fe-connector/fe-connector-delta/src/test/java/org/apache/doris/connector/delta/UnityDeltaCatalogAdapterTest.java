@@ -18,6 +18,7 @@
 package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.Connector;
+import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 import org.apache.doris.connector.spi.ConnectorContext;
 
@@ -34,8 +35,11 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,6 +52,8 @@ public class UnityDeltaCatalogAdapterTest {
     private HttpServer server;
     private String workspaceUri;
     private String tableLocation;
+    private String catalogManagedLocation;
+    private String catalogManagedTableId;
     private final List<String> requestPaths = new ArrayList<>();
 
     @BeforeEach
@@ -55,6 +61,10 @@ public class UnityDeltaCatalogAdapterTest {
         URL fixture = Objects.requireNonNull(
                 getClass().getClassLoader().getResource("delta/path_table"));
         tableLocation = Paths.get(fixture.toURI()).toUri().toString();
+        URL catalogManagedFixture = Objects.requireNonNull(
+                getClass().getClassLoader().getResource("delta/catalog_managed_table"));
+        catalogManagedLocation = Paths.get(catalogManagedFixture.toURI()).toUri().toString();
+        catalogManagedTableId = "c79de738-d13c-44a5-8e75-8435123d60c7";
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", this::handleRequest);
         server.start();
@@ -136,16 +146,42 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
-    public void testCatalogManagedMetadataFailsClosedBeforePathRead() {
+    public void testCatalogManagedSnapshotIncludesRatifiedLogTail() {
         UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
         UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
                 "main", client, new org.apache.hadoop.conf.Configuration(), Map.of());
 
-        UnsupportedOperationException exception = Assertions.assertThrows(
-                UnsupportedOperationException.class,
-                () -> adapter.getTableHandle("default", "catalog_managed"));
+        DeltaTableHandle handle = adapter.getTableHandle("default", "catalog_managed")
+                .orElseThrow();
+        DeltaKernelSnapshot snapshot = adapter.loadSnapshot(handle);
 
-        Assertions.assertTrue(exception.getMessage().contains("catalog log tail"));
+        Assertions.assertTrue(handle.isCatalogManaged());
+        Assertions.assertEquals("c79de738-d13c-44a5-8e75-8435123d60c7",
+                handle.getCatalogTableId());
+        Assertions.assertEquals(2, handle.getSnapshotVersion());
+        Assertions.assertEquals(2, snapshot.getVersion());
+        Assertions.assertEquals(
+                List.of("part-00001.parquet", "part-00002.parquet"),
+                snapshot.getActiveFiles().stream()
+                        .map(file -> Paths.get(URI.create(file.getPath()))
+                                .getFileName().toString())
+                        .sorted()
+                        .collect(java.util.stream.Collectors.toList()));
+    }
+
+    @Test
+    public void testRejectRecreatedUnityTableWhilePlanningPinnedHandle() {
+        UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
+        UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
+                "main", client, new org.apache.hadoop.conf.Configuration(), Map.of());
+        DeltaTableHandle handle = adapter.getTableHandle("default", "catalog_managed")
+                .orElseThrow();
+
+        catalogManagedTableId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+        DorisConnectorException exception = Assertions.assertThrows(
+                DorisConnectorException.class, () -> adapter.loadSnapshot(handle));
+        Assertions.assertTrue(exception.getMessage().contains("identity changed"));
     }
 
     @Test
@@ -194,8 +230,7 @@ public class UnityDeltaCatalogAdapterTest {
             return;
         }
         if (path.endsWith("/tables/catalog_managed")) {
-            respond(exchange, 200, loadTableResponse(
-                    Map.of("delta.feature.catalogManaged", "supported")));
+            respond(exchange, 200, catalogManagedLoadTableResponse());
             return;
         }
         if (path.endsWith("/tables/events/credentials")) {
@@ -225,6 +260,32 @@ public class UnityDeltaCatalogAdapterTest {
                 + "\"location\":\"" + tableLocation + "\","
                 + "\"partition-columns\":[],\"properties\":" + propertiesJson + ","
                 + "\"last-commit-version\":1},\"commits\":[],\"latest-table-version\":1}";
+    }
+
+    private String catalogManagedLoadTableResponse() throws IOException {
+        String firstCommit =
+                "00000000000000000001.11111111-1111-1111-1111-111111111111.json";
+        String secondCommit =
+                "00000000000000000002.22222222-2222-2222-2222-222222222222.json";
+        Path commitDirectory = Paths.get(URI.create(catalogManagedLocation))
+                .resolve("_delta_log/_staged_commits");
+        return "{\"metadata\":{\"etag\":\"catalog-managed-etag\","
+                + "\"table-type\":\"MANAGED\","
+                + "\"table-uuid\":\"" + catalogManagedTableId + "\","
+                + "\"location\":\"" + catalogManagedLocation + "\","
+                + "\"partition-columns\":[],\"properties\":{"
+                + "\"delta.feature.catalogManaged\":\"supported\"},"
+                + "\"last-commit-version\":0},\"commits\":["
+                + commitJson(1, firstCommit, Files.size(commitDirectory.resolve(firstCommit))) + ","
+                + commitJson(2, secondCommit, Files.size(commitDirectory.resolve(secondCommit)))
+                + "],\"latest-table-version\":2}";
+    }
+
+    private static String commitJson(long version, String fileName, long fileSize) {
+        return "{\"version\":" + version + ",\"timestamp\":"
+                + (1700000000000L + version) + ",\"file-name\":\"" + fileName + "\","
+                + "\"file-size\":" + fileSize + ",\"file-modification-timestamp\":"
+                + (1700000000000L + version) + "}";
     }
 
     private static DeltaCredentialsResponse credentials(
