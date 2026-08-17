@@ -88,6 +88,11 @@ public final class DeltaConnector implements Connector {
         }
     }
 
+    @Override
+    public boolean defaultTestConnection() {
+        return true;
+    }
+
     /** Returns the adapter for the scan planner and future catalog integrations. */
     public DeltaCatalogAdapter getCatalogAdapter() {
         return catalogAdapter;

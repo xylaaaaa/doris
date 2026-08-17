@@ -199,6 +199,30 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
+    public void testRejectIncompleteVendedCredentials() {
+        DeltaCredentialsResponse incompleteAws = credentials(
+                "s3://delta-bucket/tables/events",
+                new DeltaStorageCredentialConfig()
+                        .s3AccessKeyId("temporary-ak")
+                        .s3SecretAccessKey("temporary-sk"));
+        IllegalArgumentException awsException = Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> UnityDeltaStorageProperties.toBackendProperties(
+                        "s3://delta-bucket/tables/events", incompleteAws, Map.of()));
+        Assertions.assertTrue(awsException.getMessage().contains("session token"));
+
+        DeltaCredentialsResponse incompleteAzure = credentials(
+                "abfss://container@account.dfs.core.windows.net/tables/events",
+                new DeltaStorageCredentialConfig().azureSasToken(""));
+        IllegalArgumentException azureException = Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> UnityDeltaStorageProperties.toBackendProperties(
+                        "abfss://container@account.dfs.core.windows.net/tables/events",
+                        incompleteAzure, Map.of()));
+        Assertions.assertTrue(azureException.getMessage().contains("Azure SAS token"));
+    }
+
+    @Test
     public void testCatalogManagedSnapshotIncludesRatifiedLogTail() {
         UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
         UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(

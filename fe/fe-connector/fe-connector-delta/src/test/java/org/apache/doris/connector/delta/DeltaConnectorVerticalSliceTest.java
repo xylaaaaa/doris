@@ -76,6 +76,7 @@ public class DeltaConnectorVerticalSliceTest {
         provider.validateProperties(properties);
         Connector connector = provider.create(properties, connectorContext());
         Assertions.assertTrue(connector.testConnection(null).isSuccess());
+        Assertions.assertTrue(connector.defaultTestConnection());
         Assertions.assertNotNull(connector.getScanPlanProvider());
         ConnectorTableHandle handle = connector.getMetadata(null)
                 .getTableHandle(null, "default", "events").orElseThrow();

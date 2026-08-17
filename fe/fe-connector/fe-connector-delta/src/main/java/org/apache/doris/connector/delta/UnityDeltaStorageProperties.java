@@ -76,10 +76,15 @@ final class UnityDeltaStorageProperties {
                 throw new IllegalArgumentException(
                         "Azure Delta location does not contain a storage account host");
             }
+            String sasToken = temporary.getAzureUserDelegationSas().getSasToken();
+            if (sasToken == null || sasToken.trim().isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Unity Catalog returned an empty Azure SAS token for " + accountHost);
+            }
             Map<String, String> properties = new LinkedHashMap<>();
             properties.put("fs.azure.account.auth.type." + accountHost, "SAS");
             properties.put("fs.azure.sas.fixed.token." + accountHost,
-                    temporary.getAzureUserDelegationSas().getSasToken());
+                    sasToken);
             return properties;
         }
         throw new UnsupportedOperationException(
@@ -122,10 +127,21 @@ final class UnityDeltaStorageProperties {
         Map<String, String> properties = new LinkedHashMap<>();
         properties.put(S3_ENDPOINT, endpoint);
         properties.put(S3_REGION, region);
-        properties.put(S3_ACCESS_KEY, credentials.getAccessKeyId());
-        properties.put(S3_SECRET_KEY, credentials.getSecretAccessKey());
-        properties.put(S3_TOKEN, credentials.getSessionToken());
+        properties.put(S3_ACCESS_KEY, requireCredentialValue(
+                credentials.getAccessKeyId(), "access key"));
+        properties.put(S3_SECRET_KEY, requireCredentialValue(
+                credentials.getSecretAccessKey(), "secret key"));
+        properties.put(S3_TOKEN, requireCredentialValue(
+                credentials.getSessionToken(), "session token"));
         return properties;
+    }
+
+    private static String requireCredentialValue(String value, String credentialName) {
+        if (value == null || value.trim().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Unity Catalog returned an empty AWS " + credentialName);
+        }
+        return value;
     }
 
     private static String firstNonBlank(Map<String, String> properties, String... keys) {
