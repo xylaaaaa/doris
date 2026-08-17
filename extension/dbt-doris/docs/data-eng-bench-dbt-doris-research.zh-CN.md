@@ -1,6 +1,6 @@
 # data-eng-bench、dbt-doris Demo 与 Doris 后端可行性调研
 
-> 调研日期：2026-08-12；实施验证更新：2026-08-14、2026-08-17
+> 调研日期：2026-08-12；实施验证更新：2026-08-14、2026-08-17、2026-08-18
 >
 > data-eng-bench 基线：`master@53353547b9869d35d61b40fd6ee9397a7ac8ca80`
 >
@@ -21,10 +21,11 @@
    agent portability evaluation**。不能只替换连接串，也不能据此宣称 Doris 比
    DuckDB 或 Snowflake 更快。
 4. Fork 中已经新增一个带 Doris sidecar、fixture、dbt model/test 和确定性 verifier 的 Harbor
-   tracer task，两条执行路径均为 `reward=1`。它可以作为发布 Demo 的实现依据，但仍需决定
-   最终放在 adapter 仓库、Doris 文档还是独立 examples 仓库。
-5. fast-30 的 30 个参考解法均已在 Doris 完成；原 DuckDB oracle 为 862/869，补齐 FIFO
-   后端语义后的 Doris oracle 为 869/869。它证明的是 golden-solution 兼容性，不是 Agent 分数。
+   tracer task。Oracle 与一次真实 Codex trial 均为 `reward=1`，可以作为发布 Demo 的执行依据；
+   单次 Agent 成功仍不能代表 fast-30 或 103 题的 Agent 准确率。
+5. fast-30 的 30 个参考解法已在 30 个独立 Doris trial 中完成，确定性 verifier 为
+   869/869、0 skipped。原 DuckDB oracle 的历史结果是 862/869，差异集中在 FIFO 的显式
+   NULL 语义。这里证明的是 golden-solution 兼容性，不是 Agent 分数。
 6. 当前 dbt-doris 的“已完善能力”分为上游已合入、本地已提交但未上游、工作区未提交
    三层。Demo 和对外文档必须固定 adapter commit、dbt Core 与 Doris 版本，不能把
    三层能力合并宣传。
@@ -34,8 +35,9 @@
 | 事项 | 建议 | 原因 |
 | --- | --- | --- |
 | 正式发布 dbt-doris 五分钟 Demo | **基于已通过 tracer 收口** | 核心链路已有可执行证据，仍需确定产品入口和 CI |
-| 将一个 data-eng-bench 任务跑在 Doris | **已完成** | Harbor sidecar tracer 两条路径均为 `reward=1` |
-| fast-30 参考解法兼容性实验 | **已完成** | 30/30 graph、869/869 Doris oracle；下一步是正式 task variant 与 Agent trial |
+| 将一个 data-eng-bench 任务跑在 Doris | **已完成** | 本地 FE/BE 与 Harbor sidecar 两条路径均为 `reward=1` |
+| 真实 Coding Agent 跑 Doris tracer | **已完成单题 smoke** | Codex 0.144.0 + GPT-5.5，13/13 verifier，`reward=1` |
+| fast-30 参考解法兼容性实验 | **已完成** | 独立 trial 30/30、869/869；尚未完成 fast-30 Agent trial |
 | 直接移植全部 103 个任务 | **条件式推进** | 当前有版本、双工程、数据装载、隔离、方言和 verifier 六类系统性成本 |
 | 直接把 Doris 结果提交现有官方榜单 | **暂不做** | 榜单无 backend 维度且 task digest 会变化 |
 | 用本仓库比较 Doris 与 DuckDB 查询性能 | **不做** | harness 的测量对象和变量控制都不支持数据库性能结论 |
@@ -960,9 +962,9 @@ Braintrust 或 LangSmith，而不是让后者替代 Doris trial 生命周期。
 
 本次将上文 P2 从方案推进成了可执行证据：
 
-- Fork/分支：[`xylaaaaa/data-eng-bench@doris-demo`](https://github.com/xylaaaaa/data-eng-bench/tree/9c046d249ef2a4aec316c135a9d10193aa270226)；
-- 实测提交：[`9c046d2`](https://github.com/xylaaaaa/data-eng-bench/commit/9c046d249ef2a4aec316c135a9d10193aa270226)；
-- 新任务：[`tasks/dbt-daily-order-summary-doris`](https://github.com/xylaaaaa/data-eng-bench/tree/9c046d249ef2a4aec316c135a9d10193aa270226/tasks/dbt-daily-order-summary-doris)；
+- Fork/分支：[`xylaaaaa/data-eng-bench@doris-demo`](https://github.com/xylaaaaa/data-eng-bench/tree/4ba24e5c47ebe87ee1b0d788efbb47eb2724be49)；
+- 实测提交：[`4ba24e5`](https://github.com/xylaaaaa/data-eng-bench/commit/4ba24e5c47ebe87ee1b0d788efbb47eb2724be49)；
+- 新任务：[`tasks/dbt-daily-order-summary-doris`](https://github.com/xylaaaaa/data-eng-bench/tree/4ba24e5c47ebe87ee1b0d788efbb47eb2724be49/tasks/dbt-daily-order-summary-doris)；
 - 未修改原始 `dbt-daily-order-summary`，也未把新任务加入 canonical `dataset.toml`；
 - 未下载 488,910,848 字节的 Git LFS 数据库，改用 7 行确定性 fixture。
 
@@ -1014,50 +1016,58 @@ adapter 生成了 `DATE/BIGINT/DECIMAL` 列、Duplicate Key、按 `order_date` H
 
 这个结果证明了一个窄而重要的结论：目标 adapter、Doris Table materialization、跨 database
 source、metadata 查询、dbt data tests、重复物化和 Harbor sidecar 生命周期可以在该 tracer
-上协同工作。它尚未证明：Coding Agent 能独立解题、103 题兼容、当前 stable split FE/BE 部署、
-数据库性能或官方 leaderboard 可比性。后续 fast-30 实验扩大了 golden solution 的覆盖面，
-但仍未跨过 Coding Agent trial、正式 Doris task variant 和逐 trial 隔离三道门禁。
+上协同工作。2026-08-18 的真实 Codex smoke 又证明了一个 Agent 可以在同一 tracer 中独立建模并
+获得 `reward=1`。它仍未证明：fast-30 或 103 题的 Agent 准确率、当前 stable split FE/BE 部署、
+数据库性能或官方 leaderboard 可比性。
 
-## 14. 2026-08-17 fast-30 实验：30 个参考解法均在 Doris 完成
+## 14. 2026-08-18 fast-30 clean-room 与真实 Agent 验证
 
 ### 14.1 先说结论
 
 本次把 canonical [`configs/fast-30.txt`](https://github.com/Snowflake-Labs/data-eng-bench/blob/53353547b9869d35d61b40fd6ee9397a7ac8ca80/configs/fast-30.txt)
-中的 30 题逐题迁移到 Doris，结果如下：
+中的 30 题逐题迁移到独立 Doris trial，结果如下：
 
 | 口径 | 结果 | 能说明什么 |
 | --- | ---: | --- |
 | canonical solution model graph 在 Doris 完成 | 30/30 题 | adapter 和兼容层能执行 30 个参考解法的完整 dbt graph |
-| 使用原 DuckDB expected values | 862/869 cases，29/30 题 | 除 FIFO 外，原 verifier 与原 oracle 可直接通过 |
-| 使用完整 Doris FIFO oracle | 869/869 cases，30/30 题 | 按 Doris/Snowflake 的 NULL 语义，30 题业务断言全部通过 |
+| 历史顺序实验使用原 DuckDB expected values | 862/869 cases，29/30 题 | 除 FIFO 外，原 verifier 与原 oracle 可直接通过 |
+| clean-room 使用完整 Doris FIFO oracle | 869/869 cases，30/30 题，0 skipped | 按 Doris/Snowflake 的 NULL 语义，30 题业务断言全部通过 |
 
 这不是 Agent 准确率。运行的是 benchmark 自带参考解法，不是 Codex 临场解题；也没有把结果提交到
-官方 leaderboard。更准确的名称是“Doris 第三后端 golden-solution 兼容性实验”。逐题结果、
-兼容脚本、最小 dbt 工程和 FIFO oracle 保存在 fork 的
-[`985007b/experiments/doris-fast30`](https://github.com/xylaaaaa/data-eng-bench/tree/985007b0986d59a2b686d96197a34b5e48d7ee3f/experiments/doris-fast30)。
+官方 leaderboard。更准确的名称是“Doris 第三后端 golden-solution 兼容性实验”。可重复 runner、
+逐题 manifest、最小 dbt 工程、兼容脚本和 FIFO oracle 固定在 fork 提交
+[`1cc1d97`](https://github.com/xylaaaaa/data-eng-bench/commit/1cc1d97d3a41b02ab7ea80937f00f0dc0dd31d1c)。
 
 ### 14.2 固定环境与执行边界
 
 | 组件 | 实测版本或范围 |
 | --- | --- |
 | data-eng-bench 基线 | `53353547b9869d35d61b40fd6ee9397a7ac8ca80` |
+| Doris 实验 fork | `1cc1d97d3a41b02ab7ea80937f00f0dc0dd31d1c`，clean worktree |
 | Apache Doris | 4.0.3，单 FE/BE all-in-one sidecar |
 | dbt adapter | `dbt-for-apache-doris==1.1.0` |
 | dbt Core / Python | 1.12.2 / 3.12.13 |
-| 数据 | benchmark 的 `retail.duckdb`，LFS SHA-256 `bd2bb1b3...fc2ec2d` |
+| 实际运行 fixture | base image 内 `retail.duckdb`，491,008,000 bytes，SHA-256 `cddd207c...da5ba` |
+| 原始 LFS 对象 | 488,910,848 bytes，LFS SHA-256 `bd2bb1b3...fc2ec2d` |
 
-30 题顺序复用一个专用 Doris sidecar。每题只从 DuckDB fixture 装载实际依赖的 relation，必要时
-用最小 dbt project 限制 parse graph，再由运行时 profile、SQL rewrite 和 Doris-backed verifier
-shim 连接 Doris。canonical task、solution 和 verifier 文件均未修改。
+发布证据来自以下 clean-room 命令：
 
-事后依赖审计发现，cross-sell 首次运行有 4 张输入表继承自前序任务。为排除该状态泄漏，实验先
-删除 `main` 和 `analytics`，再显式装载全部 6 张输入表并创建目标 database；随后 4 个 dbt model
-和 18/18 canonical verifier 再次通过。这个补跑消除了已知的累计状态案例，但不能把其余顺序执行
-等同于 30 个独立 Harbor trial。
+```bash
+python3 experiments/doris-fast30/run.py \
+  --require-clean \
+  --output-dir /dev/shm/doris-fast30-release-20260818
+```
 
-这套做法适合发现兼容缺口，不是正式 Harbor backend：它没有每 trial 启动独立 Doris，也没有
-生成新的 canonical dataset digest。实验目录因此明确标为 research artifacts；可直接复现的产品
-Demo 仍是第 13 节的 `dbt-daily-order-summary-doris` Harbor task。
+Runner 为每题创建新的 bridge network、Doris container 和 writable runner container；只装载 manifest
+声明的 fixture 闭包，结束后删除两个 container 和 network。30 题没有复用 database 或前序模型状态。
+运行从 2026-08-17 21:21:00 UTC 到 22:23:38 UTC，共 1 小时 2 分 38 秒，结果是 30 passed、
+0 failed、869/869 verifier cases、0 skipped。`run.json` 还固定了 repository clean 状态、manifest
+SHA-256 `d669a3c...c8ca`、共享兼容层 SHA-256 `f07341a...3b54`、Doris image digest 和 fixture
+image digest。任务结束后没有残留实验 container。
+
+它仍不是正式 Harbor backend 或 canonical dataset revision：30 个 task 继续使用研究 runner 和
+兼容层，且 FIFO 使用明确标记的 Doris/Snowflake 语义 oracle。产品 Demo 仍是第 13 节的
+`dbt-daily-order-summary-doris` Harbor task。
 
 ### 14.3 覆盖到的能力
 
@@ -1107,15 +1117,45 @@ expected 文件还缺少 3 个 verifier key，会让对应测试提前返回；D
 [Snowflake `LEAST`](https://docs.snowflake.com/en/sql-reference/functions/least)、
 [DuckDB NULL 行为讨论](https://github.com/duckdb/duckdb/issues/14239)。
 
-### 14.5 下一道门禁
+### 14.5 一个真实 Codex trial 已通过
 
-fast-30 结果把“参考解法能否在 Doris 上成立”从假设推进到了实证，但发布前仍应按以下顺序收口：
+Golden solution 通过后，本次又对 Doris-native `dbt-daily-order-summary-doris` tracer 运行了一次
+真正的 Coding Agent。Harbor 在 Agent 阶段没有执行 `solution/solve.sh`，而是调用 Codex CLI；
+Agent 自己创建 `/app/dbt_project`、检查 adapter、运行 `dbt debug/run/test`、直接查询 Doris，
+并在第二次 `dbt run` 后确认结果稳定。随后才上传并执行 verifier。
 
-1. 把实验兼容层收敛成显式 `DB_TYPE=doris` task variant 和共享 verifier abstraction；
-2. 每 trial 使用独立 Doris sidecar/database，并记录 task digest、镜像 digest、日志和 artifact；
-3. 修复 FIFO 的显式 NULL 语义并重建各 backend oracle；
-4. 在同一 Doris revision 上跑 Codex `k>=3`，把 pass rate 与失败分类和 golden-solution 结果分开报告；
-5. 再扩到 103 题，不用 fast-30 的 30/30 外推全量兼容性。
+| 项目 | 真实 Agent smoke 结果 |
+| --- | --- |
+| Agent / model | Codex 0.144.0 / [GPT-5.5](https://developers.openai.com/api/docs/models/gpt-5.5)，reasoning `high` |
+| dbt / Doris | `dbt-for-apache-doris 1.1.0`、dbt Core 1.12.2、Doris 4.0.3 |
+| Agent execution | 3 分 57 秒；无 Agent 或 Harbor exception |
+| Token | input 719,655，其中 cached 632,320；output 8,795 |
+| Harbor 记录成本 | 1.016685 美元 |
+| Verifier | 13/13 passed，10.48 秒，`reward=1` |
+| 整个 Job | 5 分 11 秒，1 trial，mean 1.0 |
+
+这个 trial 还发现并修正了两个 tracer 自身的问题：Debian login shell 会覆盖 Docker `PATH`，使
+Agent 看到全局 dbt 1.10 而不是 `/opt/dbt-doris`；verifier 又曾强制要求题面没有规定的逻辑
+source 名 `orders`。最终任务通过 `/etc/profile.d` 固定 adapter 虚拟环境，并改为验证物理
+`DBT_BENCH_ORDERS_DEMO.ORDERS` 与 model lineage。修复后的 deterministic oracle 也重新得到
+13/13、`reward=1`。这两项 tracer 修复已提交到 fork 的
+[`4ba24e5`](https://github.com/xylaaaaa/data-eng-bench/commit/4ba24e5)。
+
+边界必须保留：该 smoke 使用本机临时 provider 配置、Docker bridge 代理和只读 Codex 安装挂载，
+这些凭据与宿主适配没有进入 fork；Agent job 的本地 task checksum 为 `83b37f3...bd0a`，随后正式
+任务的 post-fix oracle checksum 为 `6462c34...f188`。因此它证明的是“真实 Agent 路径可工作”，
+不是开箱即用的跨环境 Codex 配置，更不是 fast-30 pass rate。
+
+### 14.6 下一道门禁
+
+fast-30 结果已经把“参考解法能否在 Doris 上成立”从假设推进到实证，单题 Agent smoke 也已通过。
+后续仍应按以下顺序收口：
+
+1. 把研究兼容层收敛成显式 `DB_TYPE=doris` Harbor task variant 和共享 verifier abstraction；
+2. 修复 FIFO 的显式 NULL 语义并为各 backend 重建统一 oracle；
+3. 为 30 个 task 固定同一 Prompt、task digest、Agent、模型和预算，先跑 `k=1`，再跑 `k>=3`；
+4. 把 Agent pass rate、token、成本和失败分类与 golden-solution 30/30 分开报告；
+5. 再迁移剩余 73 题，不用 fast-30 的 30/30 外推全量兼容性。
 
 ## 15. 最终建议
 
