@@ -19,14 +19,18 @@ package org.apache.doris.connector.delta;
 
 import org.apache.doris.thrift.TFileRangeDesc;
 import org.apache.doris.thrift.TTableFormatFileDesc;
+import org.apache.doris.thrift.schema.external.TField;
+import org.apache.doris.thrift.schema.external.TSchema;
 
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.thrift.TDeserializer;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.net.URL;
 import java.nio.file.Paths;
+import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -65,17 +69,25 @@ public class DeltaKernelSnapshotLoaderTest {
     }
 
     @Test
-    public void testRejectColumnMappingUntilPhysicalTransformIsSupported() throws Exception {
+    public void testSerializesColumnMappingToPhysicalSchemaAliases() throws Exception {
         URL fixture = Objects.requireNonNull(
                 getClass().getClassLoader().getResource("delta/column_mapping_table"));
         DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
                 DefaultEngine.create(new Configuration()));
 
-        UnsupportedOperationException exception = Assertions.assertThrows(
-                UnsupportedOperationException.class,
-                () -> loader.loadLatest(Paths.get(fixture.toURI()).toUri().toString()));
+        DeltaKernelSnapshot snapshot = loader.loadLatest(Paths.get(fixture.toURI()).toUri().toString());
+        String encoded = DeltaSchemaInfo.serializeIfMapped(snapshot);
+        Assertions.assertNotNull(encoded);
 
-        Assertions.assertTrue(exception.getMessage().contains("column mapping"));
+        TSchema schema = new TSchema();
+        new TDeserializer().deserialize(schema, Base64.getDecoder().decode(encoded));
+        Assertions.assertEquals(snapshot.getVersion(), schema.getSchemaId());
+        TField field = schema.getRootField().getFields().get(0).getFieldPtr();
+        Assertions.assertEquals("id", field.getName());
+        Assertions.assertEquals(List.of("col-91e40a2f-1b63-42a0-a044-35764a3b259a"),
+                field.getNameMapping());
+        Assertions.assertTrue(field.isNameMappingIsAuthoritative());
+        Assertions.assertEquals(1, field.getId());
     }
 
     @Test

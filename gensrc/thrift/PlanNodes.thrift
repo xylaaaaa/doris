@@ -577,6 +577,9 @@ struct TFileScanRangeParams {
     // behavior during a BE-first rolling upgrade; version 1 enables file-wide ID projection and
     // logical initial-default materialization.
     34: optional i32 iceberg_scan_semantics_version
+    // Versioned external-file scan semantics negotiated by FE. This is separate from the
+    // Iceberg marker so non-Iceberg native connectors can use the same schema mapping path.
+    35: optional i32 external_scan_semantics_version
 }
 
 struct TFileRangeDesc {

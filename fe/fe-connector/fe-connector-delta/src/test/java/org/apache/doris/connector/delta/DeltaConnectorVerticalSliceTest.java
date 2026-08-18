@@ -30,6 +30,7 @@ import org.apache.doris.connector.spi.ConnectorContext;
 import org.apache.doris.connector.spi.ConnectorProvider;
 import org.apache.doris.thrift.TFileFormatType;
 import org.apache.doris.thrift.TFileRangeDesc;
+import org.apache.doris.thrift.TFileScanRangeParams;
 import org.apache.doris.thrift.TTableFormatFileDesc;
 
 import io.delta.kernel.defaults.engine.DefaultEngine;
@@ -167,6 +168,28 @@ public class DeltaConnectorVerticalSliceTest {
         List<ConnectorColumn> columns = metadata.getTableSchema(null, handle).getColumns();
         Assertions.assertEquals(List.of("p2", "p1"),
                 metadata.getWriteConfig(null, handle, columns).getPartitionColumns());
+    }
+
+    @Test
+    public void testColumnMappingSchemaIsPassedToBackendScanParams() throws Exception {
+        Map<String, String> properties = deltaProperties("delta/column_mapping_table");
+        DeltaPathCatalogAdapter adapter = pathAdapter(properties);
+        DeltaTableHandle handle = adapter.getTableHandle("default", "events").orElseThrow();
+        DeltaScanPlanProvider scanProvider = new DeltaScanPlanProvider(adapter, properties);
+
+        Map<String, String> scanProperties = scanProvider.getScanNodeProperties(
+                null, handle, List.of(), java.util.Optional.empty());
+        Assertions.assertNotNull(scanProperties.get(DeltaSchemaInfo.SERIALIZED_SCHEMA_PROPERTY));
+        Assertions.assertEquals("0", scanProperties.get(DeltaSchemaInfo.SCHEMA_VERSION_PROPERTY));
+
+        TFileScanRangeParams params = new TFileScanRangeParams();
+        scanProvider.populateScanLevelParams(params, scanProperties);
+        Assertions.assertEquals(1, params.getHistorySchemaInfoSize());
+        Assertions.assertEquals(0, params.getCurrentSchemaId());
+        Assertions.assertEquals(1, params.getExternalScanSemanticsVersion());
+        Assertions.assertEquals(List.of("col-91e40a2f-1b63-42a0-a044-35764a3b259a"),
+                params.getHistorySchemaInfo().get(0).getRootField().getFields().get(0)
+                        .getFieldPtr().getNameMapping());
     }
 
     @Test

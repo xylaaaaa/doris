@@ -758,9 +758,9 @@ Status FileScannerV2::_build_projected_columns(const format::TableReader& table_
             .range = &_current_range,
             .runtime_state = _state,
     };
-    // Field 34 is the rollout boundary for root and nested exact-name precedence.
+    // The scan-semantics marker is the rollout boundary for root and nested exact-name precedence.
     const bool prefer_exact_name_match =
-            !_params->__isset.history_schema_info || supports_iceberg_scan_semantics_v1(_params);
+            !_params->__isset.history_schema_info || supports_external_scan_semantics_v1(_params);
 
     for (size_t slot_idx = 0; slot_idx < _params->required_slots.size(); ++slot_idx) {
         const auto& slot_info = _params->required_slots[slot_idx];

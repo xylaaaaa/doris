@@ -41,11 +41,9 @@ import java.util.TreeSet;
 
 /** Loads a filesystem-managed Delta table snapshot through Delta Kernel. */
 public class DeltaKernelSnapshotLoader {
-    private static final String COLUMN_MAPPING_MODE = "delta.columnMapping.mode";
     private static final String CATALOG_MANAGED_FEATURE = "catalogManaged";
     private static final String PARQUET_PROVIDER = "parquet";
     private static final Set<String> UNSUPPORTED_DIRECT_PARQUET_READER_FEATURES = Set.of(
-            "columnMapping",
             "geospatial",
             "typeWidening",
             "typeWidening-preview",
@@ -164,11 +162,5 @@ public class DeltaKernelSnapshotLoader {
                             + "by the Doris native Parquet scan: " + unsupportedFeatures);
         }
 
-        String mappingMode = snapshot.getTableProperties().getOrDefault(COLUMN_MAPPING_MODE, "none");
-        if (!"none".equalsIgnoreCase(mappingMode)) {
-            throw new UnsupportedOperationException(
-                    "Delta column mapping mode is not supported by the initial Doris connector: "
-                            + mappingMode);
-        }
     }
 }

@@ -18,14 +18,21 @@
 package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.ConnectorSession;
+import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.api.handle.ConnectorColumnHandle;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 import org.apache.doris.connector.api.pushdown.ConnectorExpression;
 import org.apache.doris.connector.api.scan.ConnectorScanPlanProvider;
 import org.apache.doris.connector.api.scan.ConnectorScanRange;
 import org.apache.doris.connector.api.scan.ConnectorScanRangeType;
+import org.apache.doris.thrift.TFileScanRangeParams;
+import org.apache.doris.thrift.schema.external.TSchema;
+
+import org.apache.thrift.TDeserializer;
+import org.apache.thrift.TException;
 
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -83,7 +90,38 @@ public final class DeltaScanPlanProvider implements ConnectorScanPlanProvider {
                 .getBackendStorageProperties((DeltaTableHandle) handle).entrySet()) {
             scanProperties.put("location." + entry.getKey(), entry.getValue());
         }
+        String serializedSchema = DeltaSchemaInfo.serializeIfMapped(snapshot);
+        if (serializedSchema != null) {
+            scanProperties.put(DeltaSchemaInfo.SERIALIZED_SCHEMA_PROPERTY, serializedSchema);
+            scanProperties.put(DeltaSchemaInfo.SCHEMA_VERSION_PROPERTY,
+                    String.valueOf(snapshot.getVersion()));
+        }
         return scanProperties;
+    }
+
+    @Override
+    public void populateScanLevelParams(TFileScanRangeParams params,
+            Map<String, String> nodeProperties) {
+        String serializedSchema = nodeProperties.get(DeltaSchemaInfo.SERIALIZED_SCHEMA_PROPERTY);
+        if (serializedSchema == null) {
+            return;
+        }
+        String schemaVersion = nodeProperties.get(DeltaSchemaInfo.SCHEMA_VERSION_PROPERTY);
+        if (schemaVersion == null) {
+            throw new DorisConnectorException(
+                    "Delta mapped schema is missing its pinned snapshot version");
+        }
+        TSchema schema = new TSchema();
+        try {
+            new TDeserializer().deserialize(schema, Base64.getDecoder().decode(serializedSchema));
+            params.addToHistorySchemaInfo(schema);
+            params.setCurrentSchemaId(Long.parseLong(schemaVersion));
+            params.setExternalScanSemanticsVersion(
+                    DeltaSchemaInfo.EXTERNAL_SCAN_SEMANTICS_VERSION);
+        } catch (TException | IllegalArgumentException e) {
+            throw new DorisConnectorException(
+                    "Failed to deserialize Delta mapped schema for scan", e);
+        }
     }
 
     static boolean isBackendStorageProperty(String key) {

@@ -390,7 +390,7 @@ const schema::external::TField* find_external_root_field(const TFileScanRangePar
     if (!schema->__isset.root_field || !schema->root_field.__isset.fields) {
         return nullptr;
     }
-    if (!supports_iceberg_scan_semantics_v1(params)) {
+    if (!supports_external_scan_semantics_v1(params)) {
         // Old BEs used one ordered current-name/alias pass. Preserve that result for old-FE plans
         // until the explicit scan-semantics marker makes exact-name precedence cluster-wide.
         for (const auto& field_ptr : schema->root_field.fields) {
@@ -604,7 +604,8 @@ Status TableReader::annotate_projected_column(const TFileScanSlotInfo& slot_info
         return Status::OK();
     }
     context->schema_column = build_schema_column_from_external_field(*schema_field, column->type);
-    const bool use_current_semantics = supports_iceberg_scan_semantics_v1(context->scan_params);
+    const bool use_current_semantics =
+            supports_external_scan_semantics_v1(context->scan_params);
     if (!use_current_semantics) {
         // IDs and encoded defaults predate the result-changing semantics. Strip only the new
         // default channel so an old-FE plan keeps the same generic root/nested values on every BE.
@@ -734,7 +735,7 @@ Status TableReader::init(TableReadOptions&& options) {
             options.table_reader_owned_conjunct_count.value_or(options.conjuncts.size());
     DORIS_CHECK_LE(_table_reader_owned_conjunct_count, options.conjuncts.size());
     _projected_columns = std::move(options.projected_columns);
-    if (supports_iceberg_scan_semantics_v1(_scan_params)) {
+    if (supports_external_scan_semantics_v1(_scan_params)) {
         for (auto& projected_column : _projected_columns) {
             const auto* schema_field = find_external_root_field(_scan_params, projected_column);
             if (schema_field != nullptr) {
