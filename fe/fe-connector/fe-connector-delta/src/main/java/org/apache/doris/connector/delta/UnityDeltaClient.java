@@ -20,9 +20,12 @@ package org.apache.doris.connector.delta;
 import org.apache.doris.connector.api.DorisConnectorException;
 
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import io.delta.kernel.unitycatalog.UCCatalogManagedCommitter;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
+import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
@@ -248,9 +251,69 @@ final class UnityDeltaClient {
         try (UCDeltaTokenBasedRestClient catalogClient =
                 new UCDeltaTokenBasedRestClient(
                         workspaceUri, tokenProvider, APP_VERSIONS)) {
-            return new UCCatalogManagedClient(catalogClient).loadSnapshot(
+            return new NamedUCCatalogManagedClient(catalogClient, tableIdentifier).loadSnapshot(
                     engine, tableId, tablePath, tableIdentifier,
                     version, Optional.empty());
+        }
+    }
+
+    CatalogManagedSnapshot openCatalogManagedSnapshot(Engine engine, String tableId,
+            String tablePath, String catalogName, String schemaName, String tableName,
+            Optional<Long> version) throws IOException {
+        UCDeltaTokenBasedRestClient catalogClient = new UCDeltaTokenBasedRestClient(
+                workspaceUri, tokenProvider, APP_VERSIONS);
+        UCTableIdentifier tableIdentifier =
+                new UCTableIdentifier(catalogName, schemaName, tableName);
+        try {
+            Snapshot snapshot = new NamedUCCatalogManagedClient(
+                    catalogClient, tableIdentifier).loadSnapshot(
+                    engine, tableId, tablePath, tableIdentifier, version, Optional.empty());
+            return new CatalogManagedSnapshot(snapshot, catalogClient);
+        } catch (RuntimeException e) {
+            try {
+                catalogClient.close();
+            } catch (IOException closeFailure) {
+                e.addSuppressed(closeFailure);
+            }
+            throw e;
+        }
+    }
+
+    static final class CatalogManagedSnapshot implements AutoCloseable {
+        private final Snapshot snapshot;
+        private final UCDeltaTokenBasedRestClient catalogClient;
+
+        private CatalogManagedSnapshot(Snapshot snapshot,
+                UCDeltaTokenBasedRestClient catalogClient) {
+            this.snapshot = snapshot;
+            this.catalogClient = catalogClient;
+        }
+
+        Snapshot getSnapshot() {
+            return snapshot;
+        }
+
+        @Override
+        public void close() throws IOException {
+            catalogClient.close();
+        }
+    }
+
+    /** Keeps the table identifier on the committer used by name-based Unity REST updates. */
+    private static final class NamedUCCatalogManagedClient extends UCCatalogManagedClient {
+        private final UCTableIdentifier tableIdentifier;
+
+        private NamedUCCatalogManagedClient(
+                UCClient catalogClient, UCTableIdentifier tableIdentifier) {
+            super(catalogClient);
+            this.tableIdentifier = tableIdentifier;
+        }
+
+        @Override
+        protected Committer createUCCommitter(
+                UCClient catalogClient, String tableId, String tablePath) {
+            return new UCCatalogManagedCommitter(
+                    catalogClient, tableId, tablePath, tableIdentifier);
         }
     }
 

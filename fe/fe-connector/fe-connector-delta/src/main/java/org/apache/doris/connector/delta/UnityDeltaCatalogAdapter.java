@@ -166,18 +166,39 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
     @Override
     public ConnectorInsertHandle beginInsert(DeltaTableHandle tableHandle,
             String applicationId) {
-        if (!tableHandle.isExternalTable()) {
+        if (tableHandle.isExternalTable()) {
+            DeltaTableMetadata metadata = resolveExistingTable(tableHandle);
+            Configuration configuration = client.buildWriteHadoopConfiguration(
+                    catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName(),
+                    metadata.getLocation(), baseConfiguration);
+            return new DeltaKernelWriter(
+                    io.delta.kernel.defaults.engine.DefaultEngine.create(configuration))
+                    .beginInsert(tableHandle, applicationId);
+        }
+        if (!tableHandle.isCatalogManaged()) {
             throw new UnsupportedOperationException(
-                    "Unity managed Delta INSERT requires catalog commits; "
-                            + "only external Delta append is enabled");
+                    "Ordinary Unity managed Delta INSERT is not supported; "
+                            + "enable the catalogManaged table feature");
         }
         DeltaTableMetadata metadata = resolveExistingTable(tableHandle);
         Configuration configuration = client.buildWriteHadoopConfiguration(
                 catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName(),
                 metadata.getLocation(), baseConfiguration);
-        return new DeltaKernelWriter(
-                io.delta.kernel.defaults.engine.DefaultEngine.create(configuration))
-                .beginInsert(tableHandle, applicationId);
+        Engine engine = io.delta.kernel.defaults.engine.DefaultEngine.create(configuration);
+        UnityDeltaClient.CatalogManagedSnapshot openSnapshot;
+        try {
+            openSnapshot = client.openCatalogManagedSnapshot(
+                    engine, tableHandle.getCatalogTableId(), metadata.getLocation(),
+                    catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName(),
+                    Optional.empty());
+        } catch (IOException e) {
+            throw new DorisConnectorException(
+                    "Failed to open Unity catalog-managed Delta transaction for '" + catalogName
+                            + "." + tableHandle.getDatabaseName() + "."
+                            + tableHandle.getTableName() + "'", e);
+        }
+        return new DeltaKernelWriter(engine).beginCatalogManagedInsert(
+                tableHandle, openSnapshot.getSnapshot(), applicationId, openSnapshot);
     }
 
     @Override
@@ -240,6 +261,12 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
                 && !tableHandle.getCatalogTableId().equals(currentTableId)) {
             throw new DorisConnectorException(
                     "Unity Delta table identity changed while planning '" + catalogName + "."
+                            + tableHandle.getDatabaseName() + "." + tableHandle.getTableName() + "'");
+        }
+        if (tableHandle.isCatalogManaged() != isCatalogManaged(response)
+                || tableHandle.isExternalTable() != (metadata.getTableType() == DeltaTableType.EXTERNAL)) {
+            throw new DorisConnectorException(
+                    "Unity Delta table management mode changed while planning '" + catalogName + "."
                             + tableHandle.getDatabaseName() + "." + tableHandle.getTableName() + "'");
         }
         return metadata;

@@ -20,7 +20,9 @@ package org.apache.doris.connector.delta;
 import org.apache.doris.connector.api.Connector;
 import org.apache.doris.connector.api.ConnectorCapability;
 import org.apache.doris.connector.api.DorisConnectorException;
+import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
+import org.apache.doris.connector.api.write.ConnectorFileCommitInfo;
 import org.apache.doris.connector.spi.ConnectorContext;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -33,6 +35,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -42,6 +45,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +61,10 @@ public class UnityDeltaCatalogAdapterTest {
     private String catalogManagedTableId;
     private final List<String> requestPaths = new ArrayList<>();
     private final List<String> requestQueries = new ArrayList<>();
+    private final List<String> updateRequestPaths = new ArrayList<>();
+
+    @TempDir
+    private Path tempDirectory;
 
     @BeforeEach
     public void startServer() throws Exception {
@@ -251,7 +259,8 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
-    public void testManagedUnityInsertFailsClosedBeforeRequestingWriteCredentials() {
+    public void testCatalogManagedInsertUsesUnityCatalogCommitter() throws Exception {
+        catalogManagedLocation = copyCatalogManagedFixture().toUri().toString();
         UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
         UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
                 "main", client, new org.apache.hadoop.conf.Configuration(), Map.of(
@@ -260,10 +269,22 @@ public class UnityDeltaCatalogAdapterTest {
                 .orElseThrow();
 
         Assertions.assertFalse(handle.isExternalTable());
-        Assertions.assertThrows(UnsupportedOperationException.class,
-                () -> adapter.beginInsert(handle));
-        Assertions.assertTrue(requestQueries.stream().noneMatch(
-                query -> query != null && query.contains("operation=READ_WRITE")));
+        ConnectorInsertHandle insert = adapter.beginInsert(handle, "doris-catalog-managed-query");
+        Path dataFile = Paths.get(URI.create(catalogManagedLocation)).resolve("part-doris.parquet");
+        Files.write(dataFile, new byte[] {1, 2, 3, 4});
+
+        DeltaInsertHandle deltaInsert = (DeltaInsertHandle) insert;
+        deltaInsert.getWriter().finishInsert(deltaInsert, List.of(new ConnectorFileCommitInfo(
+                dataFile.toUri().toString(), 2, Files.size(dataFile),
+                Files.getLastModifiedTime(dataFile).toMillis(), Map.of())));
+
+        Assertions.assertTrue(updateRequestPaths.stream().anyMatch(
+                path -> path.endsWith("/tables/catalog_managed")));
+        try (java.util.stream.Stream<Path> stagedCommits = Files.list(
+                Paths.get(URI.create(catalogManagedLocation)).resolve("_delta_log/_staged_commits"))) {
+            Assertions.assertTrue(stagedCommits.anyMatch(
+                    path -> path.getFileName().toString().startsWith("00000000000000000003.")));
+        }
     }
 
     @Test
@@ -319,6 +340,9 @@ public class UnityDeltaCatalogAdapterTest {
         String path = exchange.getRequestURI().getPath();
         requestPaths.add(path);
         requestQueries.add(exchange.getRequestURI().getRawQuery());
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            updateRequestPaths.add(path);
+        }
         if (path.equals("/api/2.1/unity-catalog/schemas")) {
             respond(exchange, 200,
                     "{\"schemas\":[{\"name\":\"default\",\"catalog_name\":\"main\"}]}");
@@ -332,6 +356,12 @@ public class UnityDeltaCatalogAdapterTest {
                     + "{\"name\":\"raw\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
                     + "\"data_source_format\":\"PARQUET\"}]}");
+            return;
+        }
+        if (path.endsWith("/tables/catalog_managed")
+                && !"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            exchange.getRequestBody().readAllBytes();
+            respond(exchange, 200, catalogManagedLoadTableResponse());
             return;
         }
         if (path.endsWith("/tables/catalog_managed")) {
@@ -382,11 +412,36 @@ public class UnityDeltaCatalogAdapterTest {
                 + "\"table-uuid\":\"" + catalogManagedTableId + "\","
                 + "\"location\":\"" + catalogManagedLocation + "\","
                 + "\"partition-columns\":[],\"properties\":{"
-                + "\"delta.feature.catalogManaged\":\"supported\"},"
+                + "\"delta.feature.catalogManaged\":\"supported\","
+                + "\"delta.enableInCommitTimestamps\":\"true\"},"
                 + "\"last-commit-version\":0},\"commits\":["
                 + commitJson(1, firstCommit, Files.size(commitDirectory.resolve(firstCommit))) + ","
                 + commitJson(2, secondCommit, Files.size(commitDirectory.resolve(secondCommit)))
                 + "],\"latest-table-version\":2}";
+    }
+
+    private Path copyCatalogManagedFixture() throws Exception {
+        URL fixture = Objects.requireNonNull(
+                getClass().getClassLoader().getResource("delta/catalog_managed_table"));
+        Path source = Paths.get(fixture.toURI());
+        Path target = tempDirectory.resolve("catalog-managed-table");
+        try (java.util.stream.Stream<Path> paths = Files.walk(source)) {
+            paths.forEach(path -> {
+                try {
+                    Path relative = source.relativize(path);
+                    Path destination = target.resolve(relative);
+                    if (Files.isDirectory(path)) {
+                        Files.createDirectories(destination);
+                    } else {
+                        Files.createDirectories(destination.getParent());
+                        Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+        }
+        return target;
     }
 
     private static String commitJson(long version, String fileName, long fileSize) {

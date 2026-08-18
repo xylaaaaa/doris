@@ -22,17 +22,27 @@ import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /** FE-owned Delta transaction state for one blind append. */
 final class DeltaInsertHandle implements ConnectorInsertHandle {
 
     private final DeltaKernelWriter writer;
     private final Transaction transaction;
     private final Row transactionState;
+    private final AutoCloseable resource;
+    private final AtomicBoolean resourceClosed = new AtomicBoolean();
 
     DeltaInsertHandle(DeltaKernelWriter writer, Transaction transaction, Row transactionState) {
+        this(writer, transaction, transactionState, null);
+    }
+
+    DeltaInsertHandle(DeltaKernelWriter writer, Transaction transaction, Row transactionState,
+            AutoCloseable resource) {
         this.writer = writer;
         this.transaction = transaction;
         this.transactionState = transactionState;
+        this.resource = resource;
     }
 
     DeltaKernelWriter getWriter() {
@@ -45,5 +55,11 @@ final class DeltaInsertHandle implements ConnectorInsertHandle {
 
     Row getTransactionState() {
         return transactionState;
+    }
+
+    void closeResource() throws Exception {
+        if (resource != null && resourceClosed.compareAndSet(false, true)) {
+            resource.close();
+        }
     }
 }

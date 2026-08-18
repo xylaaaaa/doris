@@ -22,14 +22,17 @@ import org.apache.doris.connector.api.write.ConnectorFileCommitInfo;
 
 import io.delta.kernel.DataWriteContext;
 import io.delta.kernel.Operation;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.Table;
 import io.delta.kernel.Transaction;
+import io.delta.kernel.TransactionBuilder;
 import io.delta.kernel.TransactionCommitResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.util.PartitionUtils;
+import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.ByteType;
 import io.delta.kernel.types.DataType;
@@ -84,7 +87,7 @@ final class DeltaKernelWriter {
             throw new UnsupportedOperationException(
                     "Unity managed Delta writes require catalog commits");
         }
-        io.delta.kernel.TransactionBuilder transactionBuilder = Table.forPath(
+        TransactionBuilder transactionBuilder = Table.forPath(
                 engine, tableHandle.getTablePath())
                 .createTransactionBuilder(engine, ENGINE_INFO, Operation.WRITE)
                 .withMaxRetries(MAX_COMMIT_RETRIES);
@@ -92,48 +95,96 @@ final class DeltaKernelWriter {
             transactionBuilder.withTransactionId(engine, applicationId, 0L);
         }
         Transaction transaction = transactionBuilder.build(engine);
-        if (transaction.getReadTableVersion() != tableHandle.getSnapshotVersion()) {
+        return createInsertHandle(transaction, tableHandle.getSnapshotVersion(), null);
+    }
+
+    DeltaInsertHandle beginCatalogManagedInsert(DeltaTableHandle tableHandle, Snapshot snapshot,
+            String applicationId, AutoCloseable resource) {
+        try {
+            UpdateTableTransactionBuilder transactionBuilder = snapshot.buildUpdateTableTransaction(
+                    ENGINE_INFO, Operation.WRITE).withMaxRetries(MAX_COMMIT_RETRIES);
+            if (applicationId != null && !applicationId.isBlank()) {
+                transactionBuilder.withTransactionId(applicationId, 0L);
+            }
+            return createInsertHandle(transactionBuilder.build(engine),
+                    tableHandle.getSnapshotVersion(), resource);
+        } catch (RuntimeException e) {
+            closeResourceAfterBeginFailure(resource, e);
+            throw e;
+        }
+    }
+
+    private DeltaInsertHandle createInsertHandle(Transaction transaction, long expectedVersion,
+            AutoCloseable resource) {
+        if (transaction.getReadTableVersion() != expectedVersion) {
             throw new DorisConnectorException("Delta table changed while preparing INSERT: expected version "
-                    + tableHandle.getSnapshotVersion() + " but transaction read version "
+                    + expectedVersion + " but transaction read version "
                     + transaction.getReadTableVersion());
         }
         Row transactionState = transaction.getTransactionState(engine);
-        return new DeltaInsertHandle(this, transaction, transactionState);
+        return new DeltaInsertHandle(this, transaction, transactionState, resource);
     }
 
     void finishInsert(DeltaInsertHandle insertHandle,
             Collection<ConnectorFileCommitInfo> files) {
-        if (files.isEmpty()) {
+        try {
+            if (files.isEmpty()) {
+                return;
+            }
+            Transaction transaction = insertHandle.getTransaction();
+            List<String> partitionColumns = transaction.getPartitionColumns(engine);
+            StructType schema = transaction.getSchema(engine);
+            Set<String> expectedPartitionColumns = Set.copyOf(partitionColumns);
+            List<Row> appendActions = new ArrayList<>(files.size());
+            for (ConnectorFileCommitInfo file : files) {
+                if (!file.getPartitionValues().keySet().equals(expectedPartitionColumns)) {
+                    throw new DorisConnectorException(
+                            "Delta append file partition columns do not match table metadata: expected "
+                                    + partitionColumns + " but received "
+                                    + file.getPartitionValues().keySet());
+                }
+                Map<String, Literal> partitionValues = toPartitionLiterals(
+                        schema, partitionColumns, file);
+                DataWriteContext writeContext = Transaction.getWriteContext(
+                        engine, insertHandle.getTransactionState(), partitionValues);
+                DataFileStatus dataFile = new DataFileStatus(file.getFilePath(), file.getFileSize(),
+                        file.getModificationTime(), Optional.empty());
+                appendActions.addAll(generateAppendActions(
+                        insertHandle.getTransactionState(), writeContext, dataFile));
+            }
+
+            try (CloseableIterable<Row> actionIterable = CloseableIterable.inMemoryIterable(
+                    closeableIterator(appendActions.iterator()))) {
+                TransactionCommitResult result = transaction.commit(engine, actionIterable);
+                runPostCommitHooks(result);
+            } catch (IOException e) {
+                throw new DorisConnectorException("Failed to close Delta append resources", e);
+            }
+        } finally {
+            closeResourceAfterCommit(insertHandle);
+        }
+    }
+
+    void abortInsert(DeltaInsertHandle insertHandle) {
+        closeResourceAfterCommit(insertHandle);
+    }
+
+    private static void closeResourceAfterBeginFailure(AutoCloseable resource, RuntimeException failure) {
+        if (resource == null) {
             return;
         }
-        Transaction transaction = insertHandle.getTransaction();
-        List<String> partitionColumns = transaction.getPartitionColumns(engine);
-        StructType schema = transaction.getSchema(engine);
-        Set<String> expectedPartitionColumns = Set.copyOf(partitionColumns);
-        List<Row> appendActions = new ArrayList<>(files.size());
-        for (ConnectorFileCommitInfo file : files) {
-            if (!file.getPartitionValues().keySet().equals(expectedPartitionColumns)) {
-                throw new DorisConnectorException(
-                        "Delta append file partition columns do not match table metadata: expected "
-                                + partitionColumns + " but received "
-                                + file.getPartitionValues().keySet());
-            }
-            Map<String, Literal> partitionValues = toPartitionLiterals(
-                    schema, partitionColumns, file);
-            DataWriteContext writeContext = Transaction.getWriteContext(
-                    engine, insertHandle.getTransactionState(), partitionValues);
-            DataFileStatus dataFile = new DataFileStatus(file.getFilePath(), file.getFileSize(),
-                    file.getModificationTime(), Optional.empty());
-            appendActions.addAll(generateAppendActions(
-                    insertHandle.getTransactionState(), writeContext, dataFile));
+        try {
+            resource.close();
+        } catch (Exception closeFailure) {
+            failure.addSuppressed(closeFailure);
         }
+    }
 
-        try (CloseableIterable<Row> actionIterable = CloseableIterable.inMemoryIterable(
-                closeableIterator(appendActions.iterator()))) {
-            TransactionCommitResult result = transaction.commit(engine, actionIterable);
-            runPostCommitHooks(result);
-        } catch (IOException e) {
-            throw new DorisConnectorException("Failed to close Delta append resources", e);
+    private static void closeResourceAfterCommit(DeltaInsertHandle insertHandle) {
+        try {
+            insertHandle.closeResource();
+        } catch (Exception e) {
+            LOG.warn("Delta append finished, but Unity Catalog client cleanup failed", e);
         }
     }
 
@@ -228,7 +279,7 @@ final class DeltaKernelWriter {
         for (PostCommitHook hook : result.getPostCommitHooks()) {
             try {
                 hook.threadSafeInvoke(engine);
-            } catch (IOException e) {
+            } catch (IOException | RuntimeException e) {
                 LOG.warn("Delta version {} committed, but post-commit hook {} failed",
                         result.getVersion(), hook.getType(), e);
             }

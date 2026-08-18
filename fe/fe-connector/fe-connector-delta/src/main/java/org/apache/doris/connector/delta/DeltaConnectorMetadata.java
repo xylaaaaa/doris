@@ -40,9 +40,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /** Metadata facade backed by a Delta catalog adapter. */
 public final class DeltaConnectorMetadata implements ConnectorMetadata {
+
+    private static final String IN_COMMIT_TIMESTAMPS = "delta.enableInCommitTimestamps";
 
     private final DeltaCatalogAdapter catalogAdapter;
     private final Map<String, String> properties;
@@ -125,13 +128,26 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
             ConnectorTableHandle handle, List<ConnectorColumn> columns) {
         requireWriteEnabled();
         DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;
-        if (!deltaHandle.isExternalTable()) {
+        if (!deltaHandle.isExternalTable() && !deltaHandle.isCatalogManaged()) {
             throw new UnsupportedOperationException(
-                    "Unity managed Delta writes require catalog commits; "
-                            + "the native connector currently supports external append only");
+                    "Ordinary Unity managed Delta writes are not supported; "
+                            + "the table must enable the catalogManaged feature");
         }
         DeltaKernelSnapshot snapshot = catalogAdapter.loadSnapshot(deltaHandle);
-        if (snapshot.getMinWriterVersion() > 2 || !snapshot.getWriterFeatures().isEmpty()) {
+        if (deltaHandle.isCatalogManaged()) {
+            if (!Boolean.parseBoolean(snapshot.getTableProperties().get(IN_COMMIT_TIMESTAMPS))) {
+                throw new UnsupportedOperationException(
+                        "Catalog-managed Delta writes require " + IN_COMMIT_TIMESTAMPS + "=true");
+            }
+            if (snapshot.getMinWriterVersion() != 7
+                    || !snapshot.getWriterFeatures().equals(Set.of("catalogManaged"))) {
+                throw new UnsupportedOperationException(
+                        "The initial catalog-managed Delta writer supports only the catalogManaged "
+                                + "writer protocol; table requires minWriterVersion="
+                                + snapshot.getMinWriterVersion() + ", writerFeatures="
+                                + snapshot.getWriterFeatures());
+            }
+        } else if (snapshot.getMinWriterVersion() > 2 || !snapshot.getWriterFeatures().isEmpty()) {
             throw new UnsupportedOperationException(
                     "The initial native Delta writer supports only baseline writer protocol; "
                             + "table requires minWriterVersion=" + snapshot.getMinWriterVersion()
@@ -170,6 +186,13 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
         requireWriteEnabled();
         DeltaInsertHandle deltaHandle = (DeltaInsertHandle) handle;
         deltaHandle.getWriter().finishInsert(deltaHandle, files);
+    }
+
+    @Override
+    public void abortInsert(ConnectorSession session, ConnectorInsertHandle handle) {
+        if (handle instanceof DeltaInsertHandle) {
+            ((DeltaInsertHandle) handle).getWriter().abortInsert((DeltaInsertHandle) handle);
+        }
     }
 
     private void requireWriteEnabled() {
