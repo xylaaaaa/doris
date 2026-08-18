@@ -20,9 +20,9 @@
 3. Doris 可以成为第三个执行后端，但正确表述应是 **Doris backend compatibility /
    agent portability evaluation**。不能只替换连接串，也不能据此宣称 Doris 比
    DuckDB 或 Snowflake 更快。
-4. Fork 中已经新增一个带 Doris sidecar、fixture、dbt model/test 和确定性 verifier 的 Harbor
-   tracer task。Oracle 与一次真实 Codex trial 均为 `reward=1`，可以作为发布 Demo 的执行依据；
-   单次 Agent 成功仍不能代表 fast-30 或 103 题的 Agent 准确率。
+4. Fork 中已经新增两个带 Doris sidecar、fixture、dbt model/test 和确定性 verifier 的 Harbor
+   tracer task。两个任务的 Oracle 与真实 Codex trial 均为 `reward=1`，可以作为发布 Demo 的
+   执行依据；两次单题 Agent 成功仍不能代表 fast-30 或 103 题的 Agent 准确率。
 5. fast-30 的 30 个参考解法已在 30 个独立 Doris trial 中完成，确定性 verifier 为
    869/869、0 skipped。原 DuckDB oracle 的历史结果是 862/869，差异集中在 FIFO 的显式
    NULL 语义。这里证明的是 golden-solution 兼容性，不是 Agent 分数。
@@ -35,8 +35,8 @@
 | 事项 | 建议 | 原因 |
 | --- | --- | --- |
 | 正式发布 dbt-doris 五分钟 Demo | **基于已通过 tracer 收口** | 核心链路已有可执行证据，仍需确定产品入口和 CI |
-| 将一个 data-eng-bench 任务跑在 Doris | **已完成** | 本地 FE/BE 与 Harbor sidecar 两条路径均为 `reward=1` |
-| 真实 Coding Agent 跑 Doris tracer | **已完成单题 smoke** | Codex 0.144.0 + GPT-5.5，13/13 verifier，`reward=1` |
+| 将 data-eng-bench tracer 跑在 Doris | **已完成两题** | 每题都有独立 sidecar、Oracle 与 verifier 证据 |
+| 真实 Coding Agent 跑 Doris tracer | **已完成两题 smoke** | Codex 0.144.0 + GPT-5.5，13/13 与 9/9 verifier，均为 `reward=1` |
 | fast-30 参考解法兼容性实验 | **已完成** | 独立 trial 30/30、869/869；尚未完成 fast-30 Agent trial |
 | 直接移植全部 103 个任务 | **条件式推进** | 当前有版本、双工程、数据装载、隔离、方言和 verifier 六类系统性成本 |
 | 直接把 Doris 结果提交现有官方榜单 | **暂不做** | 榜单无 backend 维度且 task digest 会变化 |
@@ -842,8 +842,9 @@ backend 维度。新增 Doris connector、verifier 和任务工程会改变 dige
 
 退出条件：Doris golden solution 连续通过，重复 trial 不互相污染，再运行至少一个 Agent。
 
-截至 2026-08-14：golden solution 在本地集群和 Harbor sidecar 两条路径通过；多 attempt
-隔离验证和 Agent trial 尚未执行。
+截至 2026-08-18：`dbt-daily-order-summary-doris` 与
+`dbt-test-orders-filter-doris` 的 golden solution 和各一次真实 Codex trial 均通过；尚未执行
+同一任务的 `k>=3` 重复 Agent 试验。
 
 ### P3：五类代表任务
 
@@ -862,8 +863,9 @@ backend 维度。新增 Doris connector、verifier 和任务工程会改变 dige
 完成 backend abstraction 和公共 base project 适配后跑 `fast-30`。只有 golden solution 在全部
 已声明支持任务上通过，且装载、隔离与清理稳定，才评估 103 题全量移植。
 
-截至 2026-08-17：实验兼容层已完成 30/30 golden-solution graph 和 869/869 Doris oracle；
-正式 `DB_TYPE=doris` task variant、逐 trial 隔离和 Agent run 仍未完成。
+截至 2026-08-18：实验兼容层已完成 30/30 golden-solution graph、869/869 Doris oracle 和
+逐题独立 trial；其中两题已有正式 Doris-native Harbor variant 与真实 Agent smoke，其余 28 题
+尚未形成 Agent task variant，剩余 73 题也未迁移。
 
 ### P5：选择上游方向
 
@@ -958,11 +960,11 @@ Braintrust 或 LangSmith，而不是让后者替代 Doris trial 生命周期。
 [Phoenix](https://arize.com/docs/phoenix)、
 [W&B Weave](https://docs.wandb.ai/weave)。
 
-## 13. 2026-08-14 实施结果：Doris tracer 已跑通
+## 13. 2026-08-14 至 18 实施结果：首个 Doris tracer 已跑通
 
 本次将上文 P2 从方案推进成了可执行证据：
 
-- Fork/分支：[`xylaaaaa/data-eng-bench@doris-demo`](https://github.com/xylaaaaa/data-eng-bench/tree/4ba24e5c47ebe87ee1b0d788efbb47eb2724be49)；
+- Fork/分支：[`xylaaaaa/data-eng-bench@doris-demo`](https://github.com/xylaaaaa/data-eng-bench/tree/72ded4a)；
 - 实测提交：[`4ba24e5`](https://github.com/xylaaaaa/data-eng-bench/commit/4ba24e5c47ebe87ee1b0d788efbb47eb2724be49)；
 - 新任务：[`tasks/dbt-daily-order-summary-doris`](https://github.com/xylaaaaa/data-eng-bench/tree/4ba24e5c47ebe87ee1b0d788efbb47eb2724be49/tasks/dbt-daily-order-summary-doris)；
 - 未修改原始 `dbt-daily-order-summary`，也未把新任务加入 canonical `dataset.toml`；
@@ -982,7 +984,7 @@ Braintrust 或 LangSmith，而不是让后者替代 Doris trial 生命周期。
 
 ```text
 Harbor 创建 main + Doris sidecar
-  -> 等待 FE/BE Alive
+  -> 等待 FE/BE Alive 且确认 BE 存储盘可用
   -> init_doris.py 创建专用 demo source/target database 与 7 行 fixture
   -> oracle 创建完整 dbt project
   -> dbt debug / run / 4 个 data tests
@@ -1117,7 +1119,7 @@ expected 文件还缺少 3 个 verifier key，会让对应测试提前返回；D
 [Snowflake `LEAST`](https://docs.snowflake.com/en/sql-reference/functions/least)、
 [DuckDB NULL 行为讨论](https://github.com/duckdb/duckdb/issues/14239)。
 
-### 14.5 一个真实 Codex trial 已通过
+### 14.5 第一个真实 Codex trial 已通过
 
 Golden solution 通过后，本次又对 Doris-native `dbt-daily-order-summary-doris` tracer 运行了一次
 真正的 Coding Agent。Harbor 在 Agent 阶段没有执行 `solution/solve.sh`，而是调用 Codex CLI；
@@ -1146,9 +1148,43 @@ source 名 `orders`。最终任务通过 `/etc/profile.d` 固定 adapter 虚拟�
 任务的 post-fix oracle checksum 为 `6462c34...f188`。因此它证明的是“真实 Agent 路径可工作”，
 不是开箱即用的跨环境 Codex 配置，更不是 fast-30 pass rate。
 
-### 14.6 下一道门禁
+### 14.6 第二个 Doris-native filter task 也通过了真实 Agent
 
-fast-30 结果已经把“参考解法能否在 Doris 上成立”从假设推进到实证，单题 Agent smoke 也已通过。
+为避免把一次聚合题成功外推成通用兼容性，本次又把 fast-30 中的
+`dbt-test-orders-filter` 做成独立 Doris-native Harbor variant：
+[`dbt-test-orders-filter-doris`](https://github.com/xylaaaaa/data-eng-bench/tree/02d09b117bd92690340296d9ab37875dd44aabde/tasks/dbt-test-orders-filter-doris)。
+它要求 Agent 从七行 `ORDERS` 中过滤 test、sample 和 internal order，保留 NULL flag，构建
+Duplicate Key Doris 表，并声明六个 dbt data tests。Verifier 会删除目标表后重新执行
+`dbt run/test`，核对 manifest/source lineage、DDL、精确四行结果、金额舍入和幂等性。
+
+| 项目 | 第二个真实 Agent smoke 结果 |
+| --- | --- |
+| Agent / model | Codex 0.144.0 / GPT-5.5，reasoning `high` |
+| dbt / Doris | `dbt-for-apache-doris 1.1.0`、dbt Core 1.12.2、Doris 4.0.3 |
+| Agent execution | 7 分 17 秒；无 Agent 或 Harbor exception |
+| Token | input 781,695，其中 cached 691,840；output 5,780 |
+| Harbor 记录成本 | 0.968595 美元 |
+| Verifier | 9/9 passed，13.55 秒，`reward=1` |
+| 整个 Job | 8 分 31 秒，1 trial，mean 1.0 |
+
+Agent 自己创建 `/app/dbt_project`，首次 `dbt debug` 发现未加引号的 Jinja port 导致 YAML
+解析失败后自行修复；随后完成 `dbt run`、六个 `dbt test`、第二次物化，并直接检查
+manifest、`SHOW CREATE TABLE`、四行输出和七行 source。Agent 阶段未执行 golden
+`solution/solve.sh`，Verifier 在 Agent 退出后才由 Harbor 上传和执行。
+
+这个任务还暴露并修复了一个 Harness readiness 竞态：all-in-one Doris 可能先报告 BE
+`Alive=true`，稍后才注册存储盘；旧 healthcheck 会过早建表，失败后留下半初始化 database。
+当前两个 tracer 都等待 `SHOW BACKENDS` 同时满足存活和可用磁盘容量，并把初始化重试提高到
+30 次。修复与第二个任务已提交到 fork 的
+[`02d09b1`](https://github.com/xylaaaaa/data-eng-bench/commit/02d09b117bd92690340296d9ab37875dd44aabde)。
+
+边界不变：这是两个不同 Prompt、不同 task digest 的 `k=1` smoke，不能合并成 fast-30 的
+`2/30` pass rate，更不能推断 103 题准确率。第二次运行仍使用本机临时 provider、代理和
+只读 Codex 安装挂载；这些凭据和宿主适配没有进入 fork。
+
+### 14.7 下一道门禁
+
+fast-30 结果已经把“参考解法能否在 Doris 上成立”从假设推进到实证，两题 Agent smoke 也已通过。
 后续仍应按以下顺序收口：
 
 1. 把研究兼容层收敛成显式 `DB_TYPE=doris` Harbor task variant 和共享 verifier abstraction；
