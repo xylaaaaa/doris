@@ -116,13 +116,31 @@ fi
 
 # check python
 if [[ -z "${DORIS_BUILD_PYTHON_VERSION}" ]]; then
-    DORIS_BUILD_PYTHON_VERSION="python"
+    for candidate in python3.11 python3.10 python3.9 python3.8 python3; do
+        if command -v "${candidate}" &>/dev/null; then
+            DORIS_BUILD_PYTHON_VERSION="${candidate}"
+            break
+        fi
+    done
+fi
+
+if [[ -z "${DORIS_BUILD_PYTHON_VERSION}" ]]; then
+    echo "Error: Python 3.8 or newer is required, but no supported Python executable was found."
+    exit 1
 fi
 
 export PYTHON="${DORIS_BUILD_PYTHON_VERSION}"
 
-if ! ${PYTHON} --version; then
+if ! "${PYTHON}" --version; then
     echo "Error: ${PYTHON} is not found, maybe you should set DORIS_BUILD_PYTHON_VERSION."
+    exit 1
+fi
+
+PYTHON_VERSION="$("${PYTHON}" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+PYTHON_VERSION_MAJOR="${PYTHON_VERSION%%.*}"
+PYTHON_VERSION_MINOR="${PYTHON_VERSION##*.}"
+if [[ "${PYTHON_VERSION_MAJOR}" -lt 3 || ( "${PYTHON_VERSION_MAJOR}" -eq 3 && "${PYTHON_VERSION_MINOR}" -lt 8 ) ]]; then
+    echo "Error: Python 3.8 or newer is required, but ${PYTHON} is ${PYTHON_VERSION}."
     exit 1
 fi
 
