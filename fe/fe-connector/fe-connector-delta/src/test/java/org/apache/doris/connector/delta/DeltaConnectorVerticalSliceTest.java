@@ -48,6 +48,8 @@ import org.junit.jupiter.api.Test;
 
 import java.net.URI;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -135,6 +137,27 @@ public class DeltaConnectorVerticalSliceTest {
         TFileRangeDesc thriftRange = new TFileRangeDesc();
         ranges.get(0).populateRangeParams(new TTableFormatFileDesc(), thriftRange);
         Assertions.assertEquals(TFileFormatType.FORMAT_PARQUET, thriftRange.getFormatType());
+    }
+
+    @Test
+    public void testRepositoryDeltaFixturePlansRealParquetFiles() throws Exception {
+        Path tablePath = repositoryCustomerTablePath();
+        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
+                DefaultEngine.create(new Configuration()));
+
+        DeltaKernelSnapshot snapshot = loader.loadLatest(tablePath.toUri().toString());
+
+        Assertions.assertEquals(0, snapshot.getVersion());
+        Assertions.assertEquals(List.of("c_custkey", "c_name", "c_address", "c_nationkey",
+                "c_phone", "c_acctbal", "c_mktsegment", "c_comment"),
+                snapshot.getSchema().fields().stream()
+                        .map(io.delta.kernel.types.StructField::getName)
+                        .collect(Collectors.toList()));
+        Assertions.assertEquals(4, snapshot.getActiveFiles().size());
+        Assertions.assertTrue(snapshot.getActiveFiles().stream()
+                .allMatch(file -> file.getPath().endsWith(".parquet") && file.getSize() > 0));
+        Assertions.assertEquals(1_564_827L, snapshot.getActiveFiles().stream()
+                .mapToLong(DeltaScanFile::getSize).sum());
     }
 
     @Test
@@ -306,5 +329,20 @@ public class DeltaConnectorVerticalSliceTest {
                 return 1;
             }
         };
+    }
+
+    private static Path repositoryCustomerTablePath() {
+        Path relativePath = Paths.get("samples", "datalake", "deltalake_and_kudu", "data",
+                "customer");
+        Path current = Paths.get("").toAbsolutePath().normalize();
+        List<Path> candidates = List.of(current.resolve(relativePath),
+                current.getParent().resolve(relativePath),
+                current.getParent().getParent().resolve(relativePath),
+                current.getParent().getParent().getParent().resolve(relativePath));
+        return candidates.stream()
+                .filter(Files::isDirectory)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "Repository Delta fixture is not available: " + relativePath));
     }
 }
