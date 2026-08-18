@@ -43,9 +43,9 @@ import java.util.TreeSet;
 public class DeltaKernelSnapshotLoader {
     private static final String COLUMN_MAPPING_MODE = "delta.columnMapping.mode";
     private static final String CATALOG_MANAGED_FEATURE = "catalogManaged";
+    private static final String PARQUET_PROVIDER = "parquet";
     private static final Set<String> UNSUPPORTED_DIRECT_PARQUET_READER_FEATURES = Set.of(
             "columnMapping",
-            "deletionVectors",
             "geospatial",
             "typeWidening",
             "typeWidening-preview",
@@ -100,10 +100,6 @@ public class DeltaKernelSnapshotLoader {
                         // connector does not depend on Kernel's internal package.
                         DeletionVectorDescriptor deletionVector =
                                 InternalScanFileUtils.getDeletionVectorDescriptorFromRow(row);
-                        if (deletionVector != null) {
-                            throw new UnsupportedOperationException(
-                                    "Delta deletion vectors are not supported by the initial Doris connector");
-                        }
 
                         FileStatus file = InternalScanFileUtils.getAddFileStatus(row);
                         if (file.getSize() <= 0) {
@@ -112,7 +108,8 @@ public class DeltaKernelSnapshotLoader {
                         }
                         activeFiles.add(new DeltaScanFile(
                                 file.getPath(), file.getSize(), file.getModificationTime(),
-                                orderedPartitionValues(row, partitionColumns)));
+                                orderedPartitionValues(row, partitionColumns),
+                                toDeletionVector(deletionVector), snapshot.getPath()));
                     }
                 }
             }
@@ -137,8 +134,22 @@ public class DeltaKernelSnapshotLoader {
         return orderedValues;
     }
 
+    private static DeltaDeletionVector toDeletionVector(DeletionVectorDescriptor descriptor) {
+        if (descriptor == null) {
+            return null;
+        }
+        return new DeltaDeletionVector(descriptor.getStorageType(), descriptor.getPathOrInlineDv(),
+                descriptor.getOffset(), descriptor.getSizeInBytes(), descriptor.getCardinality());
+    }
+
     private static void validateSupportedTableFeatures(
             Snapshot snapshot, boolean catalogManagedRead) {
+        String formatProvider = ((SnapshotImpl) snapshot).getMetadata().getFormat().getProvider();
+        if (!PARQUET_PROVIDER.equalsIgnoreCase(formatProvider)) {
+            throw new UnsupportedOperationException(
+                    "Doris native Delta reader only supports Parquet data files, but table format "
+                            + "provider is '" + formatProvider + "'");
+        }
         Set<String> readerFeatures = ((SnapshotImpl) snapshot).getProtocol().getReaderFeatures();
         if (readerFeatures.contains(CATALOG_MANAGED_FEATURE) && !catalogManagedRead) {
             throw new UnsupportedOperationException(

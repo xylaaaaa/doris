@@ -461,6 +461,18 @@ struct TLanceFileDesc {
     3: optional i64 version
 }
 
+// Delta Lake deletion-vector descriptor attached to one data file.
+// storage_type follows the Delta protocol: i (inline), p (absolute path), or u (UUID path).
+struct TDeltaFileDesc {
+    1: optional string storage_type
+    2: optional string path_or_inline_dv
+    3: optional i64 offset
+    4: optional i64 size_in_bytes
+    5: optional i64 cardinality
+    // Required for UUID-backed DVs; harmless for inline/path descriptors.
+    6: optional string table_path
+}
+
 struct TTableFormatFileDesc {
     1: optional string table_format_type
     2: optional TIcebergFileDesc iceberg_params
@@ -478,6 +490,7 @@ struct TTableFormatFileDesc {
     // ES per-shard parameters (used when table_format_type == "es")
     // Contains: index, type, shard_id, host_port, es_hosts
     13: optional map<string, string> es_params
+    14: optional TDeltaFileDesc delta_params
 }
 
 // Deprecated, hive text talbe is a special format, not a serde type

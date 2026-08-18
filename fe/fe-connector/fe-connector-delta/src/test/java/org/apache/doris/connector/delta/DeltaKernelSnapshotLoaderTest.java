@@ -17,6 +17,9 @@
 
 package org.apache.doris.connector.delta;
 
+import org.apache.doris.thrift.TFileRangeDesc;
+import org.apache.doris.thrift.TTableFormatFileDesc;
+
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.Assertions;
@@ -102,5 +105,47 @@ public class DeltaKernelSnapshotLoaderTest {
                 () -> loader.loadLatest(Paths.get(fixture.toURI()).toUri().toString()));
 
         Assertions.assertTrue(exception.getMessage().contains("catalog-aware adapter"));
+    }
+
+    @Test
+    public void testCarriesDeltaDeletionVectorDescriptorToScanRange() throws Exception {
+        URL fixture = Objects.requireNonNull(
+                getClass().getClassLoader().getResource("delta/deletion_vector_table"));
+        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
+                DefaultEngine.create(new Configuration()));
+
+        DeltaKernelSnapshot snapshot = loader.loadLatest(Paths.get(fixture.toURI()).toUri().toString());
+
+        DeltaDeletionVector deletionVector = snapshot.getActiveFiles().get(0).getDeletionVector();
+        Assertions.assertNotNull(deletionVector);
+        Assertions.assertEquals("i", deletionVector.getStorageType());
+        Assertions.assertEquals("00000", deletionVector.getPathOrInlineDv());
+        Assertions.assertEquals(0, deletionVector.getSizeInBytes());
+        Assertions.assertEquals(0, deletionVector.getCardinality());
+
+        TTableFormatFileDesc formatDesc = new TTableFormatFileDesc();
+        TFileRangeDesc rangeDesc = new TFileRangeDesc();
+        new DeltaScanRange(snapshot.getActiveFiles().get(0)).populateRangeParams(
+                formatDesc, rangeDesc);
+        Assertions.assertTrue(formatDesc.isSetDeltaParams());
+        Assertions.assertEquals("i", formatDesc.getDeltaParams().getStorageType());
+        Assertions.assertEquals("00000", formatDesc.getDeltaParams().getPathOrInlineDv());
+        Assertions.assertEquals(0, formatDesc.getDeltaParams().getSizeInBytes());
+        Assertions.assertEquals(0, formatDesc.getDeltaParams().getCardinality());
+        Assertions.assertEquals(snapshot.getTablePath(), formatDesc.getDeltaParams().getTablePath());
+    }
+
+    @Test
+    public void testRejectsNonParquetDeltaProvider() throws Exception {
+        URL fixture = Objects.requireNonNull(getClass().getClassLoader()
+                .getResource("delta/non_parquet_table"));
+        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
+                DefaultEngine.create(new Configuration()));
+
+        UnsupportedOperationException exception = Assertions.assertThrows(
+                UnsupportedOperationException.class,
+                () -> loader.loadLatest(Paths.get(fixture.toURI()).toUri().toString()));
+
+        Assertions.assertTrue(exception.getMessage().contains("only supports Parquet"));
     }
 }

@@ -1390,6 +1390,12 @@ Status FileScanner::_init_parquet_reader(FileMetaCache* file_meta_cache_ptr,
     const TFileRangeDesc& range = _current_range;
     Status init_status = Status::OK();
 
+    if (range.__isset.table_format_params &&
+        range.table_format_params.table_format_type == "delta" &&
+        range.table_format_params.__isset.delta_params) {
+        return Status::NotSupported("Delta deletion vectors require enable_file_scanner_v2=true");
+    }
+
     phmap::flat_hash_map<int, std::vector<std::shared_ptr<ColumnPredicate>>> slot_id_to_predicates =
             _local_state
                     ? _local_state->cast<FileScanLocalState>()._slot_id_to_predicates

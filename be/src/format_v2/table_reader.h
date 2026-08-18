@@ -437,10 +437,7 @@ protected:
 
     // Parse deletion vector information from table format specific file description.
     virtual Status _parse_deletion_vector_file(const TTableFormatFileDesc& t_desc,
-                                               DeleteFileDesc* desc, bool* has_delete_file) {
-        *has_delete_file = false;
-        return Status::OK();
-    }
+                                               DeleteFileDesc* desc, bool* has_delete_file);
 
     // Advance to the next reader. This closes the current reader first and then opens the next
     // concrete reader. Subclasses should not duplicate this loop.

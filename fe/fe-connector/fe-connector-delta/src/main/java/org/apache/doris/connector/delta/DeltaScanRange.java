@@ -19,6 +19,7 @@ package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.scan.ConnectorScanRange;
 import org.apache.doris.connector.api.scan.ConnectorScanRangeType;
+import org.apache.doris.thrift.TDeltaFileDesc;
 import org.apache.doris.thrift.TFileFormatType;
 import org.apache.doris.thrift.TFileRangeDesc;
 import org.apache.doris.thrift.TTableFormatFileDesc;
@@ -37,12 +38,16 @@ public final class DeltaScanRange implements ConnectorScanRange {
     private final long size;
     private final long modificationTime;
     private final Map<String, String> partitionValues;
+    private final DeltaDeletionVector deletionVector;
+    private final String tablePath;
 
     public DeltaScanRange(DeltaScanFile file) {
         this.path = file.getPath();
         this.size = file.getSize();
         this.modificationTime = file.getModificationTime();
         this.partitionValues = file.getPartitionValues();
+        this.deletionVector = file.getDeletionVector();
+        this.tablePath = file.getTablePath();
     }
 
     @Override
@@ -99,6 +104,18 @@ public final class DeltaScanRange implements ConnectorScanRange {
     public void populateRangeParams(TTableFormatFileDesc formatDesc,
             TFileRangeDesc rangeDesc) {
         rangeDesc.setFormatType(TFileFormatType.FORMAT_PARQUET);
+        if (deletionVector != null) {
+            TDeltaFileDesc deltaFileDesc = new TDeltaFileDesc();
+            deltaFileDesc.setStorageType(deletionVector.getStorageType());
+            deltaFileDesc.setPathOrInlineDv(deletionVector.getPathOrInlineDv());
+            deletionVector.getOffset().ifPresent(value -> deltaFileDesc.setOffset(value));
+            deltaFileDesc.setSizeInBytes(deletionVector.getSizeInBytes());
+            deltaFileDesc.setCardinality(deletionVector.getCardinality());
+            if (tablePath != null) {
+                deltaFileDesc.setTablePath(tablePath);
+            }
+            formatDesc.setDeltaParams(deltaFileDesc);
+        }
         if (!partitionValues.isEmpty()) {
             List<String> keys = new ArrayList<>(partitionValues.size());
             List<String> values = new ArrayList<>(partitionValues.size());

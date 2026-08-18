@@ -31,9 +31,17 @@ public final class DeltaScanFile {
     private final long modificationTime;
     private final Map<String, String> partitionValues;
     private final Set<String> nullPartitionColumns;
+    private final DeltaDeletionVector deletionVector;
+    private final String tablePath;
 
     public DeltaScanFile(String path, long size, long modificationTime,
             Map<String, String> partitionValues) {
+        this(path, size, modificationTime, partitionValues, null, null);
+    }
+
+    public DeltaScanFile(String path, long size, long modificationTime,
+            Map<String, String> partitionValues, DeltaDeletionVector deletionVector,
+            String tablePath) {
         this.path = Objects.requireNonNull(path, "path");
         this.size = size;
         this.modificationTime = modificationTime;
@@ -43,6 +51,8 @@ public final class DeltaScanFile {
                 .filter(entry -> entry.getValue() == null)
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toSet()));
+        this.deletionVector = deletionVector;
+        this.tablePath = tablePath;
     }
 
     public String getPath() {
@@ -63,5 +73,13 @@ public final class DeltaScanFile {
 
     public Set<String> getNullPartitionColumns() {
         return nullPartitionColumns;
+    }
+
+    public DeltaDeletionVector getDeletionVector() {
+        return deletionVector;
+    }
+
+    public String getTablePath() {
+        return tablePath;
     }
 }
