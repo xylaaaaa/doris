@@ -313,6 +313,7 @@ public class UnityDeltaCatalogAdapterTest {
 
         for (String invalidUri : List.of(
                 "ftp://workspace.example.test",
+                "https:missing-host",
                 "https://workspace.example.test/api/2.1/unity-catalog",
                 "https://user@workspace.example.test",
                 "https://workspace.example.test?token=unsafe",

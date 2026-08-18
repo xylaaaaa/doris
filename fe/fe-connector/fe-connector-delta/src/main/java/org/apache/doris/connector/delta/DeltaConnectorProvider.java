@@ -110,6 +110,10 @@ public class DeltaConnectorProvider implements ConnectorProvider {
             throw new IllegalArgumentException(
                     "Unity property '" + property + "' must be an absolute HTTP or HTTPS URI");
         }
+        if (uri.getHost() == null || uri.getHost().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Unity property '" + property + "' must include a host");
+        }
         if (uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null) {
             throw new IllegalArgumentException(
                     "Unity property '" + property

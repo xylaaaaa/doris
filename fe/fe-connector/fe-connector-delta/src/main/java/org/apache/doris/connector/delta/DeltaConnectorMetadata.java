@@ -199,7 +199,7 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
         if (!supportsInsert()) {
             throw new UnsupportedOperationException(
                     "Native Delta INSERT requires delta.write.enabled=true and a supported "
-                            + "external table");
+                            + "external or catalog-managed table");
         }
     }
 

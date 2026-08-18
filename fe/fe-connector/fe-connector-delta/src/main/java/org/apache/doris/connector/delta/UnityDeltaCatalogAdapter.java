@@ -37,7 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** Unity Catalog adapter for Delta reads and external-table append writes. */
+/** Unity Catalog adapter for Delta reads and supported append writes. */
 final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
     private static final String CATALOG_MANAGED_PROPERTY = "delta.feature.catalogManaged";
 
@@ -166,7 +166,7 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
     @Override
     public ConnectorInsertHandle beginInsert(DeltaTableHandle tableHandle,
             String applicationId) {
-        if (tableHandle.isExternalTable()) {
+        if (!tableHandle.isCatalogManaged() && tableHandle.isExternalTable()) {
             DeltaTableMetadata metadata = resolveExistingTable(tableHandle);
             Configuration configuration = client.buildWriteHadoopConfiguration(
                     catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName(),
