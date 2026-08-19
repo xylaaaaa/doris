@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+demo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+mysql_bin=${MYSQL_BIN:-mysql}
+doris_host=${DORIS_HOST:-127.0.0.1}
+doris_port=${DORIS_PORT:-9030}
+doris_user=${DORIS_USER:-root}
+doris_password=${DORIS_PASSWORD:-}
+
+mysql_args=(-h "$doris_host" -P "$doris_port" -u "$doris_user")
+if [[ -n "$doris_password" ]]; then
+  mysql_args+=("-p$doris_password")
+fi
+
+actual=$(
+  "$mysql_bin" "${mysql_args[@]}" -Nse "
+    SELECT concat_ws('|', cast(order_date AS string), cast(order_count AS string), cast(total_revenue AS string))
+    FROM dbt_demo_daily.daily_order_summary
+    ORDER BY order_date
+  "
+)
+expected=$'2026-08-01|1|100.00\n2026-08-02|1|80.00\n2026-08-03|1|40.20'
+[[ "$actual" == "$expected" ]]
+
+table_ddl=$("$mysql_bin" "${mysql_args[@]}" -Nse "SHOW CREATE TABLE dbt_demo_daily.daily_order_summary" | cut -f2-)
+[[ "$table_ddl" == *'DUPLICATE KEY(`order_date`)'* ]]
+[[ "$table_ddl" == *'DISTRIBUTED BY HASH(`order_date`) BUCKETS 1'* ]]
+
+mv_rows=$("$mysql_bin" "${mysql_args[@]}" -Nse "SELECT concat_ws('|', cast(order_month AS string), cast(order_count AS string), cast(total_revenue AS string)) FROM dbt_demo_daily.monthly_order_summary_mv")
+[[ "$mv_rows" == '2026-08-01|3|220.20' ]]
+
+mv_status=$("$mysql_bin" "${mysql_args[@]}" -Nse "SELECT Status FROM tasks('type'='mv') WHERE MvDatabaseName = 'dbt_demo_daily' AND MvName = 'monthly_order_summary_mv' ORDER BY CreateTime DESC LIMIT 1")
+[[ "$mv_status" == 'SUCCESS' ]]
+
+printf '%s\n' 'Demo verification passed.'

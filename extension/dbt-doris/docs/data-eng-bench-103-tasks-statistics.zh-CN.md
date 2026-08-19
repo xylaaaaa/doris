@@ -58,6 +58,9 @@ Hook、dbt Docs/Catalog artifact 和 Grants 需要单独测试或后续 Demo。d
 这个 Demo 把一张订单明细表转换成每日经营指标。它最适合用户第一次接触
 dbt-for-apache-doris，因为输入、输出和验证结果都很直观。
 
+可直接运行的项目位于
+[`examples/data-eng-bench-daily-order-summary`](../examples/data-eng-bench-daily-order-summary/README.md)。
+
 **业务问题**
 
 运营人员不想逐条查看订单，而是希望每天看到有效订单数和收入。取消、退货和失败的订单
@@ -104,7 +107,8 @@ flowchart LR
 1. 在 <code>sources.yml</code> 中把 dbt source 指向 Doris 的 <code>ORDERS.ORDERS</code>。
 2. 第一次执行 Table model，dbt 编译 SQL，并让 adapter 在 Doris 中创建目标表。
 3. Doris 产品版再执行 MV model。首次运行创建异步物化视图并等待初始构建完成。
-4. 再次选择 MV 时，<code>refresh_trigger='manual'</code> 会提交刷新。
+4. 再次选择 MV 时，<code>refresh_trigger='manual'</code> 配合
+   <code>refresh_on_run=true</code> 会提交刷新。
 5. verifier 独立从源表计算订单数和收入，与 model 结果比较。
 
 ~~~bash
@@ -123,6 +127,7 @@ partition_by_init=[演示数据范围, MAXVALUE]
 distributed_by=[order_date]
 buckets=4
 properties={replication_num: 1}
+refresh_on_run=true
 ~~~
 
 **这个 Demo 需要证明什么**
@@ -131,7 +136,8 @@ properties={replication_num: 1}
 - Table model 的 DATE、BIGINT 和 DECIMAL 类型正确；
 - <code>SHOW CREATE TABLE</code> 中的 Key、分区、分桶和 properties 与 model config 一致；
 - 原任务要求的状态过滤、每日唯一性、订单数、收入和幂等性全部正确；
-- <code>mv_infos()</code> 能看到 MV，初始构建和手动刷新均成功。
+- <code>mv_infos()</code> 能看到 MV，初始构建和 <code>refresh_on_run=true</code>
+  触发的手动刷新均成功。
 
 ### 1.3 Demo 2：客户地域分析
 
