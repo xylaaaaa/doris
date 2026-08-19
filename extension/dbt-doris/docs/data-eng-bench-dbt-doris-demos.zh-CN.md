@@ -61,6 +61,10 @@ dbt-for-apache-doris，因为输入、输出和验证结果都很直观。
 可直接运行的项目位于
 [`examples/data-eng-bench-daily-order-summary`](../examples/data-eng-bench-daily-order-summary/README.md)。
 
+其余四个可直接运行的项目位于
+[`examples/data-eng-bench-doris-demos`](../examples/data-eng-bench-doris-demos/README.md)，
+分别覆盖地域聚合、Seed 合并、Incremental 和 Snapshot。
+
 **业务问题**
 
 运营人员不想逐条查看订单，而是希望每天看到有效订单数和收入。取消、退货和失败的订单
@@ -459,3 +463,19 @@ dbt run --select dim_customer_current
 | 可复现性 | 从空 Doris 实例按 README 命令运行一次即可复现，不依赖 SQL rewrite shim 或人工补表 |
 
 对外可以表述为“5 个 Doris 原生 dbt 场景已通过”；不能据此表述为全部 dbt Core 功能都已兼容。
+
+### 1.9 本地端到端结果
+
+2026-08-19 在本地单 FE/单 BE Doris 集群上，用当前 checkout 的 `dbt-doris`、dbt Core
+1.12.2 和 `DORIS_PORT=19030` 从仓库中的四个脚本目录重新执行，结果如下：
+
+| Demo | 执行内容 | 结果 |
+| --- | --- | --- |
+| 客户地域 | 2 个 View、1 个 Table、2 次 `dbt build`、2 个 Data Test | 通过；CA=2 客户/2 订单/145.00，NY=1/1/50.00 |
+| 广告合并 | 3 个 Seed、3 个 staging View、1 个 union Table、`dbt_utils` 唯一性测试、2 次 build | 通过；去重后 6 行 |
+| 迟到订单 | 版本历史 Table、Incremental `merge`、5 个下游 Table、2 个内置 Data Test、源数据更新后二次 build | 通过；4 个唯一订单，订单 101 更新为 125.00，8 月 1 日收入 245.00 |
+| 客户 Snapshot | staging View、Snapshot 首轮、当前维表、3 个 Data Test；修改客户 1 并删除客户 2 后再次 snapshot | 通过；3 条历史记录，客户 1 一条关闭旧版本和一条当前版本，客户 2 无当前版本 |
+
+每个脚本都在开始时重建自己的专用 fixture database，`verify.sh` 再直接查询 Doris
+结果表。广告 Seed 的空表头行由 staging 的 `ad_date is not null` 过滤；这条过滤也保留在
+示例中，便于后续把 seed 行为单独纳入回归测试。
