@@ -118,6 +118,20 @@ table.doris-process-table tbody tr:nth-child(even) { background: #f8fafc; }
 .doris-step-status.running { color: #b45309; }
 .doris-step-status.success { color: #16803c; }
 .doris-step-status.failure { color: #c62828; }
+.doris-code { margin: 8px 0 16px; max-width: 920px; }
+.doris-code-title { font-size: 14px; font-weight: 650; margin: 0 0 6px; color: #18212f; }
+.doris-code pre {
+  max-height: 440px;
+  overflow: auto;
+  white-space: pre;
+  border: 1px solid #d9dee5;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #18212f;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
 details.doris-log { margin: 4px 0 16px; color: #475569; }
 details.doris-log summary { cursor: pointer; font-size: 12px; user-select: none; }
 details.doris-log pre {
@@ -218,6 +232,71 @@ class DemoRunner:
             '<summary>查看完整运行日志</summary>'
             f'<pre>{html.escape(clean_log(output))}</pre></details>'
         )
+
+    @staticmethod
+    def show_file(title, path):
+        path = Path(path)
+        display(
+            HTML(
+                '<div class="doris-code">'
+                f'<div class="doris-code-title">{html.escape(title)} '
+                f'<span class="doris-result-count">{html.escape(path.name)}</span></div>'
+                f'<pre>{html.escape(path.read_text())}</pre></div>'
+            )
+        )
+
+    def _run_step(self, title, command, cwd=None):
+        handle = display(
+            self._status("running", f"正在执行：{title}", ["命令运行中"]),
+            display_id=True,
+        )
+        started = time.perf_counter()
+        result = self._run(command, cwd=cwd)
+        elapsed = time.perf_counter() - started
+        output = clean_log(result.stdout)
+        summaries = DBT_SUMMARY.findall(output)
+
+        if result.returncode != 0:
+            handle.update(
+                self._status(
+                    "failure",
+                    f"执行失败：{title}",
+                    [f"{elapsed:.1f} 秒", f"exit {result.returncode}"],
+                )
+            )
+            if output:
+                display(self._log_details(result.stdout, opened=True))
+            raise RuntimeError(f"{title} 执行失败。")
+
+        chips = [f"{elapsed:.1f} 秒"]
+        if summaries:
+            passed = sum(int(summary[0]) for summary in summaries)
+            chips.extend([f"{passed} 个成功节点", "dbt 通过"])
+        else:
+            chips.append("执行成功")
+        handle.update(self._status("success", f"执行通过：{title}", chips))
+        if output:
+            display(self._log_details(result.stdout))
+
+    def run_sql_file(self, title, path):
+        path = Path(path)
+        self._run_step(title, self._mysql_command(path.read_text()), cwd=path.parent)
+
+    def run_dbt(self, title, project_dir, *arguments):
+        project_dir = Path(project_dir)
+        command = [
+            self.dbt_bin,
+            *arguments,
+            "--project-dir",
+            str(project_dir),
+            "--profiles-dir",
+            str(project_dir),
+        ]
+        self._run_step(title, command, cwd=project_dir)
+
+    def run_script(self, title, path):
+        path = Path(path)
+        self._run_step(title, [str(path)], cwd=path.parent.parent)
 
     @staticmethod
     def _process_table(steps, statuses):
