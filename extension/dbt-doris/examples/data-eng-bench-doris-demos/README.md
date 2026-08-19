@@ -30,3 +30,14 @@ cd extension/dbt-doris/examples/data-eng-bench-doris-demos
 
 四个 demo 的 `run.sh` 都会重建自己名字空间中的 fixture、执行 dbt，并在最后调用
 `verify.sh` 检查 Doris 结果，因此可以按任意顺序独立执行。
+
+## Jupyter Notebook
+
+[`dbt-for-apache-doris-data-eng-bench-demos.ipynb`](dbt-for-apache-doris-data-eng-bench-demos.ipynb)
+把每日订单 Demo 和本目录中的四个 Demo 组织成 5 个可依次执行的单元格。启动方式：
+
+```bash
+jupyter lab extension/dbt-doris/examples/data-eng-bench-doris-demos/dbt-for-apache-doris-data-eng-bench-demos.ipynb
+```
+
+打开后先执行环境检查，再按顺序执行 5 个 Demo；也可以直接使用 Jupyter 的 **Run All**。

@@ -3,6 +3,9 @@
 > 数据源：[Snowflake-Labs/data-eng-bench@53353547](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80)。
 > 本文只保留 5 个发布 Demo，说明它们的输入、dbt model、执行命令、Doris 对象和验收方式。
 
+希望按顺序执行全部 Demo，可以直接打开
+[`dbt-for-apache-doris-data-eng-bench-demos.ipynb`](../examples/data-eng-bench-doris-demos/dbt-for-apache-doris-data-eng-bench-demos.ipynb)。
+
 本文聚焦 dbt-for-apache-doris 发布真正需要的三件事：
 
 1. 先把 5 个代表场景做成用户可以独立运行的 Doris Demo；
@@ -76,7 +79,7 @@ dbt-for-apache-doris，因为输入、输出和验证结果都很直观。
 | --- | --- | --- |
 | 上游任务的 <code>ORDERS.ORDERS</code> | 任务中的逻辑源表 | <code>ORDERED_AT</code>、<code>GRAND_TOTAL</code>、<code>STATUS</code> |
 | <code>dbt_demo_daily_source.orders</code> | 本 Demo 的 Doris 源表 | 与上游逻辑源表相同的最小字段 |
-| <code>daily_analytics.daily_order_summary</code> | dbt Table model | <code>order_date</code>、<code>order_count</code>、<code>total_revenue</code> |
+| <code>dbt_demo_daily.daily_order_summary</code> | dbt Table model | <code>order_date</code>、<code>order_count</code>、<code>total_revenue</code> |
 | <code>monthly_order_summary_mv</code> | Doris 产品版新增的 Async MV model | 基于每日结果继续按月汇总；不属于上游原始答案 |
 
 一个最小数据示意：
