@@ -7,6 +7,5 @@ data_eng_bench_daily_order_summary:
       port: "{{ env_var('DORIS_PORT', '9030') | int }}"
       username: "{{ env_var('DORIS_USER', 'root') }}"
       password: "{{ env_var('DORIS_PASSWORD', '') }}"
-      database: "{{ env_var('DORIS_DEMO_TARGET_DATABASE', 'dbt_demo_daily') }}"
       schema: "{{ env_var('DORIS_DEMO_TARGET_DATABASE', 'dbt_demo_daily') }}"
       threads: 2

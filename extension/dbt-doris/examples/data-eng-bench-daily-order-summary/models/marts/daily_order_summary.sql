@@ -2,6 +2,12 @@
   config(
     materialized='table',
     duplicate_key=['order_date'],
+    partition_by=['order_date'],
+    partition_type='RANGE',
+    partition_by_init=[
+      "PARTITION p202608 VALUES LESS THAN ('2026-09-01')",
+      "PARTITION pmax VALUES LESS THAN ('9999-12-31')"
+    ],
     distributed_by=['order_date'],
     buckets=1,
     properties={'replication_num': '1'}

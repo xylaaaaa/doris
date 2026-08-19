@@ -17,6 +17,7 @@ fi
 "$mysql_bin" "${mysql_args[@]}" < "$demo_dir/scripts/setup.sql"
 "$dbt_bin" debug --project-dir "$demo_dir" --profiles-dir "$demo_dir"
 "$dbt_bin" build --select daily_order_summary --project-dir "$demo_dir" --profiles-dir "$demo_dir"
+"$dbt_bin" build --select daily_order_summary --project-dir "$demo_dir" --profiles-dir "$demo_dir"
 "$dbt_bin" run --select monthly_order_summary_mv --project-dir "$demo_dir" --profiles-dir "$demo_dir"
 "$dbt_bin" run --select monthly_order_summary_mv --project-dir "$demo_dir" --profiles-dir "$demo_dir"
 "$demo_dir/scripts/verify.sh"

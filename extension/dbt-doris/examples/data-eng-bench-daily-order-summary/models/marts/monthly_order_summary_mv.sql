@@ -2,9 +2,13 @@
   config(
     materialized='materialized_view',
     build_mode='immediate',
+    refresh_method='auto',
     refresh_trigger='manual',
     refresh_on_run=true,
-    wait_for_refresh=true
+    duplicate_key=['order_month'],
+    distributed_by=['order_month'],
+    buckets=1,
+    properties={'replication_num': '1'}
   )
 }}
 
