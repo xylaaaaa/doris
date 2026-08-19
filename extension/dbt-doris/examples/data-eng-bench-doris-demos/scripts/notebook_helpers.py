@@ -16,6 +16,53 @@ DBT_SUMMARY = re.compile(
     r"Done\. PASS=(\d+) WARN=(\d+) ERROR=(\d+) SKIP=(\d+) .*? TOTAL=(\d+)"
 )
 
+DEMO_STEPS = {
+    "data-eng-bench-daily-order-summary": [
+        ("准备 Doris fixture", "创建 ORDERS 源表并写入演示订单"),
+        ("dbt debug", "检查 Doris 连接、profile 和 project"),
+        ("首次 dbt build", "创建 daily_order_summary 表并执行列级测试"),
+        ("幂等 dbt build", "再次构建，确认结果稳定且不重复"),
+        ("首次 dbt run", "创建 monthly_order_summary_mv 物化视图"),
+        ("刷新 dbt run", "重复运行，确认物化视图可刷新"),
+        ("verifier", "校验行数、金额、日期唯一性和最终对象"),
+    ],
+    "data-eng-bench-doris-demos/geographic": [
+        ("准备 Doris fixture", "创建 ORDERS 和 CUSTOMERS 源表"),
+        ("dbt debug", "检查跨 Database Source 配置"),
+        ("首次 dbt build", "创建两个 staging view 和 customer_geographic 表"),
+        ("幂等 dbt build", "再次构建，确认 ref 链路可重复执行"),
+        ("verifier", "校验州级客户数、收入和空值处理"),
+    ],
+    "data-eng-bench-doris-demos/consolidate": [
+        ("准备 Doris fixture", "创建渠道源表和三个 seed 输入"),
+        ("dbt debug", "检查 project、profile 和 package 配置"),
+        ("dbt deps", "安装 dbt_utils 依赖"),
+        ("首次 dbt build", "加载 seed、创建 staging view 和统一明细表"),
+        ("幂等 dbt build", "再次构建，确认 QUALIFY 和唯一键逻辑"),
+        ("verifier", "校验三渠道去重、字段映射和结果行数"),
+    ],
+    "data-eng-bench-doris-demos/incremental": [
+        ("准备 Doris fixture", "创建订单源表和初始销售数据"),
+        ("dbt debug", "检查 incremental project 配置"),
+        ("首次 dbt build", "建立订单当前版本表"),
+        ("写入迟到数据", "插入新订单并更新已有订单"),
+        ("增量 dbt build", "用 merge 合并新增和变更记录"),
+        ("无变化 dbt build", "再次运行，确认幂等和去重"),
+        ("verifier", "校验当前版本、唯一键和金额结果"),
+    ],
+    "data-eng-bench-doris-demos/snapshot": [
+        ("准备 Doris fixture", "创建 CUSTOMERS 源表和初始客户数据"),
+        ("dbt debug", "检查 snapshot 配置和 Doris 连接"),
+        ("staging dbt run", "创建客户 staging view"),
+        ("首次 dbt snapshot", "写入 SCD Type 2 初始版本"),
+        ("首次维表 build", "生成当前客户维表并执行测试"),
+        ("变更源数据", "更新客户属性并删除一条客户记录"),
+        ("第二次 dbt snapshot", "记录变更版本和 hard delete"),
+        ("刷新维表", "重新生成当前状态维表并执行测试"),
+        ("verifier", "校验历史版本、当前状态和删除记录"),
+    ],
+}
+
 STYLES = """
 <style>
 .doris-status {
@@ -54,6 +101,23 @@ table.doris-table th {
 }
 table.doris-table td { border: 1px solid #d9dee5; padding: 7px 10px; }
 table.doris-table tbody tr:nth-child(even) { background: #f8fafc; }
+.doris-process { margin: 8px 0 16px; }
+.doris-process-title { font-size: 14px; font-weight: 650; margin: 0 0 6px; color: #18212f; }
+table.doris-process-table { border-collapse: collapse; width: 100%; max-width: 920px; font-size: 13px; }
+table.doris-process-table th {
+  background: #eef2f6;
+  border: 1px solid #cbd5e1;
+  color: #1f2937;
+  padding: 7px 10px;
+  text-align: left;
+}
+table.doris-process-table td { border: 1px solid #d9dee5; padding: 7px 10px; vertical-align: top; }
+table.doris-process-table tbody tr:nth-child(even) { background: #f8fafc; }
+.doris-step-status { white-space: nowrap; font-weight: 600; }
+.doris-step-status.pending { color: #64748b; }
+.doris-step-status.running { color: #b45309; }
+.doris-step-status.success { color: #16803c; }
+.doris-step-status.failure { color: #c62828; }
 details.doris-log { margin: 4px 0 16px; color: #475569; }
 details.doris-log summary { cursor: pointer; font-size: 12px; user-select: none; }
 details.doris-log pre {
@@ -155,6 +219,30 @@ class DemoRunner:
             f'<pre>{html.escape(clean_log(output))}</pre></details>'
         )
 
+    @staticmethod
+    def _process_table(steps, statuses):
+        status_labels = {
+            "pending": "待执行",
+            "running": "执行中",
+            "success": "已完成",
+            "failure": "失败",
+        }
+        rows = "".join(
+            "<tr>"
+            f"<td>{index}</td>"
+            f"<td><strong>{html.escape(label)}</strong><br><span>{html.escape(description)}</span></td>"
+            f'<td class="doris-step-status {status}">{status_labels[status]}</td>'
+            "</tr>"
+            for index, ((label, description), status) in enumerate(zip(steps, statuses), 1)
+        )
+        return HTML(
+            '<div class="doris-process">'
+            '<div class="doris-process-title">执行过程</div>'
+            '<table class="doris-process-table"><thead><tr>'
+            '<th style="width: 48px">序号</th><th>阶段</th><th style="width: 90px">状态</th>'
+            f"</tr></thead><tbody>{rows}</tbody></table></div>"
+        )
+
     def show_environment(self):
         result = self._run([self.dbt_bin, "--version"])
         if result.returncode != 0:
@@ -187,6 +275,14 @@ class DemoRunner:
         if not run_script.is_file():
             raise FileNotFoundError(run_script)
 
+        steps = DEMO_STEPS.get(
+            relative_path,
+            [("执行 Demo 脚本", "运行 fixture、dbt 和 verifier"), ("查看结果", "读取 Doris 最终结果")],
+        )
+        process_handle = display(
+            self._process_table(steps, ["running"] + ["pending"] * (len(steps) - 1)),
+            display_id=True,
+        )
         handle = display(
             self._status("running", f"正在运行：{title}", ["准备 fixture", "执行 dbt", "运行 verifier"]),
             display_id=True,
@@ -199,6 +295,9 @@ class DemoRunner:
         errors = sum(int(summary[2]) for summary in summaries)
 
         if result.returncode != 0:
+            process_handle.update(
+                self._process_table(steps, ["success"] * max(0, len(steps) - 1) + ["failure"])
+            )
             handle.update(
                 self._status(
                     "failure",
@@ -216,6 +315,7 @@ class DemoRunner:
                 [f"{elapsed:.1f} 秒", f"{len(summaries)} 个 dbt 阶段", f"{passed} 个成功节点", "verifier 通过"],
             )
         )
+        process_handle.update(self._process_table(steps, ["success"] * len(steps)))
         display(self._log_details(result.stdout))
 
     def query(self, title, sql, columns=None):
