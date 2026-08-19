@@ -1,255 +1,235 @@
-# data-eng-bench 的 dbt 任务抽取与 Doris 验证
+# data-eng-bench 的 5 个 dbt-for-apache-doris Demo
 
-> 本文只讨论将 `data-eng-bench` 改造成 dbt-doris 场景验证集。重点是整理 103 个 dbt 任务、记录每个任务的执行方式，并用 Doris 验证 dbt-doris 的能力。Agent 属于可选增强。
+> 数据源：[Snowflake-Labs/data-eng-bench](https://github.com/Snowflake-Labs/data-eng-bench)，固定使用 commit `53353547b9869d35d61b40fd6ee9397a7ac8ca80`。
+> 本文只讨论 5 个可用于 dbt-for-apache-doris 发布的 Demo。Agent 是可选入口，不是本轮交付重点。
 
-## 1. 项目目标
+## 1. 交付范围
 
-`data-eng-bench` 的每个任务都包含数据工程需求、dbt 工程操作和 verifier。我们从这些任务中抽取 Doris 场景，形成 dbt-doris 的真实回归集。
+我们从上游任务中选出 5 个场景，整理成独立的 Doris Demo：
 
-每个任务需要记录：
+1. 每日订单汇总
+2. 客户地域分析
+3. 广告数据标准化和合并
+4. 迟到订单增量模型
+5. Customer Snapshot 和当前客户维表
 
-```text
-源表和依赖关系
-dbt project 和执行命令
-目标模型、schema 和 materialization
-Doris SQL 或表设计改动
-verifier 的结构和数据断言
-dbt-doris 当前支持状态
-```
+每个 Demo 都需要包含：
 
-交付物： [103 个任务的 Doris 迁移清单与发布 Demo](data-eng-bench-103-tasks-statistics.zh-CN.md)、最小 dbt project、Doris fixture/loader、统一执行入口、Doris verifier、能力覆盖矩阵和可运行 Demo。
+- 可独立运行的 Doris 环境和源数据；
+- `dbt_project.yml`、`profiles.yml` 和 model；
+- 明确的 `dbt deps/seed/run/test/snapshot` 命令；
+- Doris 表设计和 dbt materialization 配置；
+- verifier，以及 `manifest.json`、`run_results.json` 等运行证据。
 
-## 2. Doris variant
+完整的业务说明、模型列表、流程图和命令见：
+[5 个 dbt-for-apache-doris 发布 Demo](data-eng-bench-dbt-doris-demos.zh-CN.md)。
 
-原始任务使用 DuckDB 或 Snowflake。Doris 版本保留原任务，增加独立 variant，例如：
+## 2. Demo 清单
 
-```text
-tasks/dbt-daily-order-summary/
-tasks/dbt-daily-order-summary-doris/
-```
+| Demo | 上游任务 | 主要 model | 重点验证的 Doris/dbt 能力 |
+| --- | --- | --- | --- |
+| 每日订单汇总 | [dbt-daily-order-summary](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-daily-order-summary) | `daily_order_summary` | Source、Table、DATE/DECIMAL、Duplicate Key、分区、分桶、Async MV |
+| 客户地域分析 | [dbt-customer-geographic](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac80/tasks/dbt-customer-geographic) | `stg_customer_addresses`、`stg_orders`、`fct_state_customers` | 跨 Database Source、`ref()`、View/Table、Join、schema 映射 |
+| 广告数据标准化和合并 | [dbt-consolidate](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac80/tasks/dbt-consolidate) | 3 个 staging view、`int__ads_unified` | Seed、CSV 类型映射、`dbt_utils`、QUALIFY、UNION ALL、Data Test |
+| 迟到订单增量模型 | [dbt-incremental-late-arriving-sales](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac80/tasks/dbt-incremental-late-arriving-sales) | 7 个模型，其中 `incremental_daily_sales` 为 Incremental | Unique Key、`merge`、迟到数据、二次运行、`on_schema_change` |
+| Customer Snapshot | [dbt-fix-customer-snapshot-and-build-dimension](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac80/tasks/dbt-fix-customer-snapshot-and-build-dimension) | `stg_customers`、`customer_snapshot`、`dim_customer_current` | Snapshot、SCD Type 2、`check_cols`、硬删除、历史版本 |
 
-variant 记录 Doris 的 profile、fixture、SQL、表设计和 verifier 差异，不覆盖原始任务。
+## 3. 统一执行方式
 
-## 3. 任务卡格式
-
-每个任务建立一份任务卡或 manifest：
-
-| 字段 | 内容 |
-| --- | --- |
-| `task` | 原任务和 Doris variant 名称 |
-| `business_goal` | 任务生成的业务结果 |
-| `sources` | 源表、database、schema 和列 |
-| `refs` | dbt `ref` 关系 |
-| `models` | 模型及目标 schema |
-| `materialization` | view、table、incremental、snapshot |
-| `dbt_commands` | deps、seed、run、test、build 命令 |
-| `doris_config` | key、分桶、分区、replication、properties |
-| `fixture_mode` | 原始表、预物化 staging、Unique Key 表 |
-| `verifier` | 结构、数据、类型和幂等性检查 |
-| `dialect_changes` | DuckDB SQL 到 Doris SQL 的改动 |
-| `status` | 未开始、适配中、参考解法通过、完整验证 |
-| `failure_reason` | 失败原因和关联能力 |
-
-任务卡记录任务对 dbt-doris 的能力要求，不把参考答案直接当作能力结论。
-
-## 4. Doris 执行流程
-
-所有任务使用同一套生命周期：
+每个 Demo 都在干净的 Doris 环境中独立运行：
 
 ```text
-创建干净 Doris FE/BE
-  -> 创建任务 database/schema
-  -> 导出并装载任务源表
-  -> 创建最小 dbt project 和 profiles.yml
-  -> 执行 dbt deps/seed/run/test/build
-  -> 运行 Doris verifier
-  -> 保存日志、compiled SQL、run_results 和 verifier 结果
-  -> 清理 database 和容器
+启动 Doris FE/BE
+  -> 创建 Demo 专用 database/schema
+  -> 装载源表或 seed
+  -> 写入 Doris profile
+  -> dbt debug
+  -> dbt deps / seed / run / test / snapshot
+  -> 检查 manifest 和 run_results
+  -> 查询 Doris 对象、DDL 和结果数据
+  -> 按 Demo 要求重复运行或修改源数据后再次运行
 ```
 
-任务不得依赖上一个任务留下的 Doris 表。DuckDB 文件不能直接作为 Doris 数据库，loader 需要完成类型映射、Doris DDL、Stream Load、行数和 schema 校验。大型源表使用 Stream Load，需要 `UPDATE` 的任务使用 Unique Key 表。
-
-实验环境使用独立的 dbt Core 和 Doris adapter，profile 由 runner 注入：
-
-```yaml
-retail:
-  target: doris
-  outputs:
-    doris:
-      type: doris
-      host: doris
-      port: 9030
-      user: root
-      password: ""
-      database: main
-      schema: analytics
-      threads: 2
-```
-
-任务卡记录真实命令，例如 `dbt deps --project-dir /app/dbt_project` 和 `dbt build --project-dir /app/dbt_project --select daily_order_summary`。需要幂等性验证的任务执行两次 build，需要数据变更验证的任务在两次运行之间更新源表。
-
-## 5. 任务分类
-
-### 基础模型
-
-能力：source、ref、join、group by、cast、table/view。
-
-任务：`dbt-daily-order-summary`、`dbt-test-orders-filter`、`dbt-fraud-detection-model`、`dbt-rfm-customer-segmentation`。
-
-### 日期、窗口和统计
-
-能力：日期截断、日期差、interval、窗口函数、percentile、排名和 NULL。
-
-任务：`cohort-retention-matrix`、`dbt-fix-daily-cohorts`、`dbt-fix-refund-reconciliation`、`dbt-customer-churn-cohorts`、`dbt-inventory-turnover-analysis`。
-
-### dbt 生命周期
-
-能力：incremental、snapshot、schema change、二次运行和失败恢复。
-
-### Doris 表设计
-
-能力：Unique Key、Duplicate Key、分区、分桶、replication 和 properties。需要同时检查 model config 和 `SHOW CREATE TABLE`。
-
-### 复杂 DAG 和方言
-
-能力：递归 CTE、复杂 macro、正则、字符串连接、多层 staging/intermediate。代表任务：`marketing-campaigns-harbor`、`workforce-analytics`、`deferred-revenue-recognition`、`dbt-supplier-payment-optimization`。
-
-## 6. 代表任务卡
-
-### `dbt-daily-order-summary`
-
-| 项目 | 内容 |
-| --- | --- |
-| 源表 | `ORDERS.ORDERS` |
-| 目标模型 | `daily_order_summary` |
-| materialization | table |
-| SQL | 日期转换、过滤、聚合和金额计算 |
-| verifier | 列、行数、日期唯一性、收入和幂等性 |
-| 用途 | 最小 project、profile、table 和基础类型验证 |
-
-### `dbt-fix-daily-cohorts`
-
-| 项目 | 内容 |
-| --- | --- |
-| 源关系 | `main.stg_orders__orders` |
-| 目标模型 | `rpt_daily_cohorts` |
-| 主要差异 | 三参数 `date_diff` 改成 `datediff(end, start)` |
-| 用途 | 日期函数、ref 解析和共享 staging fixture 验证 |
-
-### `fifo-inventory-cogs`
-
-| 项目 | 内容 |
-| --- | --- |
-| 源表 | inventory、product 相关表 |
-| 目标模型 | FIFO 分配、月度 COGS、期末库存 |
-| 主要差异 | 日期函数和 `LEAST/GREATEST(NULL, x)` 语义 |
-| 用途 | 复杂窗口、NULL 语义和 Doris expected result 验证 |
-
-### `dbt-receivables-aging-buckets`
-
-| 项目 | 内容 |
-| --- | --- |
-| 源表 | finance 下四张可更新表 |
-| 表设计 | 源表需要 Unique Key |
-| 主要差异 | staging 必须保持对源表的实时 view |
-| 用途 | UPDATE、二次运行和数据变更可见性验证 |
-
-### `dbt-supplier-payment-optimization`
-
-| 项目 | 内容 |
-| --- | --- |
-| 源表 | supplier invoices、suppliers、currency exchange rates |
-| 主要差异 | 正则空值转换、lateral join 和日期运算 |
-| 状态 | 方言和类型边界任务，适配中 |
-
-## 7. dbt-doris 能力矩阵
-
-| 能力 | 任务证据 | 验证方式 |
-| --- | --- | --- |
-| 连接和 profile | `dbt debug`、最小 model | Doris 集成测试 |
-| source/ref | manifest 和依赖关系 | 最小 project + verifier |
-| view/table | 对象和 DDL | materialization 测试 |
-| schema tests | `dbt test` 结果 | verifier + dbt test |
-| 类型映射 | information_schema.columns | 列类型断言 |
-| incremental | 二次运行、新增数据 | Unique Key/增量测试 |
-| snapshot | helper 表和历史版本 | snapshot 任务 |
-| schema change | 新列或类型变化 | on-schema-change 任务 |
-| 分区/分桶/key | `SHOW CREATE TABLE` | Doris DDL verifier |
-| NULL/日期语义 | 独立 expected result | 结果级回归测试 |
-| dbt_utils | macro 编译和执行 | package 兼容任务 |
-
-一个任务通过，只说明该任务覆盖的能力通过；能力结论需要合并多个任务的证据。
-
-## 8. Doris SQL 适配重点
-
-| DuckDB 写法 | Doris 适配方向 |
-| --- | --- |
-| `strftime(...)` | `date_format(...)` |
-| `date_diff('day', a, b)` | `datediff(b, a)` |
-| `expr::type` | `cast(expr as type)` |
-| `percentile_cont` | `percentile` 或 `percentile_approx`，按任务语义验证 |
-| 日期直接相减 | 显式 `datediff` |
-| `LEAST/GREATEST(NULL, x)` | 用 `CASE` 明确 NULL 语义 |
-
-这些改动不能全部使用无条件文本替换，需要通过 Doris 执行和 verifier 检查结果语义。
-
-## 9. Verifier 要求
-
-Verifier 必须同时检查 dbt 过程和 Doris 结果：
+推荐的 Demo 目录结构：
 
 ```text
-删除旧目标
-  -> 执行指定 dbt build/test
-  -> 检查 manifest/run_results
-  -> 检查 information_schema 和 SHOW CREATE TABLE
-  -> 独立计算期望数据
-  -> 检查二次运行或数据变更行为
+demo/
+├── docker-compose.yml
+├── Dockerfile
+├── load_data.sh
+├── dbt_project.yml
+├── profiles.yml.example
+├── models/
+├── snapshots/              # 只有 Snapshot Demo 使用
+├── seeds/                  # 只有广告合并 Demo 使用
+├── tests/
+└── verify/
 ```
 
-至少检查目标对象确实由 dbt model 生成、materialization/schema/列类型正确、结果数据正确、schema tests 通过，以及任务要求的 incremental、snapshot、UPDATE 或 schema change 行为。
+源数据准备方式按场景区分：
 
-## 10. Agent 的位置
+| 场景 | 数据准备 |
+| --- | --- |
+| 每日订单、客户地域、增量、Snapshot | Doris 源表，通过 Stream Load 或固定 fixture 装载 |
+| 广告数据合并 | 3 个小 CSV，通过 `dbt seed` 装载 |
+| 需要源表更新的场景 | 使用 Doris Unique Key 表，并在两次运行之间执行 UPDATE/DELETE |
 
-Agent 建立在已经定义好的 Doris 任务之上：任务卡和 Doris 环境准备好后，Agent 修改 dbt model、执行 `dbt build/test`，再由同一 verifier 检查结果。
+## 4. 五个 Demo 的执行重点
 
-Agent 不是任务抽取、数据装载或 verifier 的替代品。参考解法通过后，再记录 Agent result、verifier result、reward 和 trajectory。
+### 4.1 每日订单汇总
 
-## 11. 当前状态和实施顺序
+```text
+ORDERS.ORDERS
+  -> daily_order_summary (table)
+  -> monthly_order_summary_mv (Doris Async MV)
+```
 
-已完成或已验证：
+执行顺序：
 
-- Doris 4.0.3、dbt Core 1.12.2、dbt-for-apache-doris 1.1.0 实验组合；
-- Doris profile、连接、Stream Load 和最小 dbt project；
-- 多个基础任务的参考解法和 verifier 执行；
-- FIFO、receivables、POS、supplier 等复杂任务的兼容问题定位；
-- fast-30 的 Doris clean-room 参考解法回归：30/30 任务、869/869 verifier、30/30 reward；
-- 生成器可渲染全部 30 个 Doris Agent 变体，并完成若干 Oracle smoke；
-- 四个真实 Codex Doris trial 通过：两个独立 tracer，以及 fast-30 中的
-  `dbt-fix-cac-payback-waterfall`、`dbt-fix-daily-cohorts`。
+```bash
+dbt run --select daily_order_summary
+dbt run --select monthly_order_summary_mv
+```
 
-上述 fast-30 和 Codex 数字是本地实验记录。当前工作树没有保留对应的 runner、task manifest、
-逐题 result 和日志，因此不能直接作为发布验收证据。发布前需要按本文定义的干净环境重新执行，
-并归档版本、命令、dbt artifacts、verifier 输出和 reward。
+先验证 Table model 的业务结果、列类型、Key、分区、分桶和幂等性，再验证 Async MV 的创建、
+初始构建、手动刷新和重复执行。
 
-尚未完成：103 个任务的完整 Doris 任务卡、103 个任务的 clean-room 参考解法回归，以及全部 30 个 fast-30 Doris 变体的真实 Agent 评测。当前 fast-30 的 30/30 结果是参考解法兼容性基线，不是 Agent accuracy。
+### 4.2 客户地域分析
 
-实施顺序：
+```text
+CUSTOMER.CUSTOMER_ADDRESSES -> stg_customer_addresses (view)
+ORDERS.ORDERS               -> stg_orders (view)
+两个 staging view            -> fct_state_customers (table)
+```
 
-1. 固定版本并发布 Doris base image；
-2. 完成 `dbt-daily-order-summary` 任务卡、fixture、最小 project、loader 和 verifier；
-3. 批量抽取其余任务的 source、ref、model 和命令；
-4. 按任务分类迁移并记录 SQL、表设计和 verifier 差异；
-5. 将可复现失败转成 dbt-doris 单元测试或集成测试；
-6. 建立能力矩阵和任务状态报告；
-7. 参考解法稳定后，为代表任务增加 Agent 入口；
-8. 在已完成 fast-30 clean-room 基线的基础上，串行运行真实 Agent 变体，再评估 103 个任务的迁移范围。
+执行 `dbt run` 后，检查 source/ref lineage、跨 Database 访问、LEFT JOIN 结果、每州一行以及
+第二次运行的一致性。
 
-## 12. 资料
+### 4.3 广告数据标准化和合并
 
+```text
+googleads.csv -> googleads seed -> stg__ads_googleads (view)
+metaads.csv   -> metaads seed   -> stg__ads_metaads (view)
+tiktokads.csv -> tiktokads seed -> stg__ads_tiktokads (view)
+三个 staging view -> int__ads_unified (table) -> dbt_utils test
+```
+
+执行 `dbt deps`、`dbt seed`、`dbt run` 和 `dbt test`，检查三个渠道字段是否统一、
+重复记录是否去除，以及 `source + ad_date` 是否唯一。
+
+### 4.4 迟到订单增量模型
+
+```text
+ORDERS.ORDERS -> order_version_history (table)
+              -> incremental_daily_sales (incremental, unique_key=order_id)
+              -> channel_latency_analysis
+              -> revenue_reconciliation_waterfall
+              -> late_arrival_metrics
+              -> order_data_quality
+              -> daily_sales_summary
+```
+
+至少运行三轮：
+
+1. 第一次全量创建目标表；
+2. 修改既有订单并插入迟到订单，验证 merge、回看窗口和主键唯一性；
+3. 给 model 增加可空列，验证 `on_schema_change='append_new_columns'`。
+
+### 4.5 Customer Snapshot
+
+```text
+CUSTOMER.CUSTOMERS -> stg_customers (view)
+                    -> customer_snapshot (snapshot)
+                    -> dim_customer_current (table)
+```
+
+执行：
+
+```bash
+dbt run --select stg_customers
+dbt snapshot --select customer_snapshot
+dbt run --select dim_customer_current
+```
+
+修改一个 `check_cols` 字段并删除一个客户后再次执行，检查旧版本是否关闭、新版本是否成为当前
+记录，以及硬删除客户是否不再出现在当前维表。
+
+## 5. Verifier 和发布门禁
+
+Verifier 不能只检查 SQL 是否执行成功，还必须检查 dbt 产物和 Doris 结果：
+
+| 检查层 | 内容 |
+| --- | --- |
+| dbt 产物 | `manifest.json`、`run_results.json`、model 状态、source/ref 依赖 |
+| Doris 对象 | database/schema、View/Table 类型、列类型、Key、分区、分桶、properties |
+| 数据结果 | 行数、金额、唯一性、NULL、日期和业务公式 |
+| 生命周期 | 二次运行、Incremental merge、Snapshot 版本、UPDATE/DELETE、schema change |
+| 清理隔离 | 每个 Demo 使用独立 database 或容器，不依赖上一个 Demo 的表 |
+
+发布前每个 Demo 都必须从空 Doris 环境独立跑通，并保存：
+
+```text
+Doris / dbt / adapter 版本
+执行命令
+compiled SQL
+manifest.json
+run_results.json
+verifier 输出
+最终 reward 或通过结果
+```
+
+## 6. Doris 能力边界
+
+本轮 5 个 Demo 覆盖：
+
+- profile、连接、Source、Ref 和依赖图；
+- View、Table、Incremental、Snapshot；
+- Seed、Package、Data Test；
+- Duplicate Key、Unique Key、分区、分桶和 properties；
+- DATE、DECIMAL、窗口函数、QUALIFY、UNION ALL；
+- merge、schema change、SCD Type 2 和异步物化视图。
+
+以下能力不属于本轮 Demo 的已支持范围：
+
+- Microbatch；
+- Insert Overwrite；
+- Contract；
+- Freshness；
+- Hook；
+- dbt Docs/Catalog artifact；
+- Grants；
+- Doris External Catalog 三段式命名空间。
+
+其中 Doris External Catalog 当前明确不支持，不应写成“待补 Demo”。
+
+## 7. Agent 的位置
+
+Agent 可以作为每个 Demo 的额外入口：
+
+```text
+准备 Doris 环境和任务说明
+  -> Agent 创建或修改 dbt project
+  -> Agent 执行 dbt debug/build/test
+  -> verifier 检查 manifest、Doris 对象和业务结果
+```
+
+但 Demo 的基础交付不依赖 Agent。先让固定 reference solution 在 Doris 上稳定通过，再增加 Agent
+试跑，分别记录 Agent 日志、verifier 结果、reward 和失败原因。
+
+## 8. 后续工作
+
+1. 为 5 个 Demo 固定 Doris、dbt Core 和 dbt-for-apache-doris 版本；
+2. 固定 fixture、数据库命名、权限和资源配置；
+3. 完成每个 Demo 的 clean-room reference run；
+4. 把可复现失败转成 dbt-doris 单元测试或集成测试；
+5. 将 5 个 Demo 接入 CI 和发布文档；
+6. 在 reference run 稳定后，再为代表 Demo 增加 Agent smoke。
+
+## 9. 资料
+
+- [5 个 dbt-for-apache-doris 发布 Demo](data-eng-bench-dbt-doris-demos.zh-CN.md)
 - [data-eng-bench](https://github.com/Snowflake-Labs/data-eng-bench)
 - [Apache Doris dbt adapter 文档](https://doris.apache.org/docs/4.x/connection-integration/data-integration/dbt-doris-adapter/)
 - [Apache Doris dbt adapter 源码](https://github.com/apache/doris/tree/master/extension/dbt-doris)
-- [dbt adapter 创建指南](https://docs.getdbt.com/guides/adapter-creation)
 - [Doris Stream Load](https://doris.apache.org/docs/4.x/key-features/stream-load/)
-- [Harbor 核心概念](https://www.harborframework.com/docs/core-concepts)
-- [Harbor task 与 reward](https://www.harborframework.com/docs/tasks)
+- [Doris Async Materialized View Demo](materialized-view.zh-CN.md)
