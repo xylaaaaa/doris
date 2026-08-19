@@ -244,6 +244,25 @@ TEST_F(S3ClientFactoryTest, ConvertPropertiesToS3ConfCredentialValidation) {
     }
 }
 
+TEST_F(S3ClientFactoryTest, ConvertPropertiesToS3ConfAzureSas) {
+    std::map<std::string, std::string> properties {
+            {"provider", "AZURE"},
+            {"AWS_ENDPOINT", "account.dfs.core.windows.net"},
+            {"AWS_REGION", "azure"},
+            {"AWS_TOKEN", "sv=2024-01-01&sig=temporary"},
+    };
+    S3URI azure_uri("abfss://container@account.dfs.core.windows.net/table/part.parquet");
+    ASSERT_TRUE(azure_uri.parse().ok());
+
+    S3Conf s3_conf;
+    ASSERT_TRUE(
+            S3ClientFactory::convert_properties_to_s3_conf(properties, azure_uri, &s3_conf).ok());
+    ASSERT_EQ(s3_conf.bucket, "container");
+    ASSERT_EQ(s3_conf.client_conf.provider, io::ObjStorageType::AZURE);
+    ASSERT_EQ(s3_conf.client_conf.endpoint, "account.dfs.core.windows.net");
+    ASSERT_EQ(s3_conf.client_conf.token, "sv=2024-01-01&sig=temporary");
+}
+
 TEST_F(S3ClientFactoryTest, AwsCredentialsProviderV2ProviderTypeWithoutRoleArn) {
     S3ClientFactory& factory = S3ClientFactory::instance();
     config::aws_credentials_provider_version = "v2";

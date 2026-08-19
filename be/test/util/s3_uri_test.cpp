@@ -70,6 +70,29 @@ TEST_F(S3URITest, HttpURI) {
     EXPECT_EQ("path/to/file", uri2.get_key());
 }
 
+TEST_F(S3URITest, AzureDataLakeURI) {
+    S3URI uri("abfss://container@account.dfs.core.windows.net/path/to/file.parquet");
+    EXPECT_TRUE(uri.parse());
+    EXPECT_EQ("container", uri.get_bucket());
+    EXPECT_EQ("path/to/file.parquet", uri.get_key());
+
+    S3URI wasbs("wasbs://container@account.blob.core.windows.net/path/to/file.parquet");
+    EXPECT_TRUE(wasbs.parse());
+    EXPECT_EQ("container", wasbs.get_bucket());
+    EXPECT_EQ("path/to/file.parquet", wasbs.get_key());
+}
+
+TEST_F(S3URITest, InvalidAzureDataLakeAuthority) {
+    S3URI missing_container("abfss://@account.dfs.core.windows.net/path/file.parquet");
+    EXPECT_FALSE(missing_container.parse());
+
+    S3URI missing_account("abfss://container@/path/file.parquet");
+    EXPECT_FALSE(missing_account.parse());
+
+    S3URI missing_separator("abfss://container.account.dfs.core.windows.net/path/file.parquet");
+    EXPECT_FALSE(missing_separator.parse());
+}
+
 TEST_F(S3URITest, InvalidSchema) {
     std::string p1 = "xxx://a.b.com/bucket/path/to/file";
     S3URI uri1(p1);

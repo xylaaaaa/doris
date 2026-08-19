@@ -26,6 +26,7 @@ import io.unitycatalog.hadoop.internal.DeltaStorageCredentialUtil;
 
 import java.net.URI;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /** Converts UC Delta credentials into the properties consumed by Doris BE readers. */
@@ -35,6 +36,8 @@ final class UnityDeltaStorageProperties {
     private static final String S3_ACCESS_KEY = "AWS_ACCESS_KEY";
     private static final String S3_SECRET_KEY = "AWS_SECRET_KEY";
     private static final String S3_TOKEN = "AWS_TOKEN";
+    private static final String STORAGE_PROVIDER = "provider";
+    private static final String AZURE_PROVIDER = "AZURE";
 
     private UnityDeltaStorageProperties() {
     }
@@ -76,20 +79,40 @@ final class UnityDeltaStorageProperties {
                 throw new IllegalArgumentException(
                         "Azure Delta location does not contain a storage account host");
             }
+            String container = locationUri.getUserInfo();
+            if (container == null || container.trim().isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Azure Delta location does not contain a storage container");
+            }
             String sasToken = temporary.getAzureUserDelegationSas().getSasToken();
             if (sasToken == null || sasToken.trim().isEmpty()) {
                 throw new IllegalArgumentException(
                         "Unity Catalog returned an empty Azure SAS token for " + accountHost);
             }
             Map<String, String> properties = new LinkedHashMap<>();
-            properties.put("fs.azure.account.auth.type." + accountHost, "SAS");
-            properties.put("fs.azure.sas.fixed.token." + accountHost,
-                    sasToken);
+            // FE's Kernel engine receives the Hadoop SAS configuration from the official
+            // Unity Hadoop helper. BE native Parquet scans use the existing object-storage
+            // client, so pass the same vended SAS through its provider/token contract.
+            properties.put(STORAGE_PROVIDER, AZURE_PROVIDER);
+            properties.put(S3_ENDPOINT, blobEndpoint(accountHost));
+            properties.put(S3_REGION, "azure");
+            properties.put(S3_TOKEN, sasToken);
             return properties;
         }
         throw new UnsupportedOperationException(
                 "Unity Catalog returned a GCS OAuth credential, but Doris BE does not yet "
                         + "support OAuth-authenticated native GCS scans");
+    }
+
+    /** The BE Azure object client uses Blob APIs; map an ABFS DFS host to its Blob endpoint. */
+    private static String blobEndpoint(String accountHost) {
+        String lowerHost = accountHost.toLowerCase(Locale.ROOT);
+        int dfsMarker = lowerHost.indexOf(".dfs.");
+        if (dfsMarker < 0) {
+            return accountHost;
+        }
+        return accountHost.substring(0, dfsMarker) + ".blob"
+                + accountHost.substring(dfsMarker + 4);
     }
 
     static void configureS3HadoopProperties(

@@ -195,10 +195,11 @@ public class UnityDeltaCatalogAdapterTest {
         Map<String, String> azure = UnityDeltaStorageProperties.toBackendProperties(
                 "abfss://container@account.dfs.core.windows.net/tables/events",
                 azureResponse, Map.of());
-        Assertions.assertEquals("SAS",
-                azure.get("fs.azure.account.auth.type.account.dfs.core.windows.net"));
-        Assertions.assertEquals("azure-sas",
-                azure.get("fs.azure.sas.fixed.token.account.dfs.core.windows.net"));
+        Assertions.assertEquals("AZURE", azure.get("provider"));
+        Assertions.assertEquals("account.blob.core.windows.net", azure.get("AWS_ENDPOINT"));
+        Assertions.assertEquals("azure", azure.get("AWS_REGION"));
+        Assertions.assertEquals("azure-sas", azure.get("AWS_TOKEN"));
+        Assertions.assertFalse(azure.containsKey("fs.azure.sas.fixed.token.account.dfs.core.windows.net"));
 
         DeltaCredentialsResponse gcsResponse = credentials(
                 "gs://delta-bucket/tables/events",

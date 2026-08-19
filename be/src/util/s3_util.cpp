@@ -337,9 +337,6 @@ void S3ClientFactory::clear_client_creator_for_test() {
 std::shared_ptr<io::ObjStorageClient> S3ClientFactory::_create_azure_client(
         const S3ClientConf& s3_conf) {
 #ifdef USE_AZURE
-    auto cred =
-            std::make_shared<Azure::Storage::StorageSharedKeyCredential>(s3_conf.ak, s3_conf.sk);
-
     const std::string container_name = s3_conf.bucket;
     std::string uri = fmt::format("{}/{}", s3_conf.endpoint, container_name);
     if (s3_conf.endpoint.find("://") == std::string::npos) {
@@ -364,8 +361,20 @@ std::shared_ptr<io::ObjStorageClient> S3ClientFactory::_create_azure_client(
     VLOG_DEBUG << "uri:" << uri << ", normalized_uri:" << normalized_uri;
     std::string tls_debug_context = build_azure_tls_debug_context(_ca_cert_file_path);
 
-    auto containerClient = std::make_shared<Azure::Storage::Blobs::BlobContainerClient>(
-            uri, cred, std::move(options));
+    std::shared_ptr<Azure::Storage::Blobs::BlobContainerClient> containerClient;
+    if (!s3_conf.token.empty()) {
+        // Unity Catalog vends a user-delegation SAS. Azure SDK consumes it as a
+        // query string; it is not an AWS session token or a shared-key secret.
+        const std::string sas = s3_conf.token.front() == '?' ? s3_conf.token : "?" + s3_conf.token;
+        uri += sas;
+        containerClient = std::make_shared<Azure::Storage::Blobs::BlobContainerClient>(
+                uri, std::move(options));
+    } else {
+        auto cred = std::make_shared<Azure::Storage::StorageSharedKeyCredential>(s3_conf.ak,
+                                                                                 s3_conf.sk);
+        containerClient = std::make_shared<Azure::Storage::Blobs::BlobContainerClient>(
+                uri, std::move(cred), std::move(options));
+    }
     LOG_INFO("create one azure client with {}", s3_conf.to_string());
     return std::make_shared<io::AzureObjStorageClient>(std::move(containerClient),
                                                        std::move(tls_debug_context));
