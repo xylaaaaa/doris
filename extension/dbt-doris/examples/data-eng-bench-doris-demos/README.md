@@ -34,7 +34,7 @@ cd extension/dbt-doris/examples/data-eng-bench-doris-demos
 ## 在 Mac 浏览器中运行 Jupyter Notebook
 
 [`dbt-for-apache-doris-data-eng-bench-demos.ipynb`](dbt-for-apache-doris-data-eng-bench-demos.ipynb)
-把每日订单 Demo 和本目录中的四个 Demo 组织成 5 个可依次执行的单元格。项目和 Doris
+把每日订单 Demo 和本目录中的四个 Demo 组织成 5 个可依次执行的分步流程。项目和 Doris
 位于远程服务器时，Jupyter kernel 也应运行在服务器上，Mac 只负责显示浏览器界面。
 
 不要把示例中的 `/path/to/dbt` 原样设置为 `DBT_BIN`。先在服务器的 Doris 仓库根目录创建
@@ -69,10 +69,10 @@ ssh -N -L 18888:127.0.0.1:18888 chenjunwei@<服务器 SSH 地址>
 http://127.0.0.1:18888/lab?token=<服务器输出的 token>
 ```
 
-打开后先执行环境检查。第一个 Demo 分成 6 个有前后依赖的单元格，必须按 2.1 到 2.6 的顺序执行，
-依次展示源订单、Source 配置、Table Model、Data Test、月度物化视图和最终校验；每一步都能看到使用的
-dbt 文件及对应 Doris 数据。后四个 Demo 仍为一键运行。完整 dbt 日志默认折叠在“查看完整运行日志”
-中，需要排错时再展开。也可以直接使用 Jupyter 的 **Run All**。
+打开后先执行环境检查。5 个 Demo 都被拆成有前后依赖的单元格，分别展示 Source/Seed、staging、
+业务 Model、Data Test、Incremental/Snapshot 数据变化和 verifier；每一步都能看到使用的 dbt 文件、
+Doris 输入、中间结果或最终结果。每个 Demo 必须按章节编号顺序执行，也可以直接使用 Jupyter 的
+**Run All**。完整 dbt 日志默认折叠在“查看完整运行日志”中，需要排错时再展开。
 
 Notebook 更新后，刷新浏览器页面并重新执行第一个“检查执行环境”单元格。该单元格会从仓库路径
 重新加载展示 helper，不需要重启 Jupyter 服务或 Kernel。

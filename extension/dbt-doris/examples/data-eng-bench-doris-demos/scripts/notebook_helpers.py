@@ -245,6 +245,16 @@ class DemoRunner:
             )
         )
 
+    @staticmethod
+    def show_sql(title, sql):
+        display(
+            HTML(
+                '<div class="doris-code">'
+                f'<div class="doris-code-title">{html.escape(title)}</div>'
+                f'<pre>{html.escape(sql.strip())}</pre></div>'
+            )
+        )
+
     def _run_step(self, title, command, cwd=None):
         handle = display(
             self._status("running", f"正在执行：{title}", ["命令运行中"]),
@@ -281,6 +291,9 @@ class DemoRunner:
     def run_sql_file(self, title, path):
         path = Path(path)
         self._run_step(title, self._mysql_command(path.read_text()), cwd=path.parent)
+
+    def run_sql(self, title, sql):
+        self._run_step(title, self._mysql_command(sql))
 
     def run_dbt(self, title, project_dir, *arguments):
         project_dir = Path(project_dir)
