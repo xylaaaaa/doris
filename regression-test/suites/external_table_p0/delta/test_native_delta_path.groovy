@@ -46,4 +46,46 @@ suite("test_native_delta_path", "p0,external") {
         ORDER BY c_custkey
         LIMIT 3
     """
+
+    def sourceTable = new File(dorisHome,
+            "samples/datalake/deltalake_and_kudu/data/customer").toPath()
+    def writableTable = java.nio.file.Files.createTempDirectory(
+            "doris-native-delta-write-").resolve("customer")
+    java.nio.file.Files.walk(sourceTable).withCloseable { paths ->
+        paths.forEach { source ->
+            def relative = sourceTable.relativize(source)
+            def target = writableTable.resolve(relative)
+            if (java.nio.file.Files.isDirectory(source)) {
+                java.nio.file.Files.createDirectories(target)
+            } else {
+                java.nio.file.Files.copy(source, target)
+            }
+        }
+    }
+
+    def writeCatalogName = "test_native_delta_path_write"
+    sql "DROP CATALOG IF EXISTS ${writeCatalogName}"
+    sql """
+        CREATE CATALOG ${writeCatalogName} PROPERTIES (
+            'type' = 'delta',
+            'delta.catalog.type' = 'path',
+            'delta.database' = 'default',
+            'delta.table' = 'customer',
+            'delta.table.path' = '${writableTable.toUri()}',
+            'delta.write.enabled' = 'true',
+            'test_connection' = 'false'
+        )
+    """
+
+    sql """
+        INSERT INTO ${writeCatalogName}.`default`.customer VALUES
+        (200001, 'Customer#000200001', 'Doris native Delta', 1,
+         '10-100-100-1000', 12.34, 'BUILDING', 'native write')
+    """
+    order_qt_count_after_insert "SELECT COUNT(*) FROM ${writeCatalogName}.`default`.customer"
+    order_qt_inserted_row """
+        SELECT c_custkey, c_name, c_acctbal
+        FROM ${writeCatalogName}.`default`.customer
+        WHERE c_custkey = 200001
+    """
 }

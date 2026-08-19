@@ -236,6 +236,32 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
+    public void testUnityTableMetadataWithoutPropertiesIsOrdinaryExternalTable() {
+        UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
+        UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
+                "main", client, new org.apache.hadoop.conf.Configuration(), Map.of());
+
+        DeltaTableHandle handle = adapter.getTableHandle("default", "propertyless")
+                .orElseThrow();
+
+        Assertions.assertFalse(handle.isCatalogManaged());
+        Assertions.assertTrue(handle.isExternalTable());
+    }
+
+    @Test
+    public void testUnityTableMetadataWithoutTableTypeFailsClosed() {
+        UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
+        UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
+                "main", client, new org.apache.hadoop.conf.Configuration(), Map.of());
+
+        DorisConnectorException exception = Assertions.assertThrows(
+                DorisConnectorException.class,
+                () -> adapter.getTableHandle("default", "missing_type"));
+
+        Assertions.assertTrue(exception.getMessage().contains("supported table type"));
+    }
+
+    @Test
     public void testCatalogManagedSnapshotIncludesRatifiedLogTail() {
         UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
         UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
@@ -387,6 +413,14 @@ public class UnityDeltaCatalogAdapterTest {
             respond(exchange, 200, loadTableResponse(Map.of()));
             return;
         }
+        if (path.endsWith("/tables/propertyless")) {
+            respond(exchange, 200, loadTableResponseWithoutProperties(true));
+            return;
+        }
+        if (path.endsWith("/tables/missing_type")) {
+            respond(exchange, 200, loadTableResponseWithoutProperties(false));
+            return;
+        }
         respond(exchange, 404, "{\"error_code\":\"NOT_FOUND\"}");
     }
 
@@ -400,6 +434,15 @@ public class UnityDeltaCatalogAdapterTest {
                 + "\"location\":\"" + tableLocation + "\","
                 + "\"partition-columns\":[],\"properties\":" + propertiesJson + ","
                 + "\"last-commit-version\":1},\"commits\":[],\"latest-table-version\":1}";
+    }
+
+    private String loadTableResponseWithoutProperties(boolean includeTableType) {
+        String tableType = includeTableType ? "\"table-type\":\"EXTERNAL\"," : "";
+        return "{\"metadata\":{\"etag\":\"test-etag\"," + tableType
+                + "\"table-uuid\":\"2ae93418-45d7-4f06-a899-d0379b3067d6\","
+                + "\"location\":\"" + tableLocation + "\","
+                + "\"partition-columns\":[],\"last-commit-version\":1},"
+                + "\"commits\":[],\"latest-table-version\":1}";
     }
 
     private String catalogManagedLoadTableResponse() throws IOException {

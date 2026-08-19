@@ -285,12 +285,18 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
                     "Unity Delta load response has no absolute storage location for "
                             + databaseName + "." + tableName);
         }
+        if (metadata.getTableType() != DeltaTableType.MANAGED
+                && metadata.getTableType() != DeltaTableType.EXTERNAL) {
+            throw new DorisConnectorException(
+                    "Unity Delta load response has no supported table type for "
+                            + databaseName + "." + tableName);
+        }
         return metadata;
     }
 
     private static boolean isCatalogManaged(DeltaLoadTableResponse response) {
-        String catalogManaged = response.getMetadata().getProperties()
-                .get(CATALOG_MANAGED_PROPERTY);
+        Map<String, String> properties = response.getMetadata().getProperties();
+        String catalogManaged = properties == null ? null : properties.get(CATALOG_MANAGED_PROPERTY);
         return "supported".equalsIgnoreCase(catalogManaged)
                 || (response.getCommits() != null && !response.getCommits().isEmpty());
     }
