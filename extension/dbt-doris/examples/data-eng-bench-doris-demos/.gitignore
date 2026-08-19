@@ -2,4 +2,5 @@ target/
 logs/
 dbt_packages/
 .ipynb_checkpoints/
+__pycache__/
 **/.user.yml
