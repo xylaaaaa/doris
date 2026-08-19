@@ -11,3 +11,5 @@ MYSQL=("$MYSQL_BIN" -h "$DORIS_HOST" -P "$DORIS_PORT" -u "${DORIS_USER:-root}" -
 "$DBT_BIN" build --project-dir . --profiles-dir .
 "${MYSQL[@]}" -e "insert into dbt_demo_incremental_source.ORDERS values (4,101,1,'web',125.00,'COMPLETED','2026-08-01 09:00:00','2026-08-05 09:00:00'), (5,104,3,'mobile',70.00,'COMPLETED','2026-08-01 12:00:00','2026-08-05 10:00:00')"
 "$DBT_BIN" build --project-dir . --profiles-dir .
+"$DBT_BIN" build --project-dir . --profiles-dir .
+./scripts/verify.sh

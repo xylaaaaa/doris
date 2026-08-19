@@ -26,7 +26,7 @@ export DBT_BIN=/path/to/dbt
 export DORIS_PORT=19030
 cd extension/dbt-doris/examples/data-eng-bench-doris-demos
 ./geographic/scripts/run.sh
-./geographic/scripts/verify.sh
 ```
 
-四个 demo 的 `run.sh` 都会重建自己名字空间中的 fixture，因此可以按任意顺序执行。
+四个 demo 的 `run.sh` 都会重建自己名字空间中的 fixture、执行 dbt，并在最后调用
+`verify.sh` 检查 Doris 结果，因此可以按任意顺序独立执行。

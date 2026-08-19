@@ -16,3 +16,4 @@ MYSQL=("$MYSQL_BIN" -h "$DORIS_HOST" -P "$DORIS_PORT" -u "${DORIS_USER:-root}" -
 "$DBT_BIN" snapshot --project-dir . --profiles-dir . --select customer_snapshot --threads 1
 "$DBT_BIN" run --project-dir . --profiles-dir . --select dim_customer_current
 "$DBT_BIN" test --project-dir . --profiles-dir . --select dim_customer_current --threads 1
+./scripts/verify.sh

@@ -10,3 +10,4 @@ DORIS_PORT="${DORIS_PORT:-9030}"
 "$DBT_BIN" deps --project-dir . --profiles-dir .
 "$DBT_BIN" build --project-dir . --profiles-dir . --select +int__ads_unified
 "$DBT_BIN" build --project-dir . --profiles-dir . --select +int__ads_unified
+./scripts/verify.sh

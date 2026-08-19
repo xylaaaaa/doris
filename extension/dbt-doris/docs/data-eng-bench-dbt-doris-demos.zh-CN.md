@@ -21,7 +21,7 @@
 | [`dbt-daily-order-summary`](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-daily-order-summary) | 独立 project、source、table | Duplicate Key、Range Partition、Hash Distribution、Buckets、Properties、异步物化视图 | 展示 Doris 物理设计和 MV 生命周期 |
 | [`dbt-customer-geographic`](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-customer-geographic) | 两个 staging view、一个 mart table | 跨 Database Source、schema 映射、`ref()` 血缘 | 展示标准分层建模 |
 | [`dbt-consolidate`](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-consolidate) | seed、三个 staging view、union table、dbt_utils test | Seed 类型映射、Package 兼容、Data Test | 展示数据准备和质量检查 |
-| [`dbt-incremental-late-arriving-sales`](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-incremental-late-arriving-sales) | incremental、unique_key、迟到数据 | `merge`、Unique Key MOW、`on_schema_change`、分桶 | 展示增量加工和 schema evolution |
+| [`dbt-incremental-late-arriving-sales`](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-incremental-late-arriving-sales) | incremental、unique_key、迟到数据 | `merge`、Unique Key MOW、分桶 | 展示增量加工和重复运行 |
 | [`dbt-fix-customer-snapshot-and-build-dimension`](https://github.com/Snowflake-Labs/data-eng-bench/tree/53353547b9869d35d61b40fd6ee9397a7ac8ca80/tasks/dbt-fix-customer-snapshot-and-build-dimension) | snapshot、下游 dimension | SCD Type 2、历史版本、故障后重跑 | 展示状态型数据建模 |
 
 这五个 Demo 在全部通过下文的发布验收后，可以覆盖 dbt-for-apache-doris 的发布主线：连接、
@@ -36,7 +36,7 @@ Hook、dbt Docs/Catalog artifact 和 Grants 需要单独测试或后续 Demo。d
 | View、Table 和 Doris 物理设计 | 客户地域、每日订单 | 对象类型、Duplicate Key、Range Partition、Hash Distribution 和 Buckets 正确 |
 | Async Materialized View | 每日订单 | MV 创建、初始构建、手动刷新和重复运行成功 |
 | Seed、Package 和 Data Test | 广告数据合并 | 三个 seed、dbt_utils macro 和 data test 全部成功 |
-| Incremental Merge 和 Schema Change | 迟到订单 | 新增、更新和新增列三次运行结果正确，主键不重复 |
+| Incremental Merge | 迟到订单 | 首次全量和二次增量均成功，新增和更新正确且主键不重复 |
 | Snapshot 和 SCD Type 2 | 客户 Snapshot | 字段变化、硬删除、历史关闭和当前维表正确 |
 
 因此，这组 Demo 足以作为 **dbt-for-apache-doris 核心能力** 的发布材料；它不是 Apache Doris
@@ -103,7 +103,7 @@ dbt-for-apache-doris，因为输入、输出和验证结果都很直观。
 
 ~~~mermaid
 flowchart LR
-    A[ORDERS.ORDERS<br/>订单明细] -->|过滤状态并按日聚合| B[daily_order_summary<br/>Doris Table]
+    A[dbt_demo_daily_source.orders<br/>订单明细] -->|过滤状态并按日聚合| B[daily_order_summary<br/>Doris Table]
     B -->|按月再次聚合| C[monthly_order_summary_mv<br/>Doris Async MV]
 ~~~
 
@@ -520,8 +520,8 @@ orders_per_customer
 
 ~~~mermaid
 flowchart LR
-    A[CUSTOMER.CUSTOMER_ADDRESSES] -->|默认地址且州非空| B[stg_customer_addresses<br/>View]
-    C[ORDERS.ORDERS] -->|保留有效订单| D[stg_orders<br/>View]
+    A[dbt_demo_geographic_customer.CUSTOMER_ADDRESSES] -->|默认地址且州非空| B[stg_customer_addresses<br/>View]
+    C[dbt_demo_geographic_orders.ORDERS] -->|保留有效订单| D[stg_orders<br/>View]
     B -->|按 customer_id 左连接| E[fct_state_customers<br/>Table]
     D --> E
 ~~~
@@ -555,6 +555,25 @@ sources:
 2. `stg_orders.sql` 用 `source('orders_schema', 'ORDERS')` 创建 View；
 3. `fct_state_customers.sql` 用两个 `ref()` 创建目标 Table，计算客户数、订单数和收入指标。
 
+Mart model 的核心 SQL 是：
+
+~~~sql
+{{ config(materialized='table') }}
+
+select
+    ca.state_province,
+    count(distinct ca.customer_id) as customer_count,
+    count(distinct o.order_id) as order_count,
+    round(coalesce(sum(o.grand_total), 0), 2) as total_revenue,
+    round(coalesce(avg(o.grand_total), 0), 2) as avg_order_value
+from {{ ref('stg_customer_addresses') }} ca
+left join {{ ref('stg_orders') }} o on ca.customer_id = o.customer_id
+group by ca.state_province
+~~~
+
+dbt 会先解析两个 `ref()`，创建 staging View 后再创建 mart Table。`models/geographic.yml`
+对 `state_province` 和 `customer_count` 执行 `not_null` Data Test。
+
 **完整执行流程**
 
 直接运行仓库脚本：
@@ -562,7 +581,6 @@ sources:
 ~~~bash
 cd extension/dbt-doris/examples/data-eng-bench-doris-demos/geographic
 DORIS_PORT=19030 DBT_BIN=/path/to/dbt ./scripts/run.sh
-./scripts/verify.sh
 ~~~
 
 `run.sh` 的顺序固定为：
@@ -602,7 +620,7 @@ NY | 1 | 1 |  50.00
 - <code>source()</code>、<code>ref()</code>、View 和 Table materialization 能组成正确 DAG；
 - Doris 中的源表标识符和目标 schema <code>dbt_demo_geographic</code> 正确；
 - mart 每个州只有一行，指标非负且计算公式正确；
-- 第二次 <code>dbt run</code> 结果不变。
+- 第二次 <code>dbt build</code> 结果不变。
 
 ### 1.4 Demo 3：广告数据标准化和合并
 
@@ -653,17 +671,36 @@ source, ad_date, clicks, impressions, views, conversions
 `replication_num=1`，`packages.yml` 固定使用 `dbt-labs/dbt_utils` 1.3.0，锁文件记录
 了依赖 hash。
 
+合并 model 只负责统一追加三个 staging 结果：
+
+~~~sql
+{{ config(materialized='table') }}
+
+select 'google' as source, * from {{ ref('stg__ads_googleads') }}
+union all
+select 'meta' as source, * from {{ ref('stg__ads_metaads') }}
+union all
+select 'tiktok' as source, * from {{ ref('stg__ads_tiktokads') }}
+~~~
+
+最终 Data Test 使用安装后的 `dbt_utils` macro，要求 `source + ad_date` 唯一：
+
+~~~yaml
+data_tests:
+  - dbt_utils.unique_combination_of_columns:
+      arguments:
+        combination_of_columns: [source, ad_date]
+~~~
+
 三个 CSV 各有两条 2026-08-01/02 数据，Google 和 Meta 额外各有一条完全重复记录。三个
-staging View 的 SQL 先统一字段，再用 `QUALIFY row_number()` 保留一条重复记录。当前
-adapter 的 Seed 结果会保留 CSV 表头对应的空行，因此三个 View 还显式使用
-`where ad_date is not null`；这样空行不会进入业务结果。
+staging View 的 SQL 先统一字段，再用 `QUALIFY row_number()` 保留一条重复记录。三个 View
+还使用 `where ad_date is not null`，避免日期为空的广告记录进入业务结果。
 
 **完整执行流程**
 
 ~~~bash
 cd extension/dbt-doris/examples/data-eng-bench-doris-demos/consolidate
 DORIS_PORT=19030 DBT_BIN=/path/to/dbt ./scripts/run.sh
-./scripts/verify.sh
 ~~~
 
 `run.sh` 的顺序是：
@@ -707,14 +744,17 @@ tiktok | 2026-08-02 | 11 | 110 |  80 | 2
 
 ### 1.5 Demo 4：迟到订单增量模型
 
-这个 Demo 解释“订单发生时间”和“数据进入系统时间”不一致时，怎样只重算必要范围。
-它是五个 Demo 中最能验证 Incremental materialization 的场景。
+这个 Demo 解释“订单发生时间”和“数据进入系统时间”不一致时，如何使用订单版本和
+Incremental `merge` 更新结果。它验证的是 dbt-doris 的 Incremental materialization、
+Unique Key 和重复运行路径。
+
+可运行项目：
+[`examples/data-eng-bench-doris-demos/incremental`](../examples/data-eng-bench-doris-demos/incremental/)。
 
 **业务问题**
 
-订单可能在 8 月 1 日发生，但直到 8 月 3 日才进入数仓。如果增量任务只读取“今天新增的数据”，
-8 月 1 日的销售额就会永久偏低。模型需要根据历史延迟分布自动扩大回看窗口，同时处理同一订单
-的后续版本。
+订单可能在 8 月 1 日发生，但直到 8 月 5 日才进入数仓。同一订单还可能在源表中出现新版本。
+如果目标表只追加数据，订单 101 会出现两行，日报收入也会重复。
 
 这里有两个关键时间：
 
@@ -725,22 +765,21 @@ tiktok | 2026-08-02 | 11 | 110 |  80 | 2
 
 | model | materialization | 职责 |
 | --- | --- | --- |
-| <code>order_version_history</code> | Table | 用窗口函数按 <code>order_id + created_at</code> 排出版本，生成 <code>valid_from</code>、<code>valid_to</code> 和当前版本标记 |
-| <code>incremental_daily_sales</code> | Incremental | 每个订单保留当前版本；根据 P95 延迟动态决定回看范围 |
-| <code>channel_latency_analysis</code> | Table | 按渠道计算平均延迟、P50、P95 和延迟区间占比 |
-| <code>revenue_reconciliation_waterfall</code> | Table | 把收入分成按时、迟到 1-2 天、3-7 天和 8 天以上的调整 |
-| <code>late_arrival_metrics</code> | Table | 计算每日完整度、延迟指标和置信区间 |
-| <code>order_data_quality</code> | Table | 标记未来时间、负金额、空客户和极端延迟，生成质量分 |
-| <code>daily_sales_summary</code> | Table | 排除低质量订单，输出每日收入、客户数、完整度和重述风险 |
+| <code>order_version_history</code> | Table | 用窗口函数按 <code>order_id + created_at + event_id</code> 排版本，生成 <code>valid_from</code>、<code>valid_to</code> 和当前版本标记 |
+| <code>incremental_daily_sales</code> | Incremental | 只保留当前版本；首次全量，后续只处理 <code>valid_from</code> 不早于目标表最大 <code>created_at</code> 的记录 |
+| <code>channel_latency_analysis</code> | Table | 按渠道计算订单数、平均到达延迟和最大到达延迟 |
+| <code>revenue_reconciliation_waterfall</code> | Table | 按日把收入分成 1 天内到达和超过 1 天到达两类 |
+| <code>late_arrival_metrics</code> | Table | 按订单发生日统计订单数和最大到达延迟 |
+| <code>order_data_quality</code> | Table | 标记负金额、空客户和到达时间早于订单日期的记录 |
+| <code>daily_sales_summary</code> | Table | 汇总每日订单数、收入、有效订单数和最大到达延迟 |
 
 <code>order_version_history</code> 虽然保存 SCD2 风格字段，但它是普通 Table model，
 不是 <code>dbt snapshot</code>。真正的 Snapshot 生命周期由 Demo 5 覆盖。
 
 ~~~mermaid
 flowchart LR
-    S[ORDERS.ORDERS] --> H[order_version_history<br/>Table]
-    S --> I[incremental_daily_sales<br/>Incremental]
-    H --> I
+    S[dbt_demo_incremental_source.ORDERS] --> H[order_version_history<br/>Table]
+    H --> I[incremental_daily_sales<br/>Incremental]
     I --> C[channel_latency_analysis]
     I --> R[revenue_reconciliation_waterfall]
     I --> L[late_arrival_metrics]
@@ -754,18 +793,18 @@ flowchart LR
 **第一次运行发生什么**
 
 ~~~bash
-dbt run --select order_version_history incremental_daily_sales channel_latency_analysis revenue_reconciliation_waterfall late_arrival_metrics order_data_quality daily_sales_summary
+dbt build --project-dir . --profiles-dir .
 ~~~
 
-目标表尚不存在，<code>is_incremental()</code> 为 false，因此
-<code>incremental_daily_sales</code> 读取全部有效订单。上游答案只要求
-<code>materialized='incremental'</code> 和 <code>unique_key='order_id'</code>。
+目标表尚不存在，<code>is_incremental()</code> 为 false。dbt 先创建
+<code>order_version_history</code>，再创建 Incremental 目标表，最后创建 5 个下游 Table
+和 2 个 Data Test。初始 fixture 有订单 101、102、103，目标表也有 3 行。
 
 **后续运行发生什么**
 
-目标表已经存在时，<code>is_incremental()</code> 为 true。模型从历史订单延迟计算 P95，
-并从目标表的最大 <code>created_at</code> 向前回看“P95 + 2 天”，从而重新捕获迟到订单。
-dbt-for-apache-doris 产品版显式使用：
+目标表已经存在时，<code>is_incremental()</code> 为 true。目标 Database 是
+<code>dbt_demo_incremental</code>，源表是 <code>dbt_demo_incremental_source.ORDERS</code>。
+源表使用 <code>DUPLICATE KEY(event_id)</code> 保存事件版本；目标 Incremental model 配置为：
 
 ~~~jinja
 {{ config(
@@ -774,37 +813,92 @@ dbt-for-apache-doris 产品版显式使用：
     incremental_strategy='merge',
     on_schema_change='append_new_columns',
     distributed_by=['order_id'],
-    buckets=4,
+    buckets=1,
     properties={'replication_num': '1'}
 ) }}
 ~~~
 
-<code>merge</code> 应把同一 <code>order_id</code> 的新版本写入 Doris Unique Key 表，而不是新增重复行。
+脚本向源表增加两个事件：订单 101 的新版本，以及新订单 104：
+
+~~~sql
+INSERT INTO dbt_demo_incremental_source.ORDERS VALUES
+    (4, 101, 1, 'web', 125.00, 'COMPLETED',
+     '2026-08-01 09:00:00', '2026-08-05 09:00:00'),
+    (5, 104, 3, 'mobile', 70.00, 'COMPLETED',
+     '2026-08-01 12:00:00', '2026-08-05 10:00:00');
+~~~
+
+再次运行：
+
+~~~bash
+dbt build --project-dir . --profiles-dir .
+~~~
+
+此时 <code>is_incremental()</code> 为 true。模型只选取
+<code>valid_from</code> 不早于目标表最大 <code>created_at</code> 的新版本和新订单。
+<code>merge</code> 把订单 101 的金额从 100.00 更新为 125.00，不留下两个订单 101。
+
+这个条件只在目标表已经存在的增量运行中编译：
+
+~~~jinja
+where h.is_current = 1
+{% if is_incremental() %}
+  and h.valid_from >= (
+    select coalesce(max(created_at), cast('1900-01-01' as datetime))
+    from {{ this }}
+  )
+{% endif %}
+~~~
 
 一个行为示意：
 
 | 运行 | 源数据变化 | 目标结果 |
 | --- | --- | --- |
-| 第一次 | 订单 A，金额 100 | A=100 |
-| 第二次 | A 出现更新版本，金额 120；新增迟到订单 B=50 | A=120、B=50，A 仍只有一行 |
-| 第三次 | 源表和 model 新增可空列 | 目标表新增该列，历史行可为空 |
+| 第一次 | 订单 101、102、103 | 目标表 3 行 |
+| 第二次 | 101 出现 125.00 的新版本，新增 104=70.00 | 目标表 4 行，101 只有一行 |
+| 无数据变化再次运行 | 源表不再增加事件 | 行数和收入保持不变 |
+
+本 Demo 的 model 配置包含 <code>on_schema_change='append_new_columns'</code>，但当前脚本
+没有新增模型列；因此本次验证的是 <code>merge</code> 和二次运行，Schema Change 需要另加
+一轮专门回归。
+
+最终目标表为：
+
+~~~text
+101 | 2026-08-01 | 125.00 | version 2
+102 | 2026-08-01 |  50.00 | version 1
+103 | 2026-08-02 |  80.00 | version 1
+104 | 2026-08-01 |  70.00 | version 1
+~~~
+
+<code>daily_sales_summary</code> 中 2026-08-01 的总收入为 245.00。
+
+**一条命令运行和校验**
+
+~~~bash
+cd extension/dbt-doris/examples/data-eng-bench-doris-demos/incremental
+DORIS_PORT=19030 DBT_BIN=/path/to/dbt ./scripts/run.sh
+~~~
+
+<code>verify.sh</code> 检查目标表有 4 个唯一订单、订单 101 为 125.00，以及 8 月 1 日日报
+收入为 245.00；它还检查目标表是 `UNIQUE KEY(order_id)`、按 `order_id` Hash 分桶。脚本在
+第二次 build 后再执行一次没有新输入的 build，确认行数和收入不变。
 
 **这个 Demo 需要证明什么**
 
 - 首次全量和后续 Incremental 两条编译路径都能执行；
-- adaptive lookback 能捕获迟到数据；
 - <code>merge</code> 更新相同 <code>unique_key</code>，不会重复插入；
-- <code>on_schema_change='append_new_columns'</code> 行为正确；
 - 七个 model 的结构和数据公式正确；
-- 无数据变化时再次运行，行数和收入保持不变。
-
-原 verifier 分八个阶段检查结构、版本连续性、渠道延迟、收入 waterfall、完整度、
-质量分、每日汇总和幂等性。Doris 产品 verifier 还要增加真实的新增、更新和 schema change。
+- 迟到事件通过 <code>created_at</code> 过滤进入第二次增量；
+- 目标表保持唯一订单，日报收入没有重复计算。
 
 ### 1.6 Demo 5：Snapshot 和当前客户维表
 
 这个 Demo 展示客户属性发生变化后，Doris 中既能保留旧值，也能方便地查询当前值。
 它验证的不是普通 SQL 重建，而是 dbt Snapshot 的跨次运行状态。
+
+可运行项目：
+[`examples/data-eng-bench-doris-demos/snapshot`](../examples/data-eng-bench-doris-demos/snapshot/)。
 
 **业务问题**
 
@@ -815,21 +909,49 @@ dbt-for-apache-doris 产品版显式使用：
 
 | 对象 | 类型 | 职责 |
 | --- | --- | --- |
-| <code>stg_customers</code> | View | 从 <code>CUSTOMER.CUSTOMERS</code> 提供标准化客户数据 |
+| <code>dbt_demo_snapshot_source.CUSTOMERS</code> | Doris Unique Key 源表 | 保存当前客户属性 |
+| <code>stg_customers</code> | View | 从源表提供标准化客户数据 |
 | <code>customer_snapshot</code> | dbt Snapshot | 使用 <code>customer_id</code> 作为唯一键，监控邮箱、类型、电话、姓名和公司名 |
-| <code>dim_customer_current</code> | Table | 只保留 <code>dbt_valid_to is null</code> 的当前记录，并增加分析字段 |
+| <code>dim_customer_current</code> | Table | 只保留 <code>dbt_valid_to is null</code> 的当前记录，并增加版本统计字段 |
 
 Snapshot 配置使用 <code>strategy='check'</code>、<code>check_cols</code> 和
 <code>invalidate_hard_deletes=True</code>。dbt 会维护
 <code>dbt_scd_id</code>、<code>dbt_updated_at</code>、
 <code>dbt_valid_from</code> 和 <code>dbt_valid_to</code>。
 
+`snapshots/customer_snapshot.sql` 的关键配置是：
+
+~~~jinja
+{% snapshot customer_snapshot %}
+{{ config(
+    target_database='dbt_demo_snapshot_history',
+    target_schema='dbt_demo_snapshot_history',
+    unique_key='customer_id',
+    distributed_by=['customer_id'],
+    buckets=1,
+    replication_num='1',
+    strategy='check',
+    check_cols=['email', 'customer_type', 'phone_primary',
+                'first_name', 'last_name', 'company_name'],
+    invalidate_hard_deletes=True
+) }}
+
+select * from {{ ref('stg_customers') }}
+{% endsnapshot %}
+~~~
+
+下游 `dim_customer_current` 只选择 `dbt_valid_to is null` 的行，再按 `customer_id` 统计
+历史版本数。因此 Snapshot 表保留历史，普通 Table model 提供当前业务视图。
+
+当前 Demo 的 Snapshot history Database 是 <code>dbt_demo_snapshot_history</code>，当前维表
+Database 是 <code>dbt_demo_snapshot</code>。
+
 **一次客户变更后的结果**
 
 | customer_id | email | dbt_valid_from | dbt_valid_to | 含义 |
 | --- | --- | --- | --- | --- |
-| C001 | old@example.com | T1 | T2 | 已关闭的旧版本 |
-| C001 | new@example.com | T2 | NULL | 当前版本 |
+| 1 | alice@example.com | T1 | T2 | 已关闭的旧版本 |
+| 1 | alice.new@example.com | T2 | NULL | 当前版本 |
 
 如果客户从源表删除，<code>invalidate_hard_deletes=True</code> 应关闭其当前版本，而不是继续
 把它当作有效客户。
@@ -838,33 +960,62 @@ Snapshot 配置使用 <code>strategy='check'</code>、<code>check_cols</code> �
 
 ~~~mermaid
 flowchart LR
-    A[CUSTOMER.CUSTOMERS] --> B[stg_customers<br/>View]
+    A[dbt_demo_snapshot_source.CUSTOMERS] --> B[stg_customers<br/>View]
     B --> C[customer_snapshot<br/>SCD Type 2]
     C --> D[dim_customer_current<br/>Table]
 ~~~
 
 ~~~bash
-dbt run --select stg_customers
-dbt snapshot --select customer_snapshot
-dbt run --select dim_customer_current
+dbt run --project-dir . --profiles-dir . --select stg_customers
+dbt snapshot --project-dir . --profiles-dir . --select customer_snapshot --threads 1
+dbt run --project-dir . --profiles-dir . --select dim_customer_current
+dbt test --project-dir . --profiles-dir . --select dim_customer_current --threads 1
 ~~~
 
-1. <code>dbt run</code> 先创建客户 staging view。
-2. <code>dbt snapshot</code> 比较当前 source 与已有 snapshot 表，插入新版本并关闭旧版本。
-3. 最后创建 <code>dim_customer_current</code>，输出每个客户一行，并增加
-   <code>days_since_last_update</code>、<code>total_versions</code> 和
-   <code>is_recently_changed</code>。
+1. <code>setup.sql</code> 创建源表、目标 Database 和 Snapshot history Database；源表使用
+   <code>UNIQUE KEY(customer_id)</code>，允许后续 UPDATE 和 DELETE。
+2. <code>dbt debug</code> 验证 Doris 连接，<code>dbt run</code> 创建
+   <code>stg_customers</code> View。
+3. 第一次 <code>dbt snapshot</code> 创建 history 表，写入两个当前客户版本。
+4. <code>dbt run</code> 创建 <code>dim_customer_current</code>，只选择
+   <code>dbt_valid_to is null</code> 的版本，并计算 <code>total_versions</code> 和
+   <code>has_history</code>。
+5. <code>dbt test</code> 执行当前维表的 not-null、unique 和 accepted-values 测试。
 
 **怎样验证第二次运行**
 
-1. 第一次执行 Snapshot，记录客户当前版本。
-2. 修改一个受 <code>check_cols</code> 监控的字段，再删除另一个客户。
-3. 第二次执行 Snapshot 和当前维表。
-4. 检查变更客户有一条关闭的旧版本和一条新的当前版本；删除客户没有当前版本。
-5. 检查 <code>dim_customer_current</code> 每个仍存在的客户正好一行，属性与源表一致。
+1. 修改客户 1 的 email 和 customer_type，并从源表删除客户 2：
+
+~~~sql
+UPDATE dbt_demo_snapshot_source.CUSTOMERS
+SET email = 'alice.new@example.com', customer_type = 'INDIVIDUAL_PLUS'
+WHERE customer_id = 1;
+
+DELETE FROM dbt_demo_snapshot_source.CUSTOMERS
+WHERE customer_id = 2;
+~~~
+
+2. 第二次执行 <code>dbt snapshot</code>、<code>dbt run --select dim_customer_current</code>
+   和 <code>dbt test</code>。
+3. Snapshot 应关闭客户 1 的旧版本并插入新版本；客户 2 的当前版本应被关闭。
+4. <code>dim_customer_current</code> 只剩客户 1，且 <code>total_versions=2</code>、
+   <code>has_history=1</code>。
+
+仓库脚本把上述步骤封装为：
+
+~~~bash
+cd extension/dbt-doris/examples/data-eng-bench-doris-demos/snapshot
+DORIS_PORT=19030 DBT_BIN=/path/to/dbt ./scripts/run.sh
+~~~
+
+最终 history 表为 3 行：客户 1 两个版本，客户 2 一个已关闭版本；当前维表为 1 行。
+<code>verify.sh</code> 检查总行数、客户 1 的旧/当前版本、客户 2 已关闭且没有当前版本，
+以及当前维表只保留 `alice.new@example.com`。
 
 这个 Demo 最终证明 Snapshot helper relation、SCD 元数据、更新/删除语义、下游
-<code>ref()</code> 和重复运行能够在 Doris 上协同工作。
+<code>ref()</code> 和重复运行能够在 Doris 上协同工作。当前配置使用
+<code>strategy='check'</code>、<code>invalidate_hard_deletes=True</code>，没有启用
+<code>hard_deletes='new_record'</code>，因此删除记录通过关闭原版本表示。
 
 ### 1.7 统一执行链
 
@@ -899,16 +1050,16 @@ dbt run --select dim_customer_current
 
 ### 1.9 本地端到端结果
 
-2026-08-19 在本地单 FE/单 BE Doris 集群上，用当前 checkout 的 `dbt-doris`、dbt Core
-1.12.2 和 `DORIS_PORT=19030` 从仓库中的四个脚本目录重新执行，结果如下：
+2026-08-19 在本地单 FE/单 BE Doris 集群上，用当前 checkout 的 `dbt-doris` 1.0.0、
+dbt Core 1.12.2 和 `DORIS_PORT=19030` 从仓库中的五个脚本目录重新执行，结果如下：
 
 | Demo | 执行内容 | 结果 |
 | --- | --- | --- |
+| 每日订单 | 1 个 Table、4 个 Data Test、2 次 `dbt build`、Async MV 创建和重复运行 | 通过；3 个有效订单，按日收入 100.00/80.00/40.20，月收入 220.20，MV Task 成功 |
 | 客户地域 | 2 个 View、1 个 Table、2 次 `dbt build`、2 个 Data Test | 通过；CA=2 客户/2 订单/145.00，NY=1/1/50.00 |
 | 广告合并 | 3 个 Seed、3 个 staging View、1 个 union Table、`dbt_utils` 唯一性测试、2 次 build | 通过；去重后 6 行 |
-| 迟到订单 | 版本历史 Table、Incremental `merge`、5 个下游 Table、2 个内置 Data Test、源数据更新后二次 build | 通过；4 个唯一订单，订单 101 更新为 125.00，8 月 1 日收入 245.00 |
+| 迟到订单 | 版本历史 Table、Incremental `merge`、5 个下游 Table、2 个 Data Test、源数据更新后增量 build，再做一次无输入变化 build | 通过；4 个唯一订单，订单 101 更新为 125.00，8 月 1 日收入 245.00 |
 | 客户 Snapshot | staging View、Snapshot 首轮、当前维表、3 个 Data Test；修改客户 1 并删除客户 2 后再次 snapshot | 通过；3 条历史记录，客户 1 一条关闭旧版本和一条当前版本，客户 2 无当前版本 |
 
 每个脚本都在开始时重建自己的专用 fixture database，`verify.sh` 再直接查询 Doris
-结果表。广告 Seed 的空表头行由 staging 的 `ad_date is not null` 过滤；这条过滤也保留在
-示例中，便于后续把 seed 行为单独纳入回归测试。
+结果表。五个 Demo 彼此不读取对方的 Database，可以按任意顺序独立执行。

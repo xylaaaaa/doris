@@ -9,3 +9,4 @@ DORIS_PORT="${DORIS_PORT:-9030}"
 "$DBT_BIN" debug --project-dir . --profiles-dir .
 "$DBT_BIN" build --project-dir . --profiles-dir .
 "$DBT_BIN" build --project-dir . --profiles-dir .
+./scripts/verify.sh
