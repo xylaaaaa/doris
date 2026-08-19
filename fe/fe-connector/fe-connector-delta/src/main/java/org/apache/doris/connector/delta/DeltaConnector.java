@@ -134,6 +134,7 @@ public final class DeltaConnector implements Connector {
                 configuration.set(entry.getKey(), entry.getValue());
             }
         }
+        DeltaStorageProperties.configureHadoop(configuration, properties);
         return configuration;
     }
 

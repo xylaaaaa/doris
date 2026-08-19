@@ -45,6 +45,8 @@ public:
 
 private:
     static const std::string _SCHEME_S3;
+    static const std::string _SCHEME_S3A;
+    static const std::string _SCHEME_S3N;
     static const std::string _SCHEME_ABFS;
     static const std::string _SCHEME_ABFSS;
     static const std::string _SCHEME_WASB;

@@ -98,6 +98,7 @@ public class DeltaConnectorVerticalSliceTest {
     public void testMetadataAndScanPlanUseOnePinnedSnapshot() throws Exception {
         Map<String, String> properties = new LinkedHashMap<>(deltaProperties("delta/path_table"));
         properties.put("s3.endpoint", "https://storage.example.test");
+        properties.put("s3.region", "us-west-2");
         DeltaPathCatalogAdapter adapter = pathAdapter(properties);
         DeltaConnectorMetadata metadata = new DeltaConnectorMetadata(adapter, properties);
 
@@ -132,11 +133,65 @@ public class DeltaConnectorVerticalSliceTest {
         Assertions.assertEquals("parquet", scanProperties.get("file_format_type"));
         Assertions.assertEquals("https://storage.example.test",
                 scanProperties.get("location.s3.endpoint"));
+        Assertions.assertEquals("https://storage.example.test",
+                scanProperties.get("location.AWS_ENDPOINT"));
+        Assertions.assertEquals("us-west-2", scanProperties.get("location.AWS_REGION"));
         Assertions.assertFalse(scanProperties.containsKey("path_partition_keys"));
 
         TFileRangeDesc thriftRange = new TFileRangeDesc();
         ranges.get(0).populateRangeParams(new TTableFormatFileDesc(), thriftRange);
         Assertions.assertEquals(TFileFormatType.FORMAT_PARQUET, thriftRange.getFormatType());
+    }
+
+    @Test
+    public void testStoragePropertiesFeedKernelAndNativeBackend() {
+        Map<String, String> properties = new LinkedHashMap<>();
+        properties.put("AWS_ENDPOINT", "https://storage.example.test");
+        properties.put("AWS_REGION", "us-west-2");
+        properties.put("AWS_ACCESS_KEY", "temporary-ak");
+        properties.put("AWS_SECRET_KEY", "temporary-sk");
+        properties.put("AWS_TOKEN", "temporary-session");
+        properties.put("use_path_style", "true");
+
+        Configuration configuration = DeltaConnector.buildHadoopConfiguration(properties);
+        Assertions.assertEquals("https://storage.example.test",
+                configuration.get("fs.s3a.endpoint"));
+        Assertions.assertEquals("us-west-2", configuration.get("fs.s3a.endpoint.region"));
+        Assertions.assertEquals("temporary-ak", configuration.get("fs.s3a.access.key"));
+        Assertions.assertEquals("temporary-sk", configuration.get("fs.s3a.secret.key"));
+        Assertions.assertEquals("temporary-session", configuration.get("fs.s3a.session.token"));
+        Assertions.assertEquals("org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider",
+                configuration.get("fs.s3a.aws.credentials.provider"));
+        Assertions.assertEquals("true", configuration.get("fs.s3a.path.style.access"));
+
+        Map<String, String> backend = DeltaStorageProperties.toBackendProperties(properties);
+        Assertions.assertEquals("https://storage.example.test", backend.get("AWS_ENDPOINT"));
+        Assertions.assertEquals("us-west-2", backend.get("AWS_REGION"));
+        Assertions.assertEquals("temporary-ak", backend.get("AWS_ACCESS_KEY"));
+        Assertions.assertEquals("temporary-sk", backend.get("AWS_SECRET_KEY"));
+        Assertions.assertEquals("temporary-session", backend.get("AWS_TOKEN"));
+        Assertions.assertEquals("true", backend.get("use_path_style"));
+
+        Map<String, String> regionOnly = DeltaStorageProperties.toBackendProperties(
+                Map.of("s3.region", "eu-west-1"));
+        Assertions.assertEquals("s3.eu-west-1.amazonaws.com", regionOnly.get("AWS_ENDPOINT"));
+        Assertions.assertEquals("eu-west-1", regionOnly.get("AWS_REGION"));
+
+        Map<String, String> aliases = DeltaStorageProperties.toBackendProperties(Map.of(
+                "aws.endpoint", "https://alias.example.test",
+                "region", "local",
+                "access_key", "alias-ak",
+                "secret_key", "alias-sk"));
+        Assertions.assertEquals("https://alias.example.test", aliases.get("AWS_ENDPOINT"));
+        Assertions.assertEquals("local", aliases.get("AWS_REGION"));
+        Assertions.assertEquals("alias-ak", aliases.get("AWS_ACCESS_KEY"));
+        Assertions.assertEquals("alias-sk", aliases.get("AWS_SECRET_KEY"));
+
+        Assertions.assertThrows(IllegalArgumentException.class,
+                () -> DeltaStorageProperties.toBackendProperties(
+                        Map.of("AWS_ACCESS_KEY", "incomplete-ak")));
+        Assertions.assertDoesNotThrow(() -> DeltaStorageProperties.toBackendProperties(Map.of(
+                "provider", "AZURE", "AWS_TOKEN", "azure-sas")));
     }
 
     @Test
@@ -255,6 +310,7 @@ public class DeltaConnectorVerticalSliceTest {
         Map<String, String> properties = deltaProperties("delta/path_table");
         properties.put(DeltaConnectorProperties.WRITE_ENABLED, "true");
         properties.put("fs.s3a.access.key", "test-key");
+        properties.put("fs.s3a.secret.key", "test-secret");
         properties.put(DeltaConnectorProperties.UNITY_TOKEN, "control-plane-secret");
         DeltaPathCatalogAdapter adapter = pathAdapter(properties);
         Engine engine = DefaultEngine.create(new Configuration());

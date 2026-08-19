@@ -81,10 +81,9 @@ public final class DeltaScanPlanProvider implements ConnectorScanPlanProvider {
             scanProperties.put("path_partition_keys",
                     String.join(",", snapshot.getPartitionColumnNames()));
         }
-        for (Map.Entry<String, String> entry : properties.entrySet()) {
-            if (isBackendStorageProperty(entry.getKey())) {
-                scanProperties.put("location." + entry.getKey(), entry.getValue());
-            }
+        for (Map.Entry<String, String> entry : DeltaStorageProperties
+                .toBackendProperties(properties).entrySet()) {
+            scanProperties.put("location." + entry.getKey(), entry.getValue());
         }
         for (Map.Entry<String, String> entry : catalogAdapter
                 .getBackendStorageProperties((DeltaTableHandle) handle).entrySet()) {
@@ -125,10 +124,6 @@ public final class DeltaScanPlanProvider implements ConnectorScanPlanProvider {
     }
 
     static boolean isBackendStorageProperty(String key) {
-        return key.startsWith("fs.") || key.startsWith("dfs.") || key.startsWith("hadoop.")
-                || key.startsWith("hive.") || key.startsWith("s3.") || key.startsWith("s3a.")
-                || key.startsWith("cos.") || key.startsWith("oss.") || key.startsWith("obs.")
-                || key.startsWith("azure.") || key.startsWith("adls.")
-                || key.startsWith("gcs.") || key.startsWith("google.") || key.equals("uri");
+        return DeltaStorageProperties.isBackendProperty(key);
     }
 }

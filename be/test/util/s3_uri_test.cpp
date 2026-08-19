@@ -40,6 +40,18 @@ TEST_F(S3URITest, LocationParsing) {
     EXPECT_EQ("path/to/file", uri1.get_key());
 }
 
+TEST_F(S3URITest, S3CompatibleSchemes) {
+    S3URI s3a("s3a://bucket/path/to/file.parquet");
+    EXPECT_TRUE(s3a.parse());
+    EXPECT_EQ("bucket", s3a.get_bucket());
+    EXPECT_EQ("path/to/file.parquet", s3a.get_key());
+
+    S3URI s3n("s3n://bucket/another/file.parquet");
+    EXPECT_TRUE(s3n.parse());
+    EXPECT_EQ("bucket", s3n.get_bucket());
+    EXPECT_EQ("another/file.parquet", s3n.get_key());
+}
+
 TEST_F(S3URITest, PathLocationParsing) {
     std::string p1 = "s3://bucket/path/";
     S3URI uri1(p1);

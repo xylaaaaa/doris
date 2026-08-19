@@ -53,8 +53,7 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
         this.baseConfiguration = new Configuration(baseConfiguration);
         this.catalogProperties = Collections.unmodifiableMap(
                 new LinkedHashMap<>(catalogProperties));
-        UnityDeltaStorageProperties.configureS3HadoopProperties(
-                this.baseConfiguration, this.catalogProperties);
+        DeltaStorageProperties.configureHadoop(this.baseConfiguration, this.catalogProperties);
     }
 
     @Override

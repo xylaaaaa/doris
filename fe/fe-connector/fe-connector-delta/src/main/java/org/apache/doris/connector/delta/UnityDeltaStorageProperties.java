@@ -31,11 +31,11 @@ import java.util.Map;
 
 /** Converts UC Delta credentials into the properties consumed by Doris BE readers. */
 final class UnityDeltaStorageProperties {
-    private static final String S3_ENDPOINT = "AWS_ENDPOINT";
-    private static final String S3_REGION = "AWS_REGION";
-    private static final String S3_ACCESS_KEY = "AWS_ACCESS_KEY";
-    private static final String S3_SECRET_KEY = "AWS_SECRET_KEY";
-    private static final String S3_TOKEN = "AWS_TOKEN";
+    private static final String S3_ENDPOINT = DeltaStorageProperties.S3_ENDPOINT;
+    private static final String S3_REGION = DeltaStorageProperties.S3_REGION;
+    private static final String S3_ACCESS_KEY = DeltaStorageProperties.S3_ACCESS_KEY;
+    private static final String S3_SECRET_KEY = DeltaStorageProperties.S3_SECRET_KEY;
+    private static final String S3_TOKEN = DeltaStorageProperties.S3_TOKEN;
     private static final String STORAGE_PROVIDER = "provider";
     private static final String AZURE_PROVIDER = "AZURE";
 
@@ -115,33 +115,16 @@ final class UnityDeltaStorageProperties {
                 + accountHost.substring(dfsMarker + 4);
     }
 
-    static void configureS3HadoopProperties(
-            org.apache.hadoop.conf.Configuration configuration,
-            Map<String, String> catalogProperties) {
-        String region = firstNonBlank(catalogProperties,
-                S3_REGION, "s3.region", "client.region", "aws.region");
-        if (region == null) {
-            return;
-        }
-        String endpoint = firstNonBlank(catalogProperties,
-                S3_ENDPOINT, "s3.endpoint", "aws.endpoint");
-        if (endpoint == null) {
-            endpoint = "s3." + region + ".amazonaws.com";
-        }
-        configuration.set("fs.s3a.endpoint", endpoint);
-        configuration.set("fs.s3a.endpoint.region", region);
-    }
-
     private static Map<String, String> awsProperties(
             AwsCredentials credentials, Map<String, String> catalogProperties) {
-        String region = firstNonBlank(catalogProperties,
+        String region = DeltaStorageProperties.firstNonBlank(catalogProperties,
                 S3_REGION, "s3.region", "client.region", "aws.region");
         if (region == null) {
             throw new IllegalArgumentException(
                     "Unity Delta tables on S3 require 's3.region' so Doris BE can create "
                             + "a native S3 client");
         }
-        String endpoint = firstNonBlank(catalogProperties,
+        String endpoint = DeltaStorageProperties.firstNonBlank(catalogProperties,
                 S3_ENDPOINT, "s3.endpoint", "aws.endpoint");
         if (endpoint == null) {
             endpoint = "s3." + region + ".amazonaws.com";
@@ -165,15 +148,5 @@ final class UnityDeltaStorageProperties {
                     "Unity Catalog returned an empty AWS " + credentialName);
         }
         return value;
-    }
-
-    private static String firstNonBlank(Map<String, String> properties, String... keys) {
-        for (String key : keys) {
-            String value = properties.get(key);
-            if (value != null && !value.trim().isEmpty()) {
-                return value.trim();
-            }
-        }
-        return null;
     }
 }

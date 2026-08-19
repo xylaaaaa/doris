@@ -206,11 +206,7 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
     private Map<String, String> getBackendStoragePropertiesForWrite(
             DeltaTableHandle tableHandle) {
         Map<String, String> storageProperties = new LinkedHashMap<>();
-        for (Map.Entry<String, String> entry : properties.entrySet()) {
-            if (DeltaScanPlanProvider.isBackendStorageProperty(entry.getKey())) {
-                storageProperties.put(entry.getKey(), entry.getValue());
-            }
-        }
+        storageProperties.putAll(DeltaStorageProperties.toBackendProperties(properties));
         storageProperties.putAll(catalogAdapter.getBackendStoragePropertiesForWrite(tableHandle));
         return storageProperties;
     }
