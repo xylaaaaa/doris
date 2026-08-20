@@ -196,6 +196,10 @@ suite("test_native_delta_unity", "p0,external") {
 
         order_qt_databases "SHOW DATABASES FROM ${catalogName}"
         order_qt_tables "SHOW TABLES FROM ${catalogName}.`default`"
+        test {
+            sql "SELECT COUNT(*) FROM ${catalogName}.`default`.blocked"
+            exception "Table [blocked] does not exist in database"
+        }
         order_qt_count "SELECT COUNT(*) FROM ${catalogName}.`default`.customer"
         order_qt_filtered """
             SELECT c_custkey, c_name
