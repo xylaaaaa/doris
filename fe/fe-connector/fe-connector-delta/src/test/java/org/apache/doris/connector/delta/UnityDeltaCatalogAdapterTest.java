@@ -105,8 +105,11 @@ public class UnityDeltaCatalogAdapterTest {
                 ConnectorCapability.SUPPORTS_VENDED_CREDENTIALS));
         Assertions.assertEquals(List.of("default"),
                 connector.getMetadata(null).listDatabaseNames(null));
-        Assertions.assertEquals(List.of("events"),
+        Assertions.assertEquals(List.of("events", "catalog_managed", "propertyless",
+                        "missing_type"),
                 connector.getMetadata(null).listTableNames(null, "default"));
+        Assertions.assertTrue(connector.getMetadata(null)
+                .getTableHandle(null, "default", "blocked").isEmpty());
         ConnectorTableHandle handle = connector.getMetadata(null)
                 .getTableHandle(null, "default", "events").orElseThrow();
         Assertions.assertEquals(1, ((DeltaTableHandle) handle).getSnapshotVersion());
@@ -407,6 +410,10 @@ public class UnityDeltaCatalogAdapterTest {
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
                     + "\"data_source_format\":\"DELTA\","
                     + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]},"
+                    + "{\"name\":\"catalog_managed\",\"catalog_name\":\"main\","
+                    + "\"schema_name\":\"default\",\"table_type\":\"MANAGED\","
+                    + "\"data_source_format\":\"DELTA\","
+                    + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]},"
                     + "{\"name\":\"blocked\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"MANAGED\","
                     + "\"data_source_format\":\"DELTA\","
@@ -415,6 +422,14 @@ public class UnityDeltaCatalogAdapterTest {
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
                     + "\"data_source_format\":\"DELTA\","
                     + "\"manifest_capabilities\":[]},"
+                    + "{\"name\":\"propertyless\",\"catalog_name\":\"main\","
+                    + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
+                    + "\"data_source_format\":\"DELTA\","
+                    + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]},"
+                    + "{\"name\":\"missing_type\",\"catalog_name\":\"main\","
+                    + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
+                    + "\"data_source_format\":\"DELTA\","
+                    + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]},"
                     + "{\"name\":\"raw\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
                     + "\"data_source_format\":\"PARQUET\"}]}");

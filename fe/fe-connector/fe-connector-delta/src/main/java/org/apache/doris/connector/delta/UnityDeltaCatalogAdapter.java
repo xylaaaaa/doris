@@ -76,6 +76,11 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
 
     @Override
     public Optional<DeltaTableHandle> getTableHandle(String databaseName, String tableName) {
+        // Unity only vends external-engine credentials for tables advertising this capability.
+        // Apply the same gate here as in listTableNames so a direct name lookup cannot bypass it.
+        if (!client.listDeltaTables(catalogName, databaseName).contains(tableName)) {
+            return Optional.empty();
+        }
         Optional<DeltaLoadTableResponse> response = client.loadTable(
                 catalogName, databaseName, tableName);
         if (response.isEmpty()) {
