@@ -54,6 +54,8 @@ Databricks 为外部 Delta client 提供的是 Unity REST 路线。Unity adapter
 
 这里的 Unity REST 指表发现、凭证和 catalog 状态相关 API，不是上一节的 Iceberg REST endpoint。
 
+Databricks 只会向声明了 `HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT` 的表发放外部引擎读取凭证。Doris 列举或加载表时应使用该能力声明做前置判断，而不是看到表类型是 Delta 就直接访问对象存储。
+
 Delta Kernel 或其他 Delta 格式实现负责解析 transaction log、checkpoint 和 table features。两者不是替代关系：Unity 是 catalog 控制面，Delta 格式层负责构造 snapshot。
 
 特别需要区分：
@@ -103,12 +105,12 @@ trino.connector.name = delta_lake
 
 ## 4. Doris 建议的最小方向
 
-| 改造性质 | 组成 | 方向 | 为什么需要 |
-| --- | --- | --- | --- |
-| 新增 | Native `deltalake` catalog | 作为 Doris 统一的 Delta 入口 | 避免把 Databricks 逻辑写死在 scanner 中 |
-| 新增 | Catalog adapter | Unity 优先，未来可扩展 path/HMS/Glue | 不同 catalog 的表发现、权限和提交方式不同 |
-| 引入/集成 | Delta 格式层 | 优先评估 Delta Kernel | 负责 transaction log、checkpoint、snapshot 和 Delta table features |
-| 复用并接入 | Doris 原生数据面 | 继续使用 Doris Parquet reader 和执行引擎 | 保留 Doris 的扫描、优化和执行能力 |
+| 组成 | 首期方向 | 解决的问题 |
+| --- | --- | --- |
+| `deltalake` catalog 入口 | 新增一个统一的 Delta 入口 | 让 Doris 通过表名或路径找到 Delta 表 |
+| Catalog adapter | 先实现 Unity adapter，path 作为另一种 adapter | 隔离 Unity、path、未来 HMS/Glue 的发现和权限差异 |
+| Delta 格式层 | 优先评估 Delta Kernel | 解析 transaction log、checkpoint、snapshot 和 table features |
+| Doris 数据面 | 复用现有 Parquet reader 和执行引擎 | 不重新实现文件扫描和 SQL 执行 |
 
 这个方向不意味着现在就决定具体实现：
 

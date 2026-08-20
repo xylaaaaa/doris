@@ -7,6 +7,8 @@
 > Doris 代码复核基线：`2e8fd03e8c0b19a65fab7fd94f7c0318afc28995`
 >
 > 范围：只讨论 Databricks Unity Catalog 中的 Iceberg 外部访问及 Doris 现有 Iceberg 能力；native Delta Lake Catalog 见[独立调研](databricks-native-delta-lake-catalog-research.md)。
+>
+> Azure 实际联调环境的资源清单和操作步骤见[Databricks Azure Managed Iceberg 与 Doris 联调环境搭建](databricks-azure-iceberg-e2e-setup.md)。
 
 ## 1. 直接结论
 
@@ -153,6 +155,28 @@ Databricks managed Iceberg 也不是通用 Iceberg 能力的无条件超集。�
 | 表与操作 | managed、foreign、Delta Iceberg reads 以及 Databricks 特有 DDL/DML 限制尚未形成正式支持矩阵 |
 | 治理 | UC row filter/column mask 需要 server-side planning，普通文件扫描不能等价执行 |
 | 测试 | 缺少覆盖三云、表类型、读写和凭证过期场景的完整真实环境结果 |
+
+### 6.2.1 Doris Iceberg 能力与证据矩阵
+
+以下矩阵把“代码存在”和“真实环境已经验证”分开。`代码/单测` 不等于客户环境已经可用。
+
+| 场景 | Doris 当前判断 | 证据状态 | 下一步 |
+| --- | --- | --- | --- |
+| Azure managed Iceberg + customer-managed ADLS | 目标支持路径：UC REST 返回 `adls.sas-token.*`，Doris 转换为 ABFS SAS 并读取 `abfss://` | 代码、162 个 FE 单测、FE/BE 构建已通过；真实环境待验证 | 用联调环境完成 `loadTable` 和 `SELECT` |
+| Azure external Iceberg + External Location | 协议上应复用 Azure FileIO 和 vended SAS；具体表能力由 UC 返回 capability 决定 | 未做本轮真实验证 | 主场景通过后补一张 external table |
+| Azure managed Iceberg + default storage | 外部 FileIO 和 credential vending 是 Databricks 官方限制 | 官方文档已确认 | 作为预期失败场景记录，不作为 Doris 缺陷 |
+| AWS managed/external Iceberg + vended credentials | Doris 已有 AWS 基础路径 | 代码已有；本轮未做回归环境验证 | 后续用现有 AWS 环境回归 |
+| GCP managed/external Iceberg + vended credentials | 当前没有系统认证结论 | 未验证 | 单独准备 GCP 环境或明确暂不支持 |
+| Foreign Iceberg | UC 对 credential vending 和刷新有额外限制，不能按 managed Iceberg 推断 | 官方边界已记录；Doris E2E 未验证 | 按 UC capability 单独判断 |
+| Row filter/column mask | 普通文件扫描不能自动等价执行 UC 策略 | 官方边界已记录 | 暂不宣称支持，另做 server-side planning 调研 |
+| 长查询跨越 SAS expiration | 当前 PR 消费当前 table load 返回的 SAS，未增加查询中途刷新 | 代码范围已确认 | 作为后续独立能力，不纳入首轮通过条件 |
+
+能力状态使用以下证据等级：
+
+- **官方限制**：Databricks 官方明确不支持或有前置条件；
+- **代码/单测**：Doris 代码和本地测试已覆盖；
+- **真实环境**：已在 Azure Databricks + ADLS 中完成端到端验证；
+- **未验证**：不能据此对客户承诺支持。
 
 这里需要修正一个容易误读的说法：**Doris 不是完全不支持 Azure。** Doris 已有 Azure account key/OAuth 等静态存储配置；当前未验证完整的是 Databricks Iceberg REST 返回的 table-scoped `adls.sas-token.*` 数据访问链路。
 
