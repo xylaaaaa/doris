@@ -413,20 +413,30 @@ final class UnityDeltaClient {
             return Set.of();
         }
         Set<String> names = new HashSet<>();
-        if (capabilities.isArray()) {
-            for (JsonNode capability : capabilities) {
-                if (capability.isTextual()) {
-                    names.add(capability.asText());
-                }
-            }
-        } else if (capabilities.isObject()) {
-            capabilities.fields().forEachRemaining(entry -> {
-                if (entry.getValue().asBoolean(false)) {
-                    names.add(entry.getKey());
-                }
-            });
-        }
+        collectCapabilityNames(capabilities, names);
         return names;
+    }
+
+    private static void collectCapabilityNames(JsonNode node, Set<String> names) {
+        if (node.isTextual()) {
+            names.add(node.asText());
+            return;
+        }
+        if (node.isArray()) {
+            for (JsonNode child : node) {
+                collectCapabilityNames(child, names);
+            }
+            return;
+        }
+        if (!node.isObject()) {
+            return;
+        }
+        node.fields().forEachRemaining(entry -> {
+            if (entry.getValue().isBoolean() && entry.getValue().asBoolean()) {
+                names.add(entry.getKey());
+            }
+            collectCapabilityNames(entry.getValue(), names);
+        });
     }
 
     static String credentialRegion(DeltaStorageCredentialConfig config) {
