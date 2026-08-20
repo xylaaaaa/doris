@@ -156,6 +156,18 @@ Spark 和 Starburst 使用已有的完整 Delta 实现；ClickHouse 从自研迁
 
 这些问题应通过 PoC 和后续详细设计关闭，不在本调研文档中预设实现答案。
 
+### 6.3 当前验证状态（实验性代码）
+
+当前工作树已经有一个实验性的 native Delta vertical slice，用于验证方向，不代表生产支持承诺：
+
+- 已验证 path Delta，以及通过 Unity REST 按表名发现的 external、普通 managed 和 catalog-managed 读取链路；catalog-managed 读取会走 catalog-held snapshot/log tail，不退化为单纯扫描对象存储路径。
+- 已接入 Delta Kernel 4.3.1 做 snapshot、分区文件规划和受限 table-feature 校验，数据文件继续复用 Doris 原生 Parquet 扫描。
+- 已验证 external 和 catalog-managed 的 append 事务样例；尚未实现完整的 create、UPDATE、DELETE、MERGE 和 managed write 产品能力。
+- 已验证 Unity 读取能力声明、凭证操作类型和过期时间的 fail-closed 校验；AWS/Azure 的初始临时凭证可映射到 FE/BE。BE 长查询中的凭证续期、GCS OAuth 数据面和真实 Databricks 三云联调仍未完成。
+- 本地 Delta fixtures、FE 单测和隔离 FE/BE 回归已通过；这些测试不能替代真实 Databricks workspace 的权限、网络、凭证续期和 catalog-commit 验收。
+
+因此当前结论是“native Delta 方向可行，读链路已有可运行原型”，而不是“Doris 已经完整支持 Databricks Delta”。
+
 ## 7. 主要官方资料
 
 ### Apache Doris
