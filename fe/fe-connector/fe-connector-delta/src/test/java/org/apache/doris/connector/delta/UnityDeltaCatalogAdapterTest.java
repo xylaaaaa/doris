@@ -173,6 +173,10 @@ public class UnityDeltaCatalogAdapterTest {
         Assertions.assertEquals("s3.us-west-2.amazonaws.com", aws.get("AWS_ENDPOINT"));
         Assertions.assertEquals("us-west-2", aws.get("AWS_REGION"));
         Assertions.assertFalse(aws.containsValue(TEST_TOKEN));
+        Map<String, String> responseRegion = UnityDeltaStorageProperties.toBackendProperties(
+                "s3://delta-bucket/tables/events", response, Map.of());
+        Assertions.assertEquals("us-east-2", responseRegion.get("AWS_REGION"));
+        Assertions.assertEquals("s3.us-east-2.amazonaws.com", responseRegion.get("AWS_ENDPOINT"));
         Assertions.assertThrows(IllegalArgumentException.class,
                 () -> UnityDeltaStorageProperties.toBackendProperties(
                         "s3://delta-bucket/tables/events", response, Map.of(),
@@ -405,7 +409,8 @@ public class UnityDeltaCatalogAdapterTest {
                     + "\"operation\":\"" + operation + "\",\"config\":{"
                     + "\"s3.access-key-id\":\"temporary-ak\","
                     + "\"s3.secret-access-key\":\"temporary-sk\","
-                    + "\"s3.session-token\":\"temporary-session\"},"
+                    + "\"s3.session-token\":\"temporary-session\","
+                    + "\"client.region\":\"us-east-2\"},"
                     + "\"expiration-time-ms\":" + (System.currentTimeMillis() + 3600000) + "}]}");
             return;
         }

@@ -19,6 +19,11 @@ package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.DorisConnectorException;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
+import com.fasterxml.jackson.databind.module.SimpleModule;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
@@ -38,6 +43,7 @@ import io.unitycatalog.client.delta.api.DeltaTemporaryCredentialsApi;
 import io.unitycatalog.client.delta.model.DeltaCredentialOperation;
 import io.unitycatalog.client.delta.model.DeltaCredentialsResponse;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.delta.model.DeltaStorageCredentialConfig;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.ListSchemasResponse;
 import io.unitycatalog.client.model.ListTablesResponse;
@@ -121,6 +127,7 @@ final class UnityDeltaClient {
         this.workspaceUri = workspaceUri;
         this.tokenProvider = tokenProvider;
         this.apiClient = apiClient;
+        registerCredentialConfigDeserializer(apiClient);
         this.schemasApi = new SchemasApi(apiClient);
         this.tablesApi = new TablesApi(apiClient);
         this.deltaTablesApi = new DeltaTablesApi(apiClient);
@@ -321,6 +328,80 @@ final class UnityDeltaClient {
         return table.getDataSourceFormat() == DataSourceFormat.DELTA
                 && (table.getTableType() == TableType.MANAGED
                 || table.getTableType() == TableType.EXTERNAL);
+    }
+
+    static String credentialRegion(DeltaStorageCredentialConfig config) {
+        if (config instanceof DeltaStorageCredentialConfigWithRegion) {
+            return ((DeltaStorageCredentialConfigWithRegion) config).getRegion();
+        }
+        return null;
+    }
+
+    private static void registerCredentialConfigDeserializer(ApiClient apiClient) {
+        ObjectMapper mapper = apiClient.getObjectMapper();
+        SimpleModule module = new SimpleModule("doris-delta-credential-config");
+        module.addDeserializer(DeltaStorageCredentialConfig.class,
+                new DeltaStorageCredentialConfigDeserializer());
+        mapper.registerModule(module);
+        apiClient.setObjectMapper(mapper);
+    }
+
+    private static final class DeltaStorageCredentialConfigDeserializer
+            extends StdDeserializer<DeltaStorageCredentialConfig> {
+        private DeltaStorageCredentialConfigDeserializer() {
+            super(DeltaStorageCredentialConfig.class);
+        }
+
+        @Override
+        public DeltaStorageCredentialConfig deserialize(JsonParser parser,
+                com.fasterxml.jackson.databind.DeserializationContext context) throws IOException {
+            JsonNode node = parser.getCodec().readTree(parser);
+            DeltaStorageCredentialConfig config = new DeltaStorageCredentialConfig()
+                    .s3AccessKeyId(text(node, "s3.access-key-id"))
+                    .s3SecretAccessKey(text(node, "s3.secret-access-key"))
+                    .s3SessionToken(text(node, "s3.session-token"))
+                    .azureSasToken(text(node, "azure.sas-token"))
+                    .gcsOauthToken(text(node, "gcs.oauth-token"));
+            String region = firstNonBlank(node, "client.region", "s3.region", "aws.region");
+            if (region == null) {
+                return config;
+            }
+            return new DeltaStorageCredentialConfigWithRegion(config, region);
+        }
+
+        private static String text(JsonNode node, String key) {
+            JsonNode value = node.get(key);
+            return value == null || value.isNull() ? null : value.asText();
+        }
+
+        private static String firstNonBlank(JsonNode node, String... keys) {
+            for (String key : keys) {
+                String value = text(node, key);
+                if (value != null && !value.trim().isEmpty()) {
+                    return value.trim();
+                }
+            }
+            return null;
+        }
+    }
+
+    private static final class DeltaStorageCredentialConfigWithRegion
+            extends DeltaStorageCredentialConfig {
+        private final String region;
+
+        private DeltaStorageCredentialConfigWithRegion(
+                DeltaStorageCredentialConfig config, String region) {
+            s3AccessKeyId(config.getS3AccessKeyId());
+            s3SecretAccessKey(config.getS3SecretAccessKey());
+            s3SessionToken(config.getS3SessionToken());
+            azureSasToken(config.getAzureSasToken());
+            gcsOauthToken(config.getGcsOauthToken());
+            this.region = region;
+        }
+
+        private String getRegion() {
+            return region;
+        }
     }
 
     private static String storageScheme(String location) {

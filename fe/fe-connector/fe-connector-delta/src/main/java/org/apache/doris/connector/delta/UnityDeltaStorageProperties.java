@@ -71,7 +71,7 @@ final class UnityDeltaStorageProperties {
         TemporaryCredentials temporary =
                 DeltaStorageCredentialUtil.toTemporaryCredentials(credential);
         if (temporary.getAwsTempCredentials() != null) {
-            return awsProperties(temporary.getAwsTempCredentials(), catalogProperties);
+            return awsProperties(temporary.getAwsTempCredentials(), credential, catalogProperties);
         }
         if (temporary.getAzureUserDelegationSas() != null) {
             String accountHost = locationUri.getHost();
@@ -116,13 +116,17 @@ final class UnityDeltaStorageProperties {
     }
 
     private static Map<String, String> awsProperties(
-            AwsCredentials credentials, Map<String, String> catalogProperties) {
+            AwsCredentials credentials, DeltaStorageCredential credential,
+            Map<String, String> catalogProperties) {
         String region = DeltaStorageProperties.firstNonBlank(catalogProperties,
                 S3_REGION, "s3.region", "client.region", "aws.region");
         if (region == null) {
+            region = UnityDeltaClient.credentialRegion(credential.getConfig());
+        }
+        if (region == null) {
             throw new IllegalArgumentException(
-                    "Unity Delta tables on S3 require 's3.region' so Doris BE can create "
-                            + "a native S3 client");
+                    "Unity Delta credentials for S3 do not contain client.region; configure "
+                            + "'s3.region' so Doris BE can create a native S3 client");
         }
         String endpoint = DeltaStorageProperties.firstNonBlank(catalogProperties,
                 S3_ENDPOINT, "s3.endpoint", "aws.endpoint");
