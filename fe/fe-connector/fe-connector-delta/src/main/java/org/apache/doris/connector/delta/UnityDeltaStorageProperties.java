@@ -77,8 +77,12 @@ final class UnityDeltaStorageProperties {
                 catalogProperties,
                 DeltaConnectorProperties.UNITY_CREDENTIAL_MIN_LIFETIME_MS,
                 DeltaConnectorProperties.DEFAULT_UNITY_CREDENTIAL_MIN_LIFETIME_MS);
-        if (credential.getExpirationTimeMs() != null
-                && credential.getExpirationTimeMs() <= System.currentTimeMillis() + minimumLifetimeMs) {
+        if (credential.getExpirationTimeMs() == null) {
+            throw new IllegalArgumentException(
+                    "Unity Catalog returned a storage credential without an expiration time for "
+                            + credential.getPrefix());
+        }
+        if (credential.getExpirationTimeMs() <= System.currentTimeMillis() + minimumLifetimeMs) {
             throw new IllegalArgumentException(
                     "Unity Catalog returned a storage credential with less than "
                             + minimumLifetimeMs + " ms remaining for "

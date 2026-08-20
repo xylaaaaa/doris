@@ -296,6 +296,24 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
+    public void testRejectCredentialsWithoutExpiration() {
+        DeltaCredentialsResponse response = new DeltaCredentialsResponse()
+                .addStorageCredentialsItem(new DeltaStorageCredential()
+                        .prefix("s3://delta-bucket/tables/events")
+                        .operation(DeltaCredentialOperation.READ)
+                        .config(new DeltaStorageCredentialConfig()
+                                .s3AccessKeyId("temporary-ak")
+                                .s3SecretAccessKey("temporary-sk")
+                                .s3SessionToken("temporary-session")));
+        IllegalArgumentException exception = Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> UnityDeltaStorageProperties.toBackendProperties(
+                        "s3://delta-bucket/tables/events", response,
+                        Map.of("client.region", "us-east-1")));
+        Assertions.assertTrue(exception.getMessage().contains("without an expiration time"));
+    }
+
+    @Test
     public void testUnityTableMetadataWithoutPropertiesIsOrdinaryExternalTable() {
         UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
         UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
