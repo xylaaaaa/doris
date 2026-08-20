@@ -47,6 +47,10 @@ suite("test_native_delta_unity", "p0,external") {
                     + '"schema_name":"default","table_type":"EXTERNAL",'
                     + '"data_source_format":"DELTA",'
                     + '"manifest_capabilities":["HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT"]},'
+                    + '{"name":"managed_customer","catalog_name":"main",'
+                    + '"schema_name":"default","table_type":"MANAGED",'
+                    + '"data_source_format":"DELTA",'
+                    + '"manifest_capabilities":["HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT"]},'
                     + '{"name":"blocked","catalog_name":"main",'
                     + '"schema_name":"default","table_type":"EXTERNAL",'
                     + '"data_source_format":"DELTA",'
@@ -55,6 +59,13 @@ suite("test_native_delta_unity", "p0,external") {
             sendJson(200, '{"metadata":{"etag":"test-etag",'
                     + '"table-type":"EXTERNAL",'
                     + '"table-uuid":"421eb35b-e9ec-44ed-92fd-25e0fda91036",'
+                    + '"location":"' + tablePath + '",'
+                    + '"partition-columns":[],"last-commit-version":0},'
+                    + '"commits":[],"latest-table-version":0}')
+        } else if (path.endsWith("/tables/managed_customer")) {
+            sendJson(200, '{"metadata":{"etag":"managed-etag",'
+                    + '"table-type":"MANAGED",'
+                    + '"table-uuid":"0e5e167d-b97c-4fe9-af31-4e06f57a82a4",'
                     + '"location":"' + tablePath + '",'
                     + '"partition-columns":[],"last-commit-version":0},'
                     + '"commits":[],"latest-table-version":0}')
@@ -88,6 +99,7 @@ suite("test_native_delta_unity", "p0,external") {
             WHERE c_custkey <= 3
             ORDER BY c_custkey
         """
+        order_qt_managed_count "SELECT COUNT(*) FROM ${catalogName}.`default`.managed_customer"
     } finally {
         server.stop(0)
     }
