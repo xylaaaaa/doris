@@ -8,6 +8,7 @@ mysql
 catalog_managed
 customer
 managed_customer
+unity_external_write
 
 -- !count --
 18751
@@ -22,4 +23,13 @@ managed_customer
 
 -- !catalog_managed_count --
 9375
+
+-- !unity_external_before --
+18751
+
+-- !unity_external_after --
+18752
+
+-- !unity_external_inserted --
+300001	Customer#000300001	45.67
 

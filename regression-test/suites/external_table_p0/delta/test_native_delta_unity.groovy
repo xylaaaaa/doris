@@ -25,6 +25,22 @@ suite("test_native_delta_unity", "p0,external") {
             "samples/datalake/deltalake_and_kudu/data/customer").toURI().toString()
     def catalogManagedDirectory = java.nio.file.Files.createTempDirectory(
             "doris-native-delta-catalog-managed-")
+    def unityExternalWriteDirectory = java.nio.file.Files.createTempDirectory(
+            "doris-native-delta-unity-write-")
+    def sourceTable = new File(dorisHome,
+            "samples/datalake/deltalake_and_kudu/data/customer").toPath()
+    java.nio.file.Files.walk(sourceTable).withCloseable { paths ->
+        paths.forEach { source ->
+            def relative = sourceTable.relativize(source)
+            def destination = unityExternalWriteDirectory.resolve(relative)
+            if (java.nio.file.Files.isDirectory(source)) {
+                java.nio.file.Files.createDirectories(destination)
+            } else {
+                java.nio.file.Files.copy(source, destination,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
+    }
     def catalogManagedSource = new File(dorisHome,
             "fe/fe-connector/fe-connector-delta/src/test/resources/delta/catalog_managed_table")
             .toPath()
@@ -115,6 +131,10 @@ suite("test_native_delta_unity", "p0,external") {
                     + '"schema_name":"default","table_type":"MANAGED",'
                     + '"data_source_format":"DELTA",'
                     + '"manifest_capabilities":["HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT"]},'
+                    + '{"name":"unity_external_write","catalog_name":"main",'
+                    + '"schema_name":"default","table_type":"EXTERNAL",'
+                    + '"data_source_format":"DELTA",'
+                    + '"manifest_capabilities":["HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT"]},'
                     + '{"name":"blocked","catalog_name":"main",'
                     + '"schema_name":"default","table_type":"EXTERNAL",'
                     + '"data_source_format":"DELTA",'
@@ -133,6 +153,23 @@ suite("test_native_delta_unity", "p0,external") {
                     + '"location":"' + tablePath + '",'
                     + '"partition-columns":[],"last-commit-version":0},'
                     + '"commits":[],"latest-table-version":0}')
+        } else if (path.endsWith("/tables/unity_external_write")) {
+            def latestVersion = java.nio.file.Files.list(
+                    unityExternalWriteDirectory.resolve("_delta_log")).withCloseable { files ->
+                def versions = files.filter { file ->
+                    file.fileName.toString() ==~ /[0-9]{20}\.json/
+                }.collect { file ->
+                    Long.parseLong(file.fileName.toString().substring(0, 20))
+                }
+                versions.isEmpty() ? 0L : versions.max()
+            }
+            sendJson(200, groovy.json.JsonOutput.toJson([
+                    metadata: [etag: "unity-write-etag-${latestVersion}",
+                            "table-type": "EXTERNAL",
+                            "table-uuid": "7fbe2c6d-ec90-43be-9a66-38d31c7de20d",
+                            location: unityExternalWriteDirectory.toUri().toString(),
+                            "partition-columns": [], "last-commit-version": latestVersion],
+                    commits: [], "latest-table-version": latestVersion]))
         } else if (path.endsWith("/tables/catalog_managed")) {
             sendJson(200, catalogManagedResponse)
         } else {
@@ -152,6 +189,7 @@ suite("test_native_delta_unity", "p0,external") {
                 'unity.auth.type' = 'pat',
                 'unity.token' = '${token}',
                 'unity.catalog' = 'main',
+                'delta.write.enabled' = 'true',
                 'test_connection' = 'false'
             )
         """
@@ -169,9 +207,26 @@ suite("test_native_delta_unity", "p0,external") {
         order_qt_catalog_managed_count """
             SELECT COUNT(*) FROM ${catalogName}.`default`.catalog_managed
         """
+        order_qt_unity_external_before "SELECT COUNT(*) FROM ${catalogName}.`default`.unity_external_write"
+        sql """
+            INSERT INTO ${catalogName}.`default`.unity_external_write VALUES
+            (300001, 'Customer#000300001', 'Doris Unity external write', 1,
+             '30-300-300-3000', 45.67, 'BUILDING', 'native Unity write')
+        """
+        order_qt_unity_external_after "SELECT COUNT(*) FROM ${catalogName}.`default`.unity_external_write"
+        order_qt_unity_external_inserted """
+            SELECT c_custkey, c_name, c_acctbal
+            FROM ${catalogName}.`default`.unity_external_write
+            WHERE c_custkey = 300001
+        """
     } finally {
         server.stop(0)
         java.nio.file.Files.walk(catalogManagedDirectory).withCloseable { paths ->
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach {
+                java.nio.file.Files.deleteIfExists(it)
+            }
+        }
+        java.nio.file.Files.walk(unityExternalWriteDirectory).withCloseable { paths ->
             paths.sorted(java.util.Comparator.reverseOrder()).forEach {
                 java.nio.file.Files.deleteIfExists(it)
             }
