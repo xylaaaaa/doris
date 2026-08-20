@@ -24,6 +24,12 @@ unity_external_write
 -- !catalog_managed_count --
 9375
 
+-- !catalog_managed_after --
+9376
+
+-- !catalog_managed_inserted --
+300002
+
 -- !unity_external_before --
 18751
 

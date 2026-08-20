@@ -82,23 +82,26 @@ suite("test_native_delta_unity", "p0,external") {
     }
     def catalogManagedPath = catalogManagedDirectory.toUri().toString()
     def catalogManagedTableId = "c79de738-d13c-44a5-8e75-8435123d60c7"
-    def catalogManagedCommits = java.nio.file.Files.list(stagedCommitDirectory).withCloseable {
-        commits -> commits.sorted().collect { commit ->
-            def fileName = commit.fileName.toString()
-            def version = Long.parseLong(fileName.substring(0, 20))
-            [version: version, timestamp: 1700000000000L + version,
-                    "file-name": fileName, "file-size": java.nio.file.Files.size(commit),
-                    "file-modification-timestamp": 1700000000000L + version]
+    def catalogManagedResponse = {
+        def commits = java.nio.file.Files.list(stagedCommitDirectory).withCloseable { files ->
+            files.filter { it.fileName.toString().endsWith(".json") }.sorted().collect { commit ->
+                def fileName = commit.fileName.toString()
+                def version = Long.parseLong(fileName.substring(0, 20))
+                [version: version, timestamp: 1700000000000L + version,
+                        "file-name": fileName, "file-size": java.nio.file.Files.size(commit),
+                        "file-modification-timestamp": 1700000000000L + version]
+            }
         }
+        def latestVersion = commits.isEmpty() ? 0L : commits.last().version
+        groovy.json.JsonOutput.toJson([
+                metadata: [etag: "catalog-managed-etag-${latestVersion}",
+                        "table-type": "MANAGED", "table-uuid": catalogManagedTableId,
+                        location: catalogManagedPath, "partition-columns": [], properties: [
+                                "delta.feature.catalogManaged": "supported",
+                                "delta.enableInCommitTimestamps": "true"],
+                        "last-commit-version": 0],
+                commits: commits, "latest-table-version": latestVersion])
     }
-    def catalogManagedResponse = groovy.json.JsonOutput.toJson([
-            metadata: [etag: "catalog-managed-etag", "table-type": "MANAGED",
-                    "table-uuid": catalogManagedTableId, location: catalogManagedPath,
-                    "partition-columns": [], properties: [
-                            "delta.feature.catalogManaged": "supported",
-                            "delta.enableInCommitTimestamps": "true"],
-                    "last-commit-version": 0],
-            commits: catalogManagedCommits, "latest-table-version": 2])
     def token = "native-delta-unity-test-token"
     def server = com.sun.net.httpserver.HttpServer.create(
             new java.net.InetSocketAddress("127.0.0.1", 0), 0)
@@ -171,7 +174,10 @@ suite("test_native_delta_unity", "p0,external") {
                             "partition-columns": [], "last-commit-version": latestVersion],
                     commits: [], "latest-table-version": latestVersion]))
         } else if (path.endsWith("/tables/catalog_managed")) {
-            sendJson(200, catalogManagedResponse)
+            if (!exchange.requestMethod.equalsIgnoreCase("GET")) {
+                exchange.requestBody.readAllBytes()
+            }
+            sendJson(200, catalogManagedResponse())
         } else {
             sendJson(404, '{"error_code":"NOT_FOUND"}')
         }
@@ -210,6 +216,15 @@ suite("test_native_delta_unity", "p0,external") {
         order_qt_managed_count "SELECT COUNT(*) FROM ${catalogName}.`default`.managed_customer"
         order_qt_catalog_managed_count """
             SELECT COUNT(*) FROM ${catalogName}.`default`.catalog_managed
+        """
+        sql "INSERT INTO ${catalogName}.`default`.catalog_managed VALUES (300002)"
+        order_qt_catalog_managed_after """
+            SELECT COUNT(*) FROM ${catalogName}.`default`.catalog_managed
+        """
+        order_qt_catalog_managed_inserted """
+            SELECT id
+            FROM ${catalogName}.`default`.catalog_managed
+            WHERE id = 300002
         """
         order_qt_unity_external_before "SELECT COUNT(*) FROM ${catalogName}.`default`.unity_external_write"
         sql """
