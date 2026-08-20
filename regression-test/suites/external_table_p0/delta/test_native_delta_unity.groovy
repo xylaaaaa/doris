@@ -45,7 +45,12 @@ suite("test_native_delta_unity", "p0,external") {
         } else if (path == "/api/2.1/unity-catalog/tables") {
             sendJson(200, '{"tables":[{"name":"customer","catalog_name":"main",'
                     + '"schema_name":"default","table_type":"EXTERNAL",'
-                    + '"data_source_format":"DELTA"}]}')
+                    + '"data_source_format":"DELTA",'
+                    + '"manifest_capabilities":["HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT"]},'
+                    + '{"name":"blocked","catalog_name":"main",'
+                    + '"schema_name":"default","table_type":"EXTERNAL",'
+                    + '"data_source_format":"DELTA",'
+                    + '"manifest_capabilities":["OTHER_CAPABILITY"]}]}')
         } else if (path.endsWith("/tables/customer")) {
             sendJson(200, '{"metadata":{"etag":"test-etag",'
                     + '"table-type":"EXTERNAL",'
