@@ -43,6 +43,15 @@ import java.util.TreeSet;
 public class DeltaKernelSnapshotLoader {
     private static final String CATALOG_MANAGED_FEATURE = "catalogManaged";
     private static final String PARQUET_PROVIDER = "parquet";
+    private static final int MAX_SUPPORTED_READER_VERSION = 3;
+    /**
+     * Features whose read semantics are implemented by the native connector.  This list is
+     * intentionally explicit: a new Delta reader feature must be reviewed before a table using it
+     * can be scanned as ordinary Parquet.
+     */
+    private static final Set<String> SUPPORTED_DIRECT_PARQUET_READER_FEATURES = Set.of(
+            "columnMapping", "deletionVectors", "timestampNtz", "v2Checkpoint",
+            "vacuumProtocolCheck");
     private static final Set<String> UNSUPPORTED_DIRECT_PARQUET_READER_FEATURES = Set.of(
             "geospatial",
             "typeWidening",
@@ -148,19 +157,37 @@ public class DeltaKernelSnapshotLoader {
                     "Doris native Delta reader only supports Parquet data files, but table format "
                             + "provider is '" + formatProvider + "'");
         }
-        Set<String> readerFeatures = ((SnapshotImpl) snapshot).getProtocol().getReaderFeatures();
+        Protocol protocol = ((SnapshotImpl) snapshot).getProtocol();
+        if (protocol.getMinReaderVersion() > MAX_SUPPORTED_READER_VERSION) {
+            throw new UnsupportedOperationException(
+                    "Delta reader version " + protocol.getMinReaderVersion()
+                            + " is newer than the native Doris reader supports ("
+                            + MAX_SUPPORTED_READER_VERSION + ")");
+        }
+        Set<String> readerFeatures = protocol.getReaderFeatures();
         if (readerFeatures.contains(CATALOG_MANAGED_FEATURE) && !catalogManagedRead) {
             throw new UnsupportedOperationException(
                     "Catalog-managed Delta tables must be loaded through a catalog-aware adapter");
         }
 
         Set<String> unsupportedFeatures = new TreeSet<>(readerFeatures);
-        unsupportedFeatures.retainAll(UNSUPPORTED_DIRECT_PARQUET_READER_FEATURES);
+        unsupportedFeatures.removeAll(SUPPORTED_DIRECT_PARQUET_READER_FEATURES);
+        if (catalogManagedRead) {
+            unsupportedFeatures.remove(CATALOG_MANAGED_FEATURE);
+        }
+        unsupportedFeatures.addAll(intersect(readerFeatures,
+                UNSUPPORTED_DIRECT_PARQUET_READER_FEATURES));
         if (!unsupportedFeatures.isEmpty()) {
             throw new UnsupportedOperationException(
                     "Delta reader features require physical-row transforms that are not supported "
                             + "by the Doris native Parquet scan: " + unsupportedFeatures);
         }
 
+    }
+
+    private static Set<String> intersect(Set<String> values, Set<String> candidates) {
+        Set<String> result = new TreeSet<>(values);
+        result.retainAll(candidates);
+        return result;
     }
 }

@@ -106,6 +106,20 @@ public class DeltaKernelSnapshotLoaderTest {
     }
 
     @Test
+    public void testRejectsUnknownReaderFeature() throws Exception {
+        URL fixture = Objects.requireNonNull(getClass().getClassLoader()
+                .getResource("delta/unknown_reader_feature_table"));
+        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
+                DefaultEngine.create(new Configuration()));
+
+        RuntimeException exception = Assertions.assertThrows(
+                RuntimeException.class,
+                () -> loader.loadLatest(Paths.get(fixture.toURI()).toUri().toString()));
+
+        Assertions.assertTrue(exception.getMessage().contains("futureReaderFeature"));
+    }
+
+    @Test
     public void testRejectCatalogManagedTableFromPathAdapter() throws Exception {
         URL fixture = Objects.requireNonNull(
                 getClass().getClassLoader().getResource("delta/catalog_managed_table"));
