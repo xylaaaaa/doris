@@ -55,8 +55,19 @@ final class UnityDeltaStorageProperties {
             return Map.of();
         }
 
+        if (response == null || response.getStorageCredentials() == null
+                || response.getStorageCredentials().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Unity Catalog returned no storage credentials for " + location);
+        }
+
         DeltaStorageCredential credential = DeltaStorageCredentialUtil.selectForLocation(
                 location, response.getStorageCredentials());
+        if (credential.getOperation() == null) {
+            throw new IllegalArgumentException(
+                    "Unity Catalog returned a storage credential without an operation for "
+                            + credential.getPrefix());
+        }
         if (expectedOperation != null && credential.getOperation() != expectedOperation) {
             throw new IllegalArgumentException(
                     "Unity Catalog returned a " + credential.getOperation()

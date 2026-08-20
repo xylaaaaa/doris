@@ -245,6 +245,38 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
+    public void testRejectMissingVendedCredentials() {
+        DeltaCredentialsResponse empty = new DeltaCredentialsResponse();
+        IllegalArgumentException exception = Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> UnityDeltaStorageProperties.toBackendProperties(
+                        "s3://delta-bucket/tables/events", empty, Map.of()));
+        Assertions.assertTrue(exception.getMessage().contains("no storage credentials"));
+
+        DeltaCredentialsResponse nullList = new DeltaCredentialsResponse()
+                .storageCredentials(null);
+        Assertions.assertThrows(IllegalArgumentException.class,
+                () -> UnityDeltaStorageProperties.toBackendProperties(
+                        "s3://delta-bucket/tables/events", nullList, Map.of()));
+    }
+
+    @Test
+    public void testRejectVendedCredentialWithoutOperation() {
+        DeltaCredentialsResponse response = new DeltaCredentialsResponse()
+                .addStorageCredentialsItem(new DeltaStorageCredential()
+                        .prefix("s3://delta-bucket/tables/events")
+                        .config(new DeltaStorageCredentialConfig()
+                                .s3AccessKeyId("temporary-ak")
+                                .s3SecretAccessKey("temporary-sk")
+                                .s3SessionToken("temporary-session")));
+        IllegalArgumentException exception = Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> UnityDeltaStorageProperties.toBackendProperties(
+                        "s3://delta-bucket/tables/events", response, Map.of()));
+        Assertions.assertTrue(exception.getMessage().contains("without an operation"));
+    }
+
+    @Test
     public void testRejectCredentialsThatAreAboutToExpire() {
         DeltaCredentialsResponse response = new DeltaCredentialsResponse()
                 .addStorageCredentialsItem(new DeltaStorageCredential()
