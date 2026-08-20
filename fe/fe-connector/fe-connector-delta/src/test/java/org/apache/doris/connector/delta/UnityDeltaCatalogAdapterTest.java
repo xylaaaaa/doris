@@ -411,6 +411,10 @@ public class UnityDeltaCatalogAdapterTest {
                     + "\"schema_name\":\"default\",\"table_type\":\"MANAGED\","
                     + "\"data_source_format\":\"DELTA\","
                     + "\"manifest_capabilities\":[\"OTHER_CAPABILITY\"]},"
+                    + "{\"name\":\"empty_capabilities\",\"catalog_name\":\"main\","
+                    + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
+                    + "\"data_source_format\":\"DELTA\","
+                    + "\"manifest_capabilities\":[]},"
                     + "{\"name\":\"raw\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
                     + "\"data_source_format\":\"PARQUET\"}]}");
