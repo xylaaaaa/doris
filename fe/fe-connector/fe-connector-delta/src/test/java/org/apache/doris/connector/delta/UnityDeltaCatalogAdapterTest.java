@@ -118,6 +118,8 @@ public class UnityDeltaCatalogAdapterTest {
         Assertions.assertFalse(scanProperties.containsValue(TEST_TOKEN));
         Assertions.assertTrue(requestPaths.stream().anyMatch(
                 path -> path.endsWith("/delta/v1/catalogs/main/schemas/default/tables/events")));
+        Assertions.assertTrue(requestQueries.stream().anyMatch(query -> query != null
+                && query.contains("include_manifest_capabilities=true")));
         Assertions.assertTrue(requestPaths.stream().noneMatch(path -> path.endsWith("/credentials")));
     }
 
@@ -237,6 +239,25 @@ public class UnityDeltaCatalogAdapterTest {
                         "abfss://container@account.dfs.core.windows.net/tables/events",
                         incompleteAzure, Map.of()));
         Assertions.assertTrue(azureException.getMessage().contains("Azure SAS token"));
+    }
+
+    @Test
+    public void testRejectCredentialsThatAreAboutToExpire() {
+        DeltaCredentialsResponse response = new DeltaCredentialsResponse()
+                .addStorageCredentialsItem(new DeltaStorageCredential()
+                        .prefix("s3://delta-bucket/tables/events")
+                        .operation(DeltaCredentialOperation.READ)
+                        .config(new DeltaStorageCredentialConfig()
+                                .s3AccessKeyId("temporary-ak")
+                                .s3SecretAccessKey("temporary-sk")
+                                .s3SessionToken("temporary-session"))
+                        .expirationTimeMs(System.currentTimeMillis() + 1000));
+        IllegalArgumentException exception = Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> UnityDeltaStorageProperties.toBackendProperties(
+                        "s3://delta-bucket/tables/events", response,
+                        Map.of("client.region", "us-east-1")));
+        Assertions.assertTrue(exception.getMessage().contains("less than"));
     }
 
     @Test
@@ -384,7 +405,12 @@ public class UnityDeltaCatalogAdapterTest {
             respond(exchange, 200, "{\"tables\":["
                     + "{\"name\":\"events\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
-                    + "\"data_source_format\":\"DELTA\"},"
+                    + "\"data_source_format\":\"DELTA\","
+                    + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]},"
+                    + "{\"name\":\"blocked\",\"catalog_name\":\"main\","
+                    + "\"schema_name\":\"default\",\"table_type\":\"MANAGED\","
+                    + "\"data_source_format\":\"DELTA\","
+                    + "\"manifest_capabilities\":[\"OTHER_CAPABILITY\"]},"
                     + "{\"name\":\"raw\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
                     + "\"data_source_format\":\"PARQUET\"}]}");

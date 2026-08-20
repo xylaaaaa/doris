@@ -36,7 +36,6 @@ import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.SchemasApi;
-import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.api.DeltaTemporaryCredentialsApi;
@@ -44,21 +43,23 @@ import io.unitycatalog.client.delta.model.DeltaCredentialOperation;
 import io.unitycatalog.client.delta.model.DeltaCredentialsResponse;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import io.unitycatalog.client.delta.model.DeltaStorageCredentialConfig;
-import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.ListSchemasResponse;
-import io.unitycatalog.client.model.ListTablesResponse;
 import io.unitycatalog.client.model.SchemaInfo;
-import io.unitycatalog.client.model.TableInfo;
-import io.unitycatalog.client.model.TableType;
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs;
 import org.apache.hadoop.conf.Configuration;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Consumer;
 
 /** Thin wrapper around the official Unity Catalog Java client. */
 final class UnityDeltaClient {
@@ -72,7 +73,6 @@ final class UnityDeltaClient {
     private final TokenProvider tokenProvider;
     private final ApiClient apiClient;
     private final SchemasApi schemasApi;
-    private final TablesApi tablesApi;
     private final DeltaTablesApi deltaTablesApi;
     private final DeltaTemporaryCredentialsApi credentialsApi;
 
@@ -82,6 +82,12 @@ final class UnityDeltaClient {
 
     static UnityDeltaClient create(Map<String, String> properties) {
         String workspaceUri = requireProperty(properties, DeltaConnectorProperties.UNITY_URI);
+        long connectTimeoutMs = DeltaConnectorProperties.positiveLongProperty(properties,
+                DeltaConnectorProperties.UNITY_CONNECT_TIMEOUT_MS,
+                DeltaConnectorProperties.DEFAULT_UNITY_CONNECT_TIMEOUT_MS);
+        long readTimeoutMs = DeltaConnectorProperties.positiveLongProperty(properties,
+                DeltaConnectorProperties.UNITY_READ_TIMEOUT_MS,
+                DeltaConnectorProperties.DEFAULT_UNITY_READ_TIMEOUT_MS);
         String authType = properties.getOrDefault(
                 DeltaConnectorProperties.UNITY_AUTH_TYPE, "pat").trim().toLowerCase(
                         java.util.Locale.ROOT);
@@ -100,11 +106,18 @@ final class UnityDeltaClient {
             throw new IllegalArgumentException(
                     "Unsupported Unity authentication type '" + authType + "'");
         }
-        return create(workspaceUri, authProperties);
+        return create(workspaceUri, authProperties, connectTimeoutMs, readTimeoutMs);
     }
 
     private static UnityDeltaClient create(String workspaceUri,
             Map<String, String> authProperties) {
+        return create(workspaceUri, authProperties,
+                DeltaConnectorProperties.DEFAULT_UNITY_CONNECT_TIMEOUT_MS,
+                DeltaConnectorProperties.DEFAULT_UNITY_READ_TIMEOUT_MS);
+    }
+
+    private static UnityDeltaClient create(String workspaceUri,
+            Map<String, String> authProperties, long connectTimeoutMs, long readTimeoutMs) {
         String normalizedUri = stripTrailingSlash(workspaceUri);
         TokenProvider tokenProvider = TokenProvider.create(authProperties);
         ApiClient apiClient = ApiClientBuilder.create()
@@ -112,6 +125,8 @@ final class UnityDeltaClient {
                 .tokenProvider(tokenProvider)
                 .addAppVersion(APP_NAME, APP_VERSION)
                 .build();
+        apiClient.setConnectTimeout(Duration.ofMillis(connectTimeoutMs));
+        apiClient.setReadTimeout(Duration.ofMillis(readTimeoutMs));
         return new UnityDeltaClient(normalizedUri, tokenProvider, apiClient);
     }
 
@@ -129,7 +144,6 @@ final class UnityDeltaClient {
         this.apiClient = apiClient;
         registerCredentialConfigDeserializer(apiClient);
         this.schemasApi = new SchemasApi(apiClient);
-        this.tablesApi = new TablesApi(apiClient);
         this.deltaTablesApi = new DeltaTablesApi(apiClient);
         this.credentialsApi = new DeltaTemporaryCredentialsApi(apiClient);
     }
@@ -157,19 +171,62 @@ final class UnityDeltaClient {
         String pageToken = null;
         do {
             try {
-                ListTablesResponse response = tablesApi.listTables(
-                        catalogName, schemaName, PAGE_SIZE, pageToken);
-                for (TableInfo table : response.getTables()) {
+                JsonNode response = listTablesWithManifestCapabilities(
+                        catalogName, schemaName, pageToken);
+                JsonNode tables = response.get("tables");
+                if (tables == null || !tables.isArray()) {
+                    throw new ApiException("Unity Catalog list tables response has no tables array");
+                }
+                for (JsonNode table : tables) {
                     if (isReadableDeltaTable(table)) {
-                        tableNames.add(table.getName());
+                        tableNames.add(table.get("name").asText());
                     }
                 }
-                pageToken = response.getNextPageToken();
+                JsonNode nextPageToken = response.get("next_page_token");
+                pageToken = nextPageToken == null || nextPageToken.isNull()
+                        ? null : nextPageToken.asText();
             } catch (ApiException e) {
                 throw requestFailure("list tables in '" + catalogName + "." + schemaName + "'", e);
+            } catch (IOException e) {
+                throw new DorisConnectorException(
+                        "Unity Catalog request failed while attempting to list tables in '"
+                                + catalogName + "." + schemaName + "'", e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new DorisConnectorException(
+                        "Unity Catalog request was interrupted while attempting to list tables in '"
+                                + catalogName + "." + schemaName + "'", e);
             }
         } while (pageToken != null && !pageToken.isEmpty());
         return tableNames;
+    }
+
+    private JsonNode listTablesWithManifestCapabilities(
+            String catalogName, String schemaName, String pageToken)
+            throws IOException, InterruptedException, ApiException {
+        StringBuilder uri = new StringBuilder(apiClient.getBaseUri()).append("/tables?")
+                .append("catalog_name=").append(ApiClient.urlEncode(catalogName))
+                .append("&schema_name=").append(ApiClient.urlEncode(schemaName))
+                .append("&max_results=").append(PAGE_SIZE)
+                .append("&include_manifest_capabilities=true");
+        if (pageToken != null && !pageToken.isEmpty()) {
+            uri.append("&page_token=").append(ApiClient.urlEncode(pageToken));
+        }
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(uri.toString()))
+                .header("Accept", "application/json");
+        if (apiClient.getReadTimeout() != null) {
+            request.timeout(apiClient.getReadTimeout());
+        }
+        Consumer<HttpRequest.Builder> interceptor = apiClient.getRequestInterceptor();
+        if (interceptor != null) {
+            interceptor.accept(request);
+        }
+        HttpResponse<String> response = apiClient.getHttpClient().send(
+                request.GET().build(), HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() / 100 != 2) {
+            throw new ApiException(response.statusCode(), response.body());
+        }
+        return apiClient.getObjectMapper().readTree(response.body());
     }
 
     Optional<DeltaLoadTableResponse> loadTable(
@@ -324,10 +381,47 @@ final class UnityDeltaClient {
         }
     }
 
-    private static boolean isReadableDeltaTable(TableInfo table) {
-        return table.getDataSourceFormat() == DataSourceFormat.DELTA
-                && (table.getTableType() == TableType.MANAGED
-                || table.getTableType() == TableType.EXTERNAL);
+    private static boolean isReadableDeltaTable(JsonNode table) {
+        String format = textValue(table, "data_source_format");
+        String tableType = textValue(table, "table_type");
+        if (!"DELTA".equalsIgnoreCase(format)
+                || (!"MANAGED".equalsIgnoreCase(tableType)
+                && !"EXTERNAL".equalsIgnoreCase(tableType))) {
+            return false;
+        }
+        JsonNode capabilities = table.get("manifest_capabilities");
+        if (capabilities == null) {
+            capabilities = table.get("manifest-capabilities");
+        }
+        Set<String> capabilityNames = capabilityNames(capabilities);
+        return capabilityNames.isEmpty()
+                || capabilityNames.contains("HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT");
+    }
+
+    private static String textValue(JsonNode node, String fieldName) {
+        JsonNode value = node.get(fieldName);
+        return value == null || value.isNull() ? null : value.asText();
+    }
+
+    private static Set<String> capabilityNames(JsonNode capabilities) {
+        if (capabilities == null || capabilities.isNull()) {
+            return Set.of();
+        }
+        Set<String> names = new HashSet<>();
+        if (capabilities.isArray()) {
+            for (JsonNode capability : capabilities) {
+                if (capability.isTextual()) {
+                    names.add(capability.asText());
+                }
+            }
+        } else if (capabilities.isObject()) {
+            capabilities.fields().forEachRemaining(entry -> {
+                if (entry.getValue().asBoolean(false)) {
+                    names.add(entry.getKey());
+                }
+            });
+        }
+        return names;
     }
 
     static String credentialRegion(DeltaStorageCredentialConfig config) {

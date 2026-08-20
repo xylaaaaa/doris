@@ -62,10 +62,15 @@ final class UnityDeltaStorageProperties {
                     "Unity Catalog returned a " + credential.getOperation()
                             + " credential for a " + expectedOperation + " operation");
         }
+        long minimumLifetimeMs = DeltaConnectorProperties.positiveLongProperty(
+                catalogProperties,
+                DeltaConnectorProperties.UNITY_CREDENTIAL_MIN_LIFETIME_MS,
+                DeltaConnectorProperties.DEFAULT_UNITY_CREDENTIAL_MIN_LIFETIME_MS);
         if (credential.getExpirationTimeMs() != null
-                && credential.getExpirationTimeMs() <= System.currentTimeMillis()) {
+                && credential.getExpirationTimeMs() <= System.currentTimeMillis() + minimumLifetimeMs) {
             throw new IllegalArgumentException(
-                    "Unity Catalog returned an expired storage credential for "
+                    "Unity Catalog returned a storage credential with less than "
+                            + minimumLifetimeMs + " ms remaining for "
                             + credential.getPrefix());
         }
         TemporaryCredentials temporary =

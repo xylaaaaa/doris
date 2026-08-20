@@ -41,6 +41,7 @@ public class DeltaConnectorProvider implements ConnectorProvider {
     @Override
     public void validateProperties(Map<String, String> properties) {
         validateBooleanProperty(properties, DeltaConnectorProperties.WRITE_ENABLED);
+        validateTimeoutProperties(properties);
         String catalogType = DeltaConnectorProperties.catalogType(properties);
         switch (catalogType) {
             case DeltaConnectorProperties.CATALOG_TYPE_PATH:
@@ -54,6 +55,18 @@ public class DeltaConnectorProvider implements ConnectorProvider {
                         "Unsupported Delta catalog type '" + catalogType
                                 + "'; expected 'path' or 'unity'");
         }
+    }
+
+    private static void validateTimeoutProperties(Map<String, String> properties) {
+        DeltaConnectorProperties.positiveLongProperty(properties,
+                DeltaConnectorProperties.UNITY_CONNECT_TIMEOUT_MS,
+                DeltaConnectorProperties.DEFAULT_UNITY_CONNECT_TIMEOUT_MS);
+        DeltaConnectorProperties.positiveLongProperty(properties,
+                DeltaConnectorProperties.UNITY_READ_TIMEOUT_MS,
+                DeltaConnectorProperties.DEFAULT_UNITY_READ_TIMEOUT_MS);
+        DeltaConnectorProperties.positiveLongProperty(properties,
+                DeltaConnectorProperties.UNITY_CREDENTIAL_MIN_LIFETIME_MS,
+                DeltaConnectorProperties.DEFAULT_UNITY_CREDENTIAL_MIN_LIFETIME_MS);
     }
 
     private static void validatePathProperties(Map<String, String> properties) {

@@ -75,6 +75,10 @@ public class DeltaConnectorVerticalSliceTest {
         Assertions.assertThrows(IllegalArgumentException.class,
                 () -> provider.validateProperties(Map.of(
                         DeltaConnectorProperties.WRITE_ENABLED, "yes")));
+        Map<String, String> invalidTimeouts = new LinkedHashMap<>(deltaProperties("delta/path_table"));
+        invalidTimeouts.put(DeltaConnectorProperties.UNITY_READ_TIMEOUT_MS, "0");
+        Assertions.assertThrows(IllegalArgumentException.class,
+                () -> provider.validateProperties(invalidTimeouts));
 
         Map<String, String> properties = deltaProperties("delta/path_table");
         provider.validateProperties(properties);

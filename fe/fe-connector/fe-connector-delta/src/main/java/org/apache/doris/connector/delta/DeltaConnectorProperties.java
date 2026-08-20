@@ -34,6 +34,13 @@ public final class DeltaConnectorProperties {
     public static final String UNITY_OAUTH_URI = "unity.oauth.uri";
     public static final String UNITY_OAUTH_CLIENT_ID = "unity.oauth.client-id";
     public static final String UNITY_OAUTH_CLIENT_SECRET = "unity.oauth.client-secret";
+    public static final String UNITY_CONNECT_TIMEOUT_MS = "unity.connect-timeout-ms";
+    public static final String UNITY_READ_TIMEOUT_MS = "unity.read-timeout-ms";
+    public static final String UNITY_CREDENTIAL_MIN_LIFETIME_MS =
+            "unity.credential-min-lifetime-ms";
+    public static final long DEFAULT_UNITY_CONNECT_TIMEOUT_MS = 10_000L;
+    public static final long DEFAULT_UNITY_READ_TIMEOUT_MS = 30_000L;
+    public static final long DEFAULT_UNITY_CREDENTIAL_MIN_LIFETIME_MS = 60_000L;
     public static final String WRITE_ENABLED = "delta.write.enabled";
 
     public static String catalogType(java.util.Map<String, String> properties) {
@@ -42,6 +49,25 @@ public final class DeltaConnectorProperties {
             return configured.trim().toLowerCase(java.util.Locale.ROOT);
         }
         return properties.containsKey(TABLE_PATH) ? CATALOG_TYPE_PATH : CATALOG_TYPE_UNITY;
+    }
+
+    static long positiveLongProperty(java.util.Map<String, String> properties, String key,
+            long defaultValue) {
+        String value = properties.get(key);
+        if (value == null || value.trim().isEmpty()) {
+            return defaultValue;
+        }
+        try {
+            long parsed = Long.parseLong(value.trim());
+            if (parsed <= 0) {
+                throw new IllegalArgumentException(
+                        "Delta catalog property '" + key + "' must be greater than zero");
+            }
+            return parsed;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    "Delta catalog property '" + key + "' must be a positive integer", e);
+        }
     }
 
     private DeltaConnectorProperties() {
