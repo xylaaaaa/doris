@@ -5,6 +5,7 @@ information_schema
 mysql
 
 -- !tables --
+catalog_managed
 customer
 managed_customer
 
@@ -18,4 +19,7 @@ managed_customer
 
 -- !managed_count --
 18751
+
+-- !catalog_managed_count --
+9375
 

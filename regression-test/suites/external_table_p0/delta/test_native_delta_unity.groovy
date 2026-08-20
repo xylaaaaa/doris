@@ -23,6 +23,66 @@ suite("test_native_delta_unity", "p0,external") {
 
     def tablePath = new File(dorisHome,
             "samples/datalake/deltalake_and_kudu/data/customer").toURI().toString()
+    def catalogManagedDirectory = java.nio.file.Files.createTempDirectory(
+            "doris-native-delta-catalog-managed-")
+    def catalogManagedSource = new File(dorisHome,
+            "fe/fe-connector/fe-connector-delta/src/test/resources/delta/catalog_managed_table")
+            .toPath()
+    java.nio.file.Files.walk(catalogManagedSource).withCloseable { paths ->
+        paths.forEach { source ->
+            def relative = catalogManagedSource.relativize(source)
+            def destination = catalogManagedDirectory.resolve(relative)
+            if (java.nio.file.Files.isDirectory(source)) {
+                java.nio.file.Files.createDirectories(destination)
+            } else {
+                java.nio.file.Files.copy(source, destination,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
+    }
+    def sourceParquetFiles = new File(dorisHome,
+            "samples/datalake/deltalake_and_kudu/data/customer").listFiles()
+            .findAll { it.name.endsWith(".parquet") }.sort { it.name }
+    def catalogManagedDataFiles = ["part-00001.parquet", "part-00002.parquet"]
+    catalogManagedDataFiles.eachWithIndex { fileName, index ->
+        java.nio.file.Files.copy(sourceParquetFiles[index].toPath(),
+                catalogManagedDirectory.resolve(fileName),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    }
+    def jsonSlurper = new groovy.json.JsonSlurper()
+    def stagedCommitDirectory = catalogManagedDirectory.resolve("_delta_log/_staged_commits")
+    java.nio.file.Files.list(stagedCommitDirectory).withCloseable { commits ->
+        commits.forEach { commit ->
+            def updatedLines = java.nio.file.Files.readAllLines(commit).collect { line ->
+                def action = jsonSlurper.parseText(line)
+                if (action.add != null) {
+                    action.add.size = java.nio.file.Files.size(
+                            catalogManagedDirectory.resolve(action.add.path))
+                }
+                groovy.json.JsonOutput.toJson(action)
+            }
+            java.nio.file.Files.write(commit, updatedLines)
+        }
+    }
+    def catalogManagedPath = catalogManagedDirectory.toUri().toString()
+    def catalogManagedTableId = "c79de738-d13c-44a5-8e75-8435123d60c7"
+    def catalogManagedCommits = java.nio.file.Files.list(stagedCommitDirectory).withCloseable {
+        commits -> commits.sorted().collect { commit ->
+            def fileName = commit.fileName.toString()
+            def version = Long.parseLong(fileName.substring(0, 20))
+            [version: version, timestamp: 1700000000000L + version,
+                    "file-name": fileName, "file-size": java.nio.file.Files.size(commit),
+                    "file-modification-timestamp": 1700000000000L + version]
+        }
+    }
+    def catalogManagedResponse = groovy.json.JsonOutput.toJson([
+            metadata: [etag: "catalog-managed-etag", "table-type": "MANAGED",
+                    "table-uuid": catalogManagedTableId, location: catalogManagedPath,
+                    "partition-columns": [], properties: [
+                            "delta.feature.catalogManaged": "supported",
+                            "delta.enableInCommitTimestamps": "true"],
+                    "last-commit-version": 0],
+            commits: catalogManagedCommits, "latest-table-version": 2])
     def token = "native-delta-unity-test-token"
     def server = com.sun.net.httpserver.HttpServer.create(
             new java.net.InetSocketAddress("127.0.0.1", 0), 0)
@@ -47,6 +107,10 @@ suite("test_native_delta_unity", "p0,external") {
                     + '"schema_name":"default","table_type":"EXTERNAL",'
                     + '"data_source_format":"DELTA",'
                     + '"manifest_capabilities":["HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT"]},'
+                    + '{"name":"catalog_managed","catalog_name":"main",'
+                    + '"schema_name":"default","table_type":"MANAGED",'
+                    + '"data_source_format":"DELTA",'
+                    + '"manifest_capabilities":["HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT"]},'
                     + '{"name":"managed_customer","catalog_name":"main",'
                     + '"schema_name":"default","table_type":"MANAGED",'
                     + '"data_source_format":"DELTA",'
@@ -69,6 +133,8 @@ suite("test_native_delta_unity", "p0,external") {
                     + '"location":"' + tablePath + '",'
                     + '"partition-columns":[],"last-commit-version":0},'
                     + '"commits":[],"latest-table-version":0}')
+        } else if (path.endsWith("/tables/catalog_managed")) {
+            sendJson(200, catalogManagedResponse)
         } else {
             sendJson(404, '{"error_code":"NOT_FOUND"}')
         }
@@ -100,7 +166,15 @@ suite("test_native_delta_unity", "p0,external") {
             ORDER BY c_custkey
         """
         order_qt_managed_count "SELECT COUNT(*) FROM ${catalogName}.`default`.managed_customer"
+        order_qt_catalog_managed_count """
+            SELECT COUNT(*) FROM ${catalogName}.`default`.catalog_managed
+        """
     } finally {
         server.stop(0)
+        java.nio.file.Files.walk(catalogManagedDirectory).withCloseable { paths ->
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach {
+                java.nio.file.Files.deleteIfExists(it)
+            }
+        }
     }
 }
