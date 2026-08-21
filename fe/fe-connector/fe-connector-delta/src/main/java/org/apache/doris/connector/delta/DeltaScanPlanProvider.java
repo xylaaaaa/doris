@@ -89,6 +89,10 @@ public final class DeltaScanPlanProvider implements ConnectorScanPlanProvider {
                 .getBackendStorageProperties((DeltaTableHandle) handle).entrySet()) {
             scanProperties.put("location." + entry.getKey(), entry.getValue());
         }
+        DeltaVendedCredentialLifetime.validateScan(session, scanProperties,
+                DeltaConnectorProperties.positiveLongProperty(properties,
+                        DeltaConnectorProperties.UNITY_CREDENTIAL_MIN_LIFETIME_MS,
+                        DeltaConnectorProperties.DEFAULT_UNITY_CREDENTIAL_MIN_LIFETIME_MS));
         String serializedSchema = DeltaSchemaInfo.serializeIfMapped(snapshot);
         if (serializedSchema != null) {
             scanProperties.put(DeltaSchemaInfo.SERIALIZED_SCHEMA_PROPERTY, serializedSchema);

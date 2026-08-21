@@ -263,6 +263,52 @@ TEST_F(S3ClientFactoryTest, ConvertPropertiesToS3ConfAzureSas) {
     ASSERT_EQ(s3_conf.client_conf.token, "sv=2024-01-01&sig=temporary");
 }
 
+TEST_F(S3ClientFactoryTest, ConvertPropertiesToS3ConfRejectsExpiredVendedToken) {
+    std::map<std::string, std::string> properties {
+            {"AWS_ENDPOINT", "s3.us-west-2.amazonaws.com"},
+            {"AWS_REGION", "us-west-2"},
+            {"AWS_ACCESS_KEY", "temporary-ak"},
+            {"AWS_SECRET_KEY", "temporary-sk"},
+            {"AWS_TOKEN", "temporary-session"},
+            {"AWS_TOKEN_EXPIRATION_TIME_MS", "1"},
+    };
+    S3URI s3_uri("s3://test-bucket/test-prefix");
+    ASSERT_TRUE(s3_uri.parse().ok());
+
+    S3Conf s3_conf;
+    ASSERT_FALSE(S3ClientFactory::convert_properties_to_s3_conf(properties, s3_uri, &s3_conf).ok());
+}
+
+TEST_F(S3ClientFactoryTest, ConvertPropertiesToS3ConfCarriesVendedTokenExpiry) {
+    std::map<std::string, std::string> properties {
+            {"AWS_ENDPOINT", "s3.us-west-2.amazonaws.com"},
+            {"AWS_REGION", "us-west-2"},
+            {"AWS_ACCESS_KEY", "temporary-ak"},
+            {"AWS_SECRET_KEY", "temporary-sk"},
+            {"AWS_TOKEN", "temporary-session"},
+            {"AWS_TOKEN_EXPIRATION_TIME_MS", "4102444800000"},
+    };
+    S3URI s3_uri("s3://test-bucket/test-prefix");
+    ASSERT_TRUE(s3_uri.parse().ok());
+
+    S3Conf s3_conf;
+    ASSERT_TRUE(S3ClientFactory::convert_properties_to_s3_conf(properties, s3_uri, &s3_conf).ok());
+    ASSERT_EQ(s3_conf.client_conf.token_expiration_time_ms, 4102444800000LL);
+}
+
+TEST_F(S3ClientFactoryTest, ConvertPropertiesToS3ConfRejectsExpiryWithoutToken) {
+    std::map<std::string, std::string> properties {
+            {"AWS_ENDPOINT", "s3.us-west-2.amazonaws.com"},
+            {"AWS_REGION", "us-west-2"},
+            {"AWS_TOKEN_EXPIRATION_TIME_MS", "4102444800000"},
+    };
+    S3URI s3_uri("s3://test-bucket/test-prefix");
+    ASSERT_TRUE(s3_uri.parse().ok());
+
+    S3Conf s3_conf;
+    ASSERT_FALSE(S3ClientFactory::convert_properties_to_s3_conf(properties, s3_uri, &s3_conf).ok());
+}
+
 TEST_F(S3ClientFactoryTest, AwsCredentialsProviderV2ProviderTypeWithoutRoleArn) {
     S3ClientFactory& factory = S3ClientFactory::instance();
     config::aws_credentials_provider_version = "v2";

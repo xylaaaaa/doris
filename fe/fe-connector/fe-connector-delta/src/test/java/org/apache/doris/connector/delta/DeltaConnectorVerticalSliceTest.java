@@ -20,6 +20,7 @@ package org.apache.doris.connector.delta;
 import org.apache.doris.connector.api.Connector;
 import org.apache.doris.connector.api.ConnectorCapability;
 import org.apache.doris.connector.api.ConnectorColumn;
+import org.apache.doris.connector.api.ConnectorSession;
 import org.apache.doris.connector.api.ConnectorTableSchema;
 import org.apache.doris.connector.api.ConnectorType;
 import org.apache.doris.connector.api.DorisConnectorException;
@@ -196,6 +197,65 @@ public class DeltaConnectorVerticalSliceTest {
                         Map.of("AWS_ACCESS_KEY", "incomplete-ak")));
         Assertions.assertDoesNotThrow(() -> DeltaStorageProperties.toBackendProperties(Map.of(
                 "provider", "AZURE", "AWS_TOKEN", "azure-sas")));
+    }
+
+    @Test
+    public void testVendedCredentialMustCoverQueryTimeout() {
+        long nowMs = 1_700_000_000_000L;
+        ConnectorSession session = connectorSessionWithTimeouts("120", "240");
+        Map<String, String> insufficient = Map.of(
+                "location.AWS_TOKEN_EXPIRATION_TIME_MS",
+                String.valueOf(nowMs + 179_999L));
+
+        DorisConnectorException exception = Assertions.assertThrows(
+                DorisConnectorException.class,
+                () -> DeltaVendedCredentialLifetime.validate(session, insufficient,
+                        "location.AWS_TOKEN_EXPIRATION_TIME_MS", "query_timeout",
+                        60_000L, nowMs));
+        Assertions.assertTrue(exception.getMessage().contains("query_timeout"));
+
+        Map<String, String> sufficient = Map.of(
+                "location.AWS_TOKEN_EXPIRATION_TIME_MS",
+                String.valueOf(nowMs + 180_001L));
+        Assertions.assertDoesNotThrow(
+                () -> DeltaVendedCredentialLifetime.validate(session, sufficient,
+                        "location.AWS_TOKEN_EXPIRATION_TIME_MS", "query_timeout",
+                        60_000L, nowMs));
+
+        Map<String, String> insufficientWrite = Map.of(
+                "AWS_TOKEN_EXPIRATION_TIME_MS", String.valueOf(nowMs + 299_999L));
+        DorisConnectorException writeException = Assertions.assertThrows(
+                DorisConnectorException.class,
+                () -> DeltaVendedCredentialLifetime.validate(session, insufficientWrite,
+                        "AWS_TOKEN_EXPIRATION_TIME_MS", "insert_timeout", 60_000L, nowMs));
+        Assertions.assertTrue(writeException.getMessage().contains("insert_timeout"));
+    }
+
+    @Test
+    public void testScanPlanRejectsCredentialThatExpiresBeforeQueryTimeout() throws Exception {
+        Map<String, String> properties = deltaProperties("delta/path_table");
+        DeltaPathCatalogAdapter baseAdapter = pathAdapter(properties);
+        DeltaPathCatalogAdapter credentialAdapter = new DeltaPathCatalogAdapter(
+                baseAdapter.getDatabaseName(), baseAdapter.getTableName(),
+                baseAdapter.getTablePath(), new DeltaKernelSnapshotLoader(
+                        DefaultEngine.create(new Configuration()))) {
+            @Override
+            public Map<String, String> getBackendStorageProperties(DeltaTableHandle tableHandle) {
+                return Map.of(
+                        DeltaStorageProperties.S3_TOKEN, "temporary-session",
+                        DeltaStorageProperties.S3_TOKEN_EXPIRATION_TIME_MS,
+                        String.valueOf(System.currentTimeMillis() + 1_000L));
+            }
+        };
+        DeltaTableHandle handle = credentialAdapter.getTableHandle("default", "events")
+                .orElseThrow();
+        DeltaScanPlanProvider scanProvider = new DeltaScanPlanProvider(
+                credentialAdapter, properties);
+
+        Assertions.assertThrows(DorisConnectorException.class,
+                () -> scanProvider.getScanNodeProperties(
+                        connectorSessionWithTimeouts("120", "240"), handle, List.of(),
+                        java.util.Optional.empty()));
     }
 
     @Test
@@ -387,6 +447,57 @@ public class DeltaConnectorVerticalSliceTest {
             @Override
             public long getCatalogId() {
                 return 1;
+            }
+        };
+    }
+
+    private static ConnectorSession connectorSessionWithTimeouts(
+            String queryTimeoutSeconds, String insertTimeoutSeconds) {
+        return new ConnectorSession() {
+            @Override
+            public String getQueryId() {
+                return "delta-timeout-test";
+            }
+
+            @Override
+            public String getUser() {
+                return "root";
+            }
+
+            @Override
+            public String getTimeZone() {
+                return "UTC";
+            }
+
+            @Override
+            public String getLocale() {
+                return "en_US";
+            }
+
+            @Override
+            public long getCatalogId() {
+                return 1L;
+            }
+
+            @Override
+            public String getCatalogName() {
+                return "delta_test";
+            }
+
+            @Override
+            public <T> T getProperty(String name, Class<T> type) {
+                return null;
+            }
+
+            @Override
+            public Map<String, String> getCatalogProperties() {
+                return Map.of();
+            }
+
+            @Override
+            public Map<String, String> getSessionProperties() {
+                return Map.of("query_timeout", queryTimeoutSeconds,
+                        "insert_timeout", insertTimeoutSeconds);
             }
         };
     }

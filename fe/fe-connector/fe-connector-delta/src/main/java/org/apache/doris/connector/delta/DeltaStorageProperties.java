@@ -29,6 +29,7 @@ final class DeltaStorageProperties {
     static final String S3_ACCESS_KEY = "AWS_ACCESS_KEY";
     static final String S3_SECRET_KEY = "AWS_SECRET_KEY";
     static final String S3_TOKEN = "AWS_TOKEN";
+    static final String S3_TOKEN_EXPIRATION_TIME_MS = "AWS_TOKEN_EXPIRATION_TIME_MS";
     static final String USE_PATH_STYLE = "use_path_style";
 
     private DeltaStorageProperties() {
@@ -128,7 +129,8 @@ final class DeltaStorageProperties {
                 || key.startsWith("hive.") || key.startsWith("s3.") || key.startsWith("s3a.")
                 || key.startsWith("cos.") || key.startsWith("oss.") || key.startsWith("obs.")
                 || key.startsWith("azure.") || key.startsWith("adls.")
-                || key.startsWith("gcs.") || key.startsWith("google.") || key.equals("uri");
+                || key.startsWith("gcs.") || key.startsWith("google.") || key.equals("uri")
+                || key.equals(S3_TOKEN_EXPIRATION_TIME_MS);
     }
 
     static String firstNonBlank(Map<String, String> properties, String... keys) {

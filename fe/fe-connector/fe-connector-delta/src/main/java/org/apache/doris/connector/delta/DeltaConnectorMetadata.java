@@ -159,12 +159,17 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
                     "The initial native Delta writer requires every table column in schema order; "
                             + "expected " + tableColumns + " but received " + columns);
         }
+        Map<String, String> storageProperties = getBackendStoragePropertiesForWrite(deltaHandle);
+        DeltaVendedCredentialLifetime.validateWrite(session, storageProperties,
+                DeltaConnectorProperties.positiveLongProperty(properties,
+                        DeltaConnectorProperties.UNITY_CREDENTIAL_MIN_LIFETIME_MS,
+                        DeltaConnectorProperties.DEFAULT_UNITY_CREDENTIAL_MIN_LIFETIME_MS));
         return ConnectorWriteConfig.builder(ConnectorWriteType.FILE_WRITE)
                 .fileFormat("parquet")
                 .compression("snappy")
                 .writeLocation(deltaHandle.getTablePath())
                 .partitionColumns(snapshot.getPartitionColumnNames())
-                .properties(getBackendStoragePropertiesForWrite(deltaHandle))
+                .properties(storageProperties)
                 .build();
     }
 

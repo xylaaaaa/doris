@@ -175,6 +175,9 @@ public class UnityDeltaCatalogAdapterTest {
         Assertions.assertEquals("temporary-ak", aws.get("AWS_ACCESS_KEY"));
         Assertions.assertEquals("temporary-sk", aws.get("AWS_SECRET_KEY"));
         Assertions.assertEquals("temporary-session", aws.get("AWS_TOKEN"));
+        long awsExpiration = Long.parseLong(aws.get("AWS_TOKEN_EXPIRATION_TIME_MS"));
+        Assertions.assertTrue(awsExpiration > System.currentTimeMillis());
+        Assertions.assertTrue(awsExpiration <= System.currentTimeMillis() + 3600000L);
         Assertions.assertEquals("s3.us-west-2.amazonaws.com", aws.get("AWS_ENDPOINT"));
         Assertions.assertEquals("us-west-2", aws.get("AWS_REGION"));
         Assertions.assertFalse(aws.containsValue(TEST_TOKEN));
@@ -208,6 +211,9 @@ public class UnityDeltaCatalogAdapterTest {
         Assertions.assertEquals("account.blob.core.windows.net", azure.get("AWS_ENDPOINT"));
         Assertions.assertEquals("azure", azure.get("AWS_REGION"));
         Assertions.assertEquals("azure-sas", azure.get("AWS_TOKEN"));
+        long azureExpiration = Long.parseLong(azure.get("AWS_TOKEN_EXPIRATION_TIME_MS"));
+        Assertions.assertTrue(azureExpiration > System.currentTimeMillis());
+        Assertions.assertTrue(azureExpiration <= System.currentTimeMillis() + 3600000L);
         Assertions.assertFalse(azure.containsKey("fs.azure.sas.fixed.token.account.dfs.core.windows.net"));
 
         DeltaCredentialsResponse gcsResponse = credentials(

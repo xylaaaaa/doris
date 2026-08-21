@@ -117,6 +117,8 @@ final class UnityDeltaStorageProperties {
             properties.put(S3_ENDPOINT, blobEndpoint(accountHost));
             properties.put(S3_REGION, "azure");
             properties.put(S3_TOKEN, sasToken);
+            properties.put(DeltaStorageProperties.S3_TOKEN_EXPIRATION_TIME_MS,
+                    String.valueOf(credential.getExpirationTimeMs()));
             return properties;
         }
         throw new UnsupportedOperationException(
@@ -163,6 +165,8 @@ final class UnityDeltaStorageProperties {
                 credentials.getSecretAccessKey(), "secret key"));
         properties.put(S3_TOKEN, requireCredentialValue(
                 credentials.getSessionToken(), "session token"));
+        properties.put(DeltaStorageProperties.S3_TOKEN_EXPIRATION_TIME_MS,
+                String.valueOf(credential.getExpirationTimeMs()));
         return properties;
     }
 
