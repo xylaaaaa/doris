@@ -119,7 +119,12 @@ suite("test_native_delta_unity", "p0,external") {
         }
 
         def path = exchange.requestURI.path
-        if (path == "/api/2.1/unity-catalog/schemas") {
+        if (path == "/api/2.1/unity-catalog/delta/v1/config") {
+            sendJson(200, '{"endpoints":['
+                    + '"GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}",'
+                    + '"GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials"],'
+                    + '"protocol-version":"1.0"}')
+        } else if (path == "/api/2.1/unity-catalog/schemas") {
             sendJson(200, '{"schemas":[{"name":"default","catalog_name":"main"}]}')
         } else if (path == "/api/2.1/unity-catalog/tables") {
             sendJson(200, '{"tables":[{"name":"customer","catalog_name":"main",'
