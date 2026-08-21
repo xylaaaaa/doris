@@ -127,10 +127,6 @@ final class UnityDeltaStorageProperties {
                 throw new IllegalArgumentException(
                         "Unity Catalog returned an empty GCS OAuth token");
             }
-            if (expectedOperation == DeltaCredentialOperation.READ_WRITE) {
-                throw new UnsupportedOperationException(
-                        "Native Unity GCS Delta writes are not supported");
-            }
             return gcsProperties(locationUri, gcsOauthToken, credential, catalogProperties);
         }
         throw new UnsupportedOperationException(

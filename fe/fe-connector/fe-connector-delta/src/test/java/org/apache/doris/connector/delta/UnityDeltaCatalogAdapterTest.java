@@ -264,13 +264,15 @@ public class UnityDeltaCatalogAdapterTest {
                 () -> UnityDeltaStorageProperties.toBackendPath(
                         "gs://delta-bucket/tables/events",
                         Map.of("gcs.endpoint", "http://gcs.example.test")));
-        Assertions.assertThrows(UnsupportedOperationException.class,
-                () -> UnityDeltaStorageProperties.toBackendProperties(
-                        "gs://delta-bucket/tables/events", credentials(
-                                "gs://delta-bucket/tables/events",
-                                new DeltaStorageCredentialConfig().gcsOauthToken("gcs-oauth"),
-                                DeltaCredentialOperation.READ_WRITE), Map.of(),
-                        DeltaCredentialOperation.READ_WRITE));
+        Map<String, String> gcsWrite = UnityDeltaStorageProperties.toBackendProperties(
+                "gs://delta-bucket/tables/events", credentials(
+                        "gs://delta-bucket/tables/events",
+                        new DeltaStorageCredentialConfig().gcsOauthToken("gcs-oauth"),
+                        DeltaCredentialOperation.READ_WRITE), Map.of(),
+                DeltaCredentialOperation.READ_WRITE);
+        Assertions.assertEquals("GCP", gcsWrite.get("provider"));
+        Assertions.assertEquals("Bearer gcs-oauth",
+                gcsWrite.get("http.header.Authorization"));
     }
 
     @Test

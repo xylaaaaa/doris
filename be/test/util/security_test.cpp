@@ -15,20 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#pragma once
+#include "util/security.h"
 
-#include <regex>
-#include <string>
+#include <gtest/gtest.h>
 
 namespace doris {
 
-inline std::string mask_token(const std::string& str) {
-    std::regex pattern("((token|upload_id)=)[^&#\\s]+");
-    return std::regex_replace(str, pattern, "$1******");
-}
-
-inline std::string mask_token(const char* str) {
-    return mask_token(std::string(str));
+TEST(SecurityTest, masks_tokens_and_gcs_upload_sessions) {
+    EXPECT_EQ(mask_token("https://host/path?token=abc.def&x=1"),
+              "https://host/path?token=******&x=1");
+    EXPECT_EQ(mask_token("https://host/path?upload_id=secret-session_1&x=1"),
+              "https://host/path?upload_id=******&x=1");
 }
 
 } // namespace doris

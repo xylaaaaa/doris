@@ -209,7 +209,11 @@ bool VHivePartitionWriter::_build_s3_mpu_pending_upload(TS3MPUPendingUpload* pen
 
     doris::io::S3FileWriter* s3_mpu_file_writer =
             dynamic_cast<doris::io::S3FileWriter*>(_file_writer.get());
-    DCHECK(s3_mpu_file_writer != nullptr);
+    if (s3_mpu_file_writer == nullptr) {
+        // FILE_S3 also covers the GCS OAuth writer, whose resumable session is cancelled by
+        // the writer itself and has no S3 multipart state for the Hive committer.
+        return false;
+    }
     std::string upload_id = s3_mpu_file_writer->upload_id();
     if (upload_id.empty()) {
         return false;

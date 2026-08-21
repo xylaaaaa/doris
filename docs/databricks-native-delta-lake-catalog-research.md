@@ -165,7 +165,7 @@ Spark 和 Starburst 使用已有的完整 Delta 实现；ClickHouse 从自研迁
 - 已接通 `FOR VERSION AS OF` 和 `FOR TIME AS OF`，覆盖 path、Unity external/managed 和 catalog-managed snapshot；当前要求历史与当前 schema、分区列一致，跨 schema evolution 会明确拒绝。
 - 已接通 plugin catalog 的 `CREATE TABLE` SPI，并验证 path Delta 的空表 version 0 创建、分区元数据写入和后续 append；Unity managed create 也已在本地 Unity API fixture 中完成 staging、version 0 写入和 finalize。当前分区支持限定为直接列名分区，不包含 transform/default/generated column；真实 Databricks staging credentials 和云端 E2E 仍待验证。
 - 已验证 external、catalog-managed append，以及 path/Unity managed create 的实验性样例；尚未实现完整的 UPDATE、DELETE、MERGE 和 managed write 产品能力。
-- 已验证 Unity 读取能力声明、凭证操作类型和过期时间的 fail-closed 校验；AWS、Azure 及 GCS OAuth 的初始临时凭证已能进入 FE/BE 读取链路。BE 长查询中的凭证续期、GCS 写入和真实 Databricks 三云联调仍未完成。
+- 已验证 Unity 读取能力声明、凭证操作类型和过期时间的 fail-closed 校验；AWS、Azure 及 GCS OAuth 的初始临时凭证已能进入 FE/BE 读取链路。GCS OAuth 数据文件写入已接入 resumable upload，并用本地协议 fixture 覆盖分块、服务端部分落盘后的断点续传和过期凭证拒绝；BE 长查询中的自动凭证续期及真实 Databricks 三云联调仍未完成。
 - 本地 Delta fixtures、FE 单测和隔离 FE/BE 回归已通过；这些测试不能替代真实 Databricks workspace 的权限、网络、凭证续期和 catalog-commit 验收。
 
 因此当前结论是“native Delta 方向可行，读链路已有可运行原型”，而不是“Doris 已经完整支持 Databricks Delta”。
@@ -188,6 +188,7 @@ Spark 和 Starburst 使用已有的完整 Delta 实现；ClickHouse 从自研迁
 - [Delta Kernel](https://docs.delta.io/delta-kernel/)
 - [Delta Kernel Unity Catalog integration](https://docs.delta.io/kernel/rust/unity_catalog/overview.html)
 - [Delta protocol](https://github.com/delta-io/delta/blob/master/PROTOCOL.md)
+- [Google Cloud Storage resumable uploads](https://cloud.google.com/storage/docs/performing-resumable-uploads)
 
 ### 竞品
 
