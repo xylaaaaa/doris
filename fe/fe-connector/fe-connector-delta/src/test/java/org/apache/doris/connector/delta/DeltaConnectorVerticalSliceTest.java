@@ -21,6 +21,7 @@ import org.apache.doris.connector.api.Connector;
 import org.apache.doris.connector.api.ConnectorCapability;
 import org.apache.doris.connector.api.ConnectorColumn;
 import org.apache.doris.connector.api.ConnectorSession;
+import org.apache.doris.connector.api.ConnectorTableCreateRequest;
 import org.apache.doris.connector.api.ConnectorTableSchema;
 import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.ConnectorType;
@@ -47,6 +48,7 @@ import io.delta.kernel.types.VariantType;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -66,6 +68,9 @@ import java.util.ServiceLoader;
 import java.util.stream.Collectors;
 
 public class DeltaConnectorVerticalSliceTest {
+
+    @TempDir
+    Path tempDirectory;
 
     @Test
     public void testProviderIsDiscoverableAndValidatesSingleTableProperties() throws Exception {
@@ -104,6 +109,67 @@ public class DeltaConnectorVerticalSliceTest {
                 .getTableHandle(null, "default", "events").orElseThrow();
         Assertions.assertEquals(2, connector.getScanPlanProvider()
                 .planScan(null, handle, List.of(), java.util.Optional.empty()).size());
+    }
+
+    @Test
+    public void testPathCatalogCreatesVersionZeroTable() {
+        Map<String, String> properties = new LinkedHashMap<>();
+        properties.put("type", "delta");
+        properties.put(DeltaConnectorProperties.CATALOG_TYPE,
+                DeltaConnectorProperties.CATALOG_TYPE_PATH);
+        properties.put(DeltaConnectorProperties.DATABASE, "default");
+        properties.put(DeltaConnectorProperties.TABLE, "created_events");
+        properties.put(DeltaConnectorProperties.TABLE_PATH,
+                tempDirectory.resolve("created-events").toUri().toString());
+        properties.put(DeltaConnectorProperties.WRITE_ENABLED, "true");
+        Connector connector = new DeltaConnectorProvider().create(
+                properties, connectorContext());
+        ConnectorTableCreateRequest request = new ConnectorTableCreateRequest(
+                "default", new ConnectorTableSchema("created_events", List.of(
+                        new ConnectorColumn("id", ConnectorType.of("BIGINT"), "", false, null),
+                        new ConnectorColumn("payload", ConnectorType.of("STRING"), "", true, null)),
+                        "DELTA", Map.of()), List.of(), Map.of("owner", "doris"),
+                "created by test", false);
+
+        Assertions.assertTrue(connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_CREATE_TABLE));
+        Assertions.assertTrue(connector.testConnection(null).isSuccess());
+        Assertions.assertTrue(connector.getMetadata(null)
+                .listTableNames(null, "default").isEmpty());
+        ConnectorTableCreateRequest partitioned = new ConnectorTableCreateRequest(
+                request.getDatabaseName(), request.getTableSchema(), List.of("id"),
+                request.getProperties(), request.getComment(), false);
+        Assertions.assertThrows(UnsupportedOperationException.class,
+                () -> connector.getMetadata(null).createTable(null, partitioned));
+        ConnectorTableCreateRequest withDefault = new ConnectorTableCreateRequest(
+                "default", new ConnectorTableSchema("created_events", List.of(
+                        new ConnectorColumn("id", ConnectorType.of("BIGINT"), "", false, "1")),
+                        "DELTA", Map.of()), List.of(), Map.of(), "", false);
+        Assertions.assertThrows(UnsupportedOperationException.class,
+                () -> connector.getMetadata(null).createTable(null, withDefault));
+        Assertions.assertFalse(connector.getMetadata(null).createTable(null, request));
+        Assertions.assertEquals(List.of("created_events"), connector.getMetadata(null)
+                .listTableNames(null, "default"));
+        DeltaTableHandle handle = (DeltaTableHandle) connector.getMetadata(null)
+                .getTableHandle(null, "default", "created_events").orElseThrow();
+        Assertions.assertEquals(0, handle.getSnapshotVersion());
+
+        ConnectorTableCreateRequest ifNotExists = new ConnectorTableCreateRequest(
+                request.getDatabaseName(), request.getTableSchema(), request.getPartitionColumns(),
+                request.getProperties(), request.getComment(), true);
+        Assertions.assertTrue(connector.getMetadata(null).createTable(null, ifNotExists));
+        Assertions.assertThrows(DorisConnectorException.class,
+                () -> connector.getMetadata(null).createTable(null, request));
+
+        Map<String, String> readOnlyProperties = new LinkedHashMap<>(properties);
+        readOnlyProperties.remove(DeltaConnectorProperties.WRITE_ENABLED);
+        readOnlyProperties.put(DeltaConnectorProperties.TABLE_PATH,
+                tempDirectory.resolve("read-only-missing").toUri().toString());
+        Connector readOnly = new DeltaConnectorProvider().create(
+                readOnlyProperties, connectorContext());
+        Assertions.assertFalse(readOnly.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_CREATE_TABLE));
+        Assertions.assertFalse(readOnly.testConnection(null).isSuccess());
     }
 
     @Test

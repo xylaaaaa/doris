@@ -17,6 +17,7 @@
 
 package org.apache.doris.connector.delta;
 
+import org.apache.doris.connector.api.ConnectorTableCreateRequest;
 import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 
@@ -47,6 +48,16 @@ public interface DeltaCatalogAdapter {
             DeltaTableHandle tableHandle, ConnectorTableSnapshot snapshot) {
         throw new UnsupportedOperationException(
                 "This Delta catalog adapter does not support time travel");
+    }
+
+    /** Creates a Delta table and returns true when IF NOT EXISTS matched it. */
+    default boolean createTable(ConnectorTableCreateRequest request) {
+        throw new UnsupportedOperationException(
+                "This Delta catalog adapter does not support CREATE TABLE");
+    }
+
+    default boolean supportsCreateTable() {
+        return false;
     }
 
     /** Historical scans use the already-bound current schema, so schema evolution must fail closed. */

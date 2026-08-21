@@ -20,6 +20,7 @@ package org.apache.doris.connector.delta;
 import org.apache.doris.connector.api.ConnectorColumn;
 import org.apache.doris.connector.api.ConnectorMetadata;
 import org.apache.doris.connector.api.ConnectorSession;
+import org.apache.doris.connector.api.ConnectorTableCreateRequest;
 import org.apache.doris.connector.api.ConnectorTableSchema;
 import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.ConnectorType;
@@ -93,6 +94,27 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
     public ConnectorTableHandle applyTableSnapshot(ConnectorSession session,
             ConnectorTableHandle handle, ConnectorTableSnapshot snapshot) {
         return catalogAdapter.applyTableSnapshot((DeltaTableHandle) handle, snapshot);
+    }
+
+    @Override
+    public boolean createTable(
+            ConnectorSession session, ConnectorTableCreateRequest request) {
+        requireWriteEnabled();
+        if (!catalogAdapter.supportsCreateTable()) {
+            throw new UnsupportedOperationException(
+                    "This native Delta catalog adapter does not support CREATE TABLE");
+        }
+        if (!request.getPartitionColumns().isEmpty()) {
+            throw new UnsupportedOperationException(
+                    "The initial native Delta CREATE TABLE supports unpartitioned tables only");
+        }
+        for (ConnectorColumn column : request.getTableSchema().getColumns()) {
+            if (column.getDefaultValue() != null) {
+                throw new UnsupportedOperationException(
+                        "Native Delta CREATE TABLE does not support column defaults");
+            }
+        }
+        return catalogAdapter.createTable(request);
     }
 
     @Override

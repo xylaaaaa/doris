@@ -17,8 +17,11 @@
 
 package org.apache.doris.connector.delta;
 
+import org.apache.doris.connector.api.ConnectorTableCreateRequest;
 import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.DorisConnectorException;
+
+import io.delta.kernel.exceptions.TableNotFoundException;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -39,13 +42,21 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
     private final String tableName;
     private final String tablePath;
     private final DeltaKernelSnapshotLoader snapshotLoader;
+    private final DeltaKernelWriter writer;
 
     public DeltaPathCatalogAdapter(String databaseName, String tableName,
             String tablePath, DeltaKernelSnapshotLoader snapshotLoader) {
+        this(databaseName, tableName, tablePath, snapshotLoader, null);
+    }
+
+    public DeltaPathCatalogAdapter(String databaseName, String tableName,
+            String tablePath, DeltaKernelSnapshotLoader snapshotLoader,
+            DeltaKernelWriter writer) {
         this.databaseName = requireNonBlank(databaseName, "databaseName");
         this.tableName = requireNonBlank(tableName, "tableName");
         this.tablePath = requireNonBlank(tablePath, "tablePath");
         this.snapshotLoader = snapshotLoader;
+        this.writer = writer;
     }
 
     @Override
@@ -63,7 +74,8 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
         if (!databaseExists(requestedDatabaseName)) {
             return Collections.emptyList();
         }
-        return Collections.singletonList(tableName);
+        return getTableHandle(databaseName, tableName).isPresent()
+                ? Collections.singletonList(tableName) : Collections.emptyList();
     }
 
     @Override
@@ -73,9 +85,16 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
                 || !tableName.equals(requestedTableName)) {
             return Optional.empty();
         }
-        DeltaKernelSnapshot snapshot = loadLatestSnapshot();
-        return Optional.of(new DeltaTableHandle(databaseName, tableName, tablePath,
-                snapshot.getVersion()).withPinnedSnapshot(snapshot));
+        try {
+            DeltaKernelSnapshot snapshot = snapshotLoader.loadLatest(tablePath);
+            return Optional.of(new DeltaTableHandle(databaseName, tableName, tablePath,
+                    snapshot.getVersion()).withPinnedSnapshot(snapshot));
+        } catch (TableNotFoundException e) {
+            return Optional.empty();
+        } catch (IOException e) {
+            throw new DorisConnectorException(
+                    "Failed to load latest Delta snapshot at '" + tablePath + "'", e);
+        }
     }
 
     @Override
@@ -111,6 +130,32 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
                 .withPinnedSnapshot(requested);
     }
 
+    @Override
+    public boolean createTable(ConnectorTableCreateRequest request) {
+        if (!databaseName.equals(request.getDatabaseName())
+                || !tableName.equals(request.getTableSchema().getTableName())) {
+            throw new IllegalArgumentException(
+                    "CREATE TABLE coordinates do not match the configured Delta path table");
+        }
+        Optional<DeltaTableHandle> existing = getTableHandle(databaseName, tableName);
+        if (existing.isPresent()) {
+            if (request.isIfNotExists()) {
+                return true;
+            }
+            throw new DorisConnectorException(
+                    "Delta table already exists: " + databaseName + "." + tableName);
+        }
+        writer.createTable(tablePath,
+                DeltaTypeMapping.toDeltaSchema(request.getTableSchema().getColumns()),
+                request.getProperties());
+        return false;
+    }
+
+    @Override
+    public boolean supportsCreateTable() {
+        return writer != null;
+    }
+
     /** Loads the current latest snapshot for connectivity checks and handle creation. */
     public DeltaKernelSnapshot loadLatestSnapshot() {
         try {
@@ -132,7 +177,15 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
 
     @Override
     public String testConnection() {
-        DeltaKernelSnapshot snapshot = loadLatestSnapshot();
+        Optional<DeltaTableHandle> handle = getTableHandle(databaseName, tableName);
+        if (handle.isEmpty()) {
+            if (writer == null) {
+                throw new DorisConnectorException(
+                        "Delta table does not exist at '" + tablePath + "'");
+            }
+            return "Delta path is ready for CREATE TABLE";
+        }
+        DeltaKernelSnapshot snapshot = loadSnapshot(handle.get());
         return "Delta snapshot version " + snapshot.getVersion() + " is readable";
     }
 

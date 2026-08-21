@@ -71,6 +71,13 @@ public interface ConnectorTableOps {
                 "CREATE TABLE not supported");
     }
 
+    /** Creates a table and returns true when IF NOT EXISTS matched an existing table. */
+    default boolean createTable(
+            ConnectorSession session, ConnectorTableCreateRequest request) {
+        createTable(session, request.getTableSchema(), request.getProperties());
+        return false;
+    }
+
     /** Drops the specified table. */
     default void dropTable(ConnectorSession session,
             ConnectorTableHandle handle) {

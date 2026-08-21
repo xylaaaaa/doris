@@ -47,6 +47,29 @@ suite("test_native_delta_path", "p0,external") {
         LIMIT 3
     """
 
+    def createdTablePath = java.nio.file.Files.createTempDirectory(
+            "doris-native-delta-create-").resolve("created_events")
+    def createCatalogName = "test_native_delta_path_create"
+    sql "DROP CATALOG IF EXISTS ${createCatalogName}"
+    sql """
+        CREATE CATALOG ${createCatalogName} PROPERTIES (
+            'type' = 'delta',
+            'delta.catalog.type' = 'path',
+            'delta.database' = 'default',
+            'delta.table' = 'created_events',
+            'delta.table.path' = '${createdTablePath.toUri()}',
+            'delta.write.enabled' = 'true',
+            'test_connection' = 'false'
+        )
+    """
+    sql """
+        CREATE TABLE ${createCatalogName}.`default`.created_events (
+            id BIGINT NOT NULL,
+            payload STRING NULL
+        )
+    """
+    sql "INSERT INTO ${createCatalogName}.`default`.created_events VALUES (1, 'created')"
+
     def sourceTable = new File(dorisHome,
             "samples/datalake/deltalake_and_kudu/data/customer").toPath()
     def writableTable = java.nio.file.Files.createTempDirectory(

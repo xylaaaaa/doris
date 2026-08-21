@@ -17,6 +17,8 @@
 
 package org.apache.doris.connector.delta;
 
+import org.apache.doris.connector.api.ConnectorColumn;
+import org.apache.doris.connector.api.ConnectorType;
 import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.api.write.ConnectorFileCommitInfo;
 
@@ -41,6 +43,26 @@ public class DeltaKernelWriterTest {
 
     @TempDir
     Path tempDirectory;
+
+    @Test
+    public void testCreatesVersionZeroTable() {
+        Path tableDirectory = tempDirectory.resolve("created-table");
+        Engine engine = DefaultEngine.create(new Configuration());
+        DeltaKernelWriter writer = new DeltaKernelWriter(engine);
+        io.delta.kernel.types.StructType schema = DeltaTypeMapping.toDeltaSchema(List.of(
+                new ConnectorColumn("id", ConnectorType.of("BIGINT"), "", false, null),
+                new ConnectorColumn("payload", ConnectorType.of("STRING"), "", true, null)));
+
+        DeltaKernelSnapshot snapshot = writer.createTable(
+                tableDirectory.toUri().toString(), schema, Map.of("owner", "doris"));
+
+        Assertions.assertEquals(0, snapshot.getVersion());
+        Assertions.assertEquals(List.of("id", "payload"), snapshot.getSchema().fieldNames());
+        Assertions.assertTrue(snapshot.getActiveFiles().isEmpty());
+        Assertions.assertEquals("doris", snapshot.getTableProperties().get("owner"));
+        Assertions.assertTrue(Files.exists(tableDirectory.resolve(
+                "_delta_log/00000000000000000000.json")));
+    }
 
     @Test
     public void testBlindAppendCommitsBackendDataFile() throws Exception {

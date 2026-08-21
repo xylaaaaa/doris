@@ -52,16 +52,18 @@ public final class DeltaConnector implements Connector {
 
         Configuration hadoopConfiguration = buildHadoopConfiguration(this.properties);
         String catalogType = DeltaConnectorProperties.catalogType(this.properties);
+        boolean writeEnabled = Boolean.parseBoolean(this.properties.getOrDefault(
+                DeltaConnectorProperties.WRITE_ENABLED, "false"));
         DeltaKernelWriter writer = null;
         if (DeltaConnectorProperties.CATALOG_TYPE_PATH.equals(catalogType)) {
             Engine engine = DefaultEngine.create(hadoopConfiguration);
             DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
                     engine);
+            writer = writeEnabled ? new DeltaKernelWriter(engine) : null;
             this.catalogAdapter = new DeltaPathCatalogAdapter(
                     this.properties.get(DeltaConnectorProperties.DATABASE),
                     this.properties.get(DeltaConnectorProperties.TABLE),
-                    this.properties.get(DeltaConnectorProperties.TABLE_PATH), loader);
-            writer = new DeltaKernelWriter(engine);
+                    this.properties.get(DeltaConnectorProperties.TABLE_PATH), loader, writer);
         } else {
             UnityDeltaClient unityClient = UnityDeltaClient.create(this.properties);
             this.catalogAdapter = new UnityDeltaCatalogAdapter(
@@ -109,6 +111,9 @@ public final class DeltaConnector implements Connector {
         if (Boolean.parseBoolean(properties.getOrDefault(
                 DeltaConnectorProperties.WRITE_ENABLED, "false"))) {
             capabilities.add(ConnectorCapability.SUPPORTS_INSERT);
+            if (catalogAdapter.supportsCreateTable()) {
+                capabilities.add(ConnectorCapability.SUPPORTS_CREATE_TABLE);
+            }
         }
         return Collections.unmodifiableSet(capabilities);
     }

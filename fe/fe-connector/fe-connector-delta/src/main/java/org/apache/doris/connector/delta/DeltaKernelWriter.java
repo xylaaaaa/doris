@@ -24,6 +24,7 @@ import io.delta.kernel.DataWriteContext;
 import io.delta.kernel.Operation;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.Table;
+import io.delta.kernel.TableManager;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.TransactionBuilder;
 import io.delta.kernel.TransactionCommitResult;
@@ -32,6 +33,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.util.PartitionUtils;
+import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.ByteType;
@@ -80,6 +82,26 @@ final class DeltaKernelWriter {
 
     DeltaInsertHandle beginInsert(DeltaTableHandle tableHandle) {
         return beginInsert(tableHandle, null);
+    }
+
+    DeltaKernelSnapshot createTable(String tablePath, StructType schema,
+            Map<String, String> tableProperties) {
+        Transaction transaction = TableManager.buildCreateTableTransaction(
+                tablePath, schema, ENGINE_INFO)
+                .withDataLayoutSpec(DataLayoutSpec.noDataLayout())
+                .withTableProperties(tableProperties)
+                .withMaxRetries(MAX_COMMIT_RETRIES)
+                .build(engine);
+        try (CloseableIterable<Row> actions = CloseableIterable.inMemoryIterable(
+                closeableIterator(java.util.Collections.<Row>emptyIterator()))) {
+            TransactionCommitResult result = transaction.commit(engine, actions);
+            runPostCommitHooks(result);
+            return new DeltaKernelSnapshotLoader(engine).loadVersion(
+                    tablePath, result.getVersion());
+        } catch (IOException e) {
+            throw new DorisConnectorException("Failed to create Delta table at '"
+                    + tablePath + "'", e);
+        }
     }
 
     DeltaInsertHandle beginInsert(DeltaTableHandle tableHandle, String applicationId) {

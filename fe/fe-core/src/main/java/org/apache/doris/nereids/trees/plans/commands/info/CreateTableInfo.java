@@ -48,6 +48,7 @@ import org.apache.doris.common.util.PropertyAnalyzer;
 import org.apache.doris.common.util.Util;
 import org.apache.doris.datasource.CatalogIf;
 import org.apache.doris.datasource.InternalCatalog;
+import org.apache.doris.datasource.PluginDrivenExternalCatalog;
 import org.apache.doris.datasource.hive.HMSExternalCatalog;
 import org.apache.doris.datasource.iceberg.IcebergExternalCatalog;
 import org.apache.doris.datasource.iceberg.IcebergUtils;
@@ -125,6 +126,7 @@ public class CreateTableInfo {
     public static final String ENGINE_ICEBERG = "iceberg";
     public static final String ENGINE_PAIMON = "paimon";
     public static final String ENGINE_MAXCOMPUTE = "maxcompute";
+    public static final String ENGINE_DELTA = "delta";
     private static final ImmutableSet<AggregateType> GENERATED_COLUMN_ALLOW_AGG_TYPE =
             ImmutableSet.of(AggregateType.REPLACE, AggregateType.REPLACE_IF_NOT_NULL);
 
@@ -394,6 +396,10 @@ public class CreateTableInfo {
             throw new AnalysisException("Paimon type catalog can only use `paimon` engine.");
         } else if (catalog instanceof MaxComputeExternalCatalog && !engineName.equals(ENGINE_MAXCOMPUTE)) {
             throw new AnalysisException("MaxCompute type catalog can only use `maxcompute` engine.");
+        } else if (catalog instanceof PluginDrivenExternalCatalog
+                && "delta".equalsIgnoreCase(((PluginDrivenExternalCatalog) catalog).getType())
+                && !engineName.equals(ENGINE_DELTA)) {
+            throw new AnalysisException("Delta type catalog can only use `delta` engine.");
         }
     }
 
@@ -920,6 +926,9 @@ public class CreateTableInfo {
                 engineName = ENGINE_PAIMON;
             } else if (catalog instanceof MaxComputeExternalCatalog) {
                 engineName = ENGINE_MAXCOMPUTE;
+            } else if (catalog instanceof PluginDrivenExternalCatalog
+                    && "delta".equalsIgnoreCase(((PluginDrivenExternalCatalog) catalog).getType())) {
+                engineName = ENGINE_DELTA;
             } else {
                 throw new AnalysisException("Current catalog does not support create table: " + ctlName);
             }
@@ -950,7 +959,8 @@ public class CreateTableInfo {
         if (engineName.equals(ENGINE_MYSQL) || engineName.equals(ENGINE_ODBC) || engineName.equals(ENGINE_BROKER)
                 || engineName.equals(ENGINE_ELASTICSEARCH) || engineName.equals(ENGINE_HIVE)
                 || engineName.equals(ENGINE_ICEBERG) || engineName.equals(ENGINE_JDBC)
-                || engineName.equals(ENGINE_PAIMON) || engineName.equals(ENGINE_MAXCOMPUTE)) {
+                || engineName.equals(ENGINE_PAIMON) || engineName.equals(ENGINE_MAXCOMPUTE)
+                || engineName.equals(ENGINE_DELTA)) {
             if (!isExternal) {
                 // this is for compatibility
                 isExternal = true;

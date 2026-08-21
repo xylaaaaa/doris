@@ -17,15 +17,23 @@
 
 package org.apache.doris.datasource;
 
+import org.apache.doris.catalog.Column;
+import org.apache.doris.catalog.Env;
 import org.apache.doris.common.DdlException;
 import org.apache.doris.connector.ConnectorFactory;
 import org.apache.doris.connector.ConnectorSessionBuilder;
 import org.apache.doris.connector.DefaultConnectorContext;
 import org.apache.doris.connector.DefaultConnectorValidationContext;
 import org.apache.doris.connector.api.Connector;
+import org.apache.doris.connector.api.ConnectorCapability;
+import org.apache.doris.connector.api.ConnectorColumn;
+import org.apache.doris.connector.api.ConnectorMetadata;
 import org.apache.doris.connector.api.ConnectorSession;
+import org.apache.doris.connector.api.ConnectorTableCreateRequest;
+import org.apache.doris.connector.api.ConnectorTableSchema;
 import org.apache.doris.connector.api.ConnectorTestResult;
 import org.apache.doris.datasource.property.metastore.MetastoreProperties;
+import org.apache.doris.nereids.trees.plans.commands.info.CreateTableInfo;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.transaction.PluginDrivenTransactionManager;
 
@@ -33,6 +41,9 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -217,6 +228,55 @@ public class PluginDrivenExternalCatalog extends ExternalCatalog {
         ConnectorSession session = buildConnectorSession();
         return connector.getMetadata(session)
                 .getTableHandle(session, dbName, tblName).isPresent();
+    }
+
+    @Override
+    public boolean createTable(CreateTableInfo createTableInfo) throws DdlException {
+        makeSureInitialized();
+        if (!connector.getCapabilities().contains(ConnectorCapability.SUPPORTS_CREATE_TABLE)) {
+            throw new DdlException("Create table is not supported for catalog: " + getName());
+        }
+        ExternalDatabase<?> database = getDbNullable(createTableInfo.getDbName());
+        if (database == null) {
+            throw new DdlException("Database does not exist: " + createTableInfo.getDbName());
+        }
+        ConnectorSession session = buildConnectorSession();
+        ConnectorMetadata metadata = connector.getMetadata(session);
+        List<ConnectorColumn> columns = new ArrayList<>();
+        for (Column column : createTableInfo.getColumns()) {
+            columns.add(ConnectorColumnConverter.toConnectorColumn(column));
+        }
+        Map<String, String> properties = new LinkedHashMap<>();
+        if (createTableInfo.getProperties() != null) {
+            properties.putAll(createTableInfo.getProperties());
+        }
+        if (createTableInfo.getExtProperties() != null) {
+            properties.putAll(createTableInfo.getExtProperties());
+        }
+        List<String> partitionColumns = createTableInfo.getPartitionDesc() == null
+                || createTableInfo.getPartitionDesc().getPartitionColNames() == null
+                ? Collections.emptyList()
+                : List.copyOf(createTableInfo.getPartitionDesc().getPartitionColNames());
+        ConnectorTableSchema schema = new ConnectorTableSchema(
+                createTableInfo.getTableName(), columns, getType(), properties);
+        ConnectorTableCreateRequest request = new ConnectorTableCreateRequest(
+                database.getRemoteName(), schema, partitionColumns, properties,
+                createTableInfo.getComment(), createTableInfo.isIfNotExists());
+        final boolean existed;
+        try {
+            existed = metadata.createTable(session, request);
+        } catch (RuntimeException e) {
+            throw new DdlException(e.getMessage(), e);
+        }
+        if (!existed) {
+            database.resetMetaCacheNames();
+            org.apache.doris.persist.CreateTableInfo info =
+                    new org.apache.doris.persist.CreateTableInfo(
+                            getName(), createTableInfo.getDbName(),
+                            createTableInfo.getTableName());
+            Env.getCurrentEnv().getEditLog().logCreateTable(info);
+        }
+        return existed;
     }
 
     @Override

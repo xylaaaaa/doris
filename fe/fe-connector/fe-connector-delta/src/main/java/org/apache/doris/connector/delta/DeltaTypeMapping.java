@@ -17,6 +17,7 @@
 
 package org.apache.doris.connector.delta;
 
+import org.apache.doris.connector.api.ConnectorColumn;
 import org.apache.doris.connector.api.ConnectorType;
 import org.apache.doris.connector.api.DorisConnectorException;
 
@@ -109,6 +110,90 @@ public final class DeltaTypeMapping {
             return ConnectorType.structOf(fieldNames, fieldTypes);
         }
         throw unsupported(dataType, "logical type is not mapped");
+    }
+
+    public static StructType toDeltaSchema(List<ConnectorColumn> columns) {
+        StructType schema = new StructType();
+        for (ConnectorColumn column : columns) {
+            schema = schema.add(column.getName(), toDeltaType(column.getType()),
+                    column.isNullable());
+        }
+        return schema;
+    }
+
+    public static DataType toDeltaType(ConnectorType type) {
+        switch (type.getTypeName()) {
+            case "BOOLEAN":
+                return BooleanType.BOOLEAN;
+            case "TINYINT":
+                return ByteType.BYTE;
+            case "SMALLINT":
+                return ShortType.SHORT;
+            case "INT":
+                return IntegerType.INTEGER;
+            case "BIGINT":
+                return LongType.LONG;
+            case "FLOAT":
+                return FloatType.FLOAT;
+            case "DOUBLE":
+                return DoubleType.DOUBLE;
+            case "CHAR":
+            case "VARCHAR":
+            case "STRING":
+                return StringType.STRING;
+            case "BINARY":
+            case "VARBINARY":
+                return BinaryType.BINARY;
+            case "DATE":
+            case "DATEV2":
+                return DateType.DATE;
+            case "DATETIME":
+            case "DATETIMEV2":
+                return TimestampNTZType.TIMESTAMP_NTZ;
+            case "TIMESTAMPTZ":
+                return TimestampType.TIMESTAMP;
+            case "DECIMAL":
+            case "DECIMALV2":
+            case "DECIMALV3":
+            case "DECIMAL32":
+            case "DECIMAL64":
+            case "DECIMAL128":
+            case "DECIMAL256":
+                if (type.getPrecision() <= 0 || type.getPrecision() > 38
+                        || type.getScale() < 0 || type.getScale() > type.getPrecision()) {
+                    throw new DorisConnectorException(
+                            "Delta decimal requires 1-38 digits and a valid scale: " + type);
+                }
+                return new DecimalType(type.getPrecision(), type.getScale());
+            case "ARRAY":
+                requireChildren(type, 1);
+                return new ArrayType(toDeltaType(type.getChildren().get(0)), true);
+            case "MAP":
+                requireChildren(type, 2);
+                return new MapType(toDeltaType(type.getChildren().get(0)),
+                        toDeltaType(type.getChildren().get(1)), true);
+            case "STRUCT":
+                if (type.getFieldNames().size() != type.getChildren().size()) {
+                    throw new DorisConnectorException(
+                            "Delta STRUCT field names and types have different sizes");
+                }
+                StructType struct = new StructType();
+                for (int i = 0; i < type.getChildren().size(); i++) {
+                    struct = struct.add(type.getFieldNames().get(i),
+                            toDeltaType(type.getChildren().get(i)), true);
+                }
+                return struct;
+            default:
+                throw new DorisConnectorException(
+                        "Unsupported Doris type for Delta create: " + type);
+        }
+    }
+
+    private static void requireChildren(ConnectorType type, int expected) {
+        if (type.getChildren().size() != expected) {
+            throw new DorisConnectorException(
+                    "Delta " + type.getTypeName() + " requires " + expected + " child types");
+        }
     }
 
     private static DorisConnectorException unsupported(DataType dataType, String reason) {
