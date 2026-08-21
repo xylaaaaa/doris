@@ -247,6 +247,30 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
+    public void testOfficialGcsCredentialScopedFilesystemConfiguration() {
+        UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
+        org.apache.hadoop.conf.Configuration configuration = client.buildReadHadoopConfiguration(
+                "main", "default", "gcs_events",
+                "gs://delta-bucket/tables/events",
+                new org.apache.hadoop.conf.Configuration(false));
+
+        Assertions.assertEquals("io.unitycatalog.hadoop.internal.fs.CredScopedFileSystem",
+                configuration.get("fs.gs.impl"));
+        Assertions.assertEquals("com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem",
+                configuration.get("fs.gs.impl.original"));
+        Assertions.assertEquals("ACCESS_TOKEN_PROVIDER", configuration.get("fs.gs.auth.type"));
+        Assertions.assertEquals("io.unitycatalog.hadoop.internal.auth.GcsVendedTokenProvider",
+                configuration.get("fs.gs.auth.access.token.provider"));
+        Assertions.assertEquals("gcs-oauth", configuration.get("fs.gs.init.oauth.token"));
+        Assertions.assertEquals("true",
+                configuration.get("fs.unitycatalog.delta.credentials.api.enabled"));
+        Assertions.assertEquals("gcs_events",
+                configuration.get("fs.unitycatalog.delta.table.name"));
+        Assertions.assertTrue(requestPaths.stream().anyMatch(path -> path.endsWith(
+                "/delta/v1/catalogs/main/schemas/default/tables/gcs_events/credentials")));
+    }
+
+    @Test
     public void testRejectIncompleteVendedCredentials() {
         DeltaCredentialsResponse incompleteAws = credentials(
                 "s3://delta-bucket/tables/events",
@@ -575,6 +599,15 @@ public class UnityDeltaCatalogAdapterTest {
                     + "\"s3.session-token\":\"temporary-session\","
                     + "\"client.region\":\"us-east-2\"},"
                     + "\"expiration-time-ms\":" + (System.currentTimeMillis() + 3600000) + "}]}");
+            return;
+        }
+        if (path.endsWith("/tables/gcs_events/credentials")) {
+            respond(exchange, 200, "{\"storage-credentials\":[{"
+                    + "\"prefix\":\"gs://delta-bucket/tables/events\","
+                    + "\"operation\":\"READ\",\"config\":{"
+                    + "\"gcs.oauth-token\":\"gcs-oauth\"},"
+                    + "\"expiration-time-ms\":"
+                    + (System.currentTimeMillis() + 3600000) + "}]}");
             return;
         }
         if (path.endsWith("/tables/events")) {
