@@ -110,6 +110,8 @@ public class UnityDeltaCatalogAdapterTest {
                 connector.getMetadata(null).listTableNames(null, "default"));
         Assertions.assertTrue(connector.getMetadata(null)
                 .getTableHandle(null, "default", "blocked").isEmpty());
+        Assertions.assertTrue(connector.getMetadata(null)
+                .getTableHandle(null, "default", "missing_capabilities").isEmpty());
         ConnectorTableHandle handle = connector.getMetadata(null)
                 .getTableHandle(null, "default", "events").orElseThrow();
         Assertions.assertEquals(1, ((DeltaTableHandle) handle).getSnapshotVersion());
@@ -564,6 +566,9 @@ public class UnityDeltaCatalogAdapterTest {
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
                     + "\"data_source_format\":\"DELTA\","
                     + "\"manifest_capabilities\":[]},"
+                    + "{\"name\":\"missing_capabilities\",\"catalog_name\":\"main\","
+                    + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
+                    + "\"data_source_format\":\"DELTA\"},"
                     + "{\"name\":\"propertyless\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
                     + "\"data_source_format\":\"DELTA\","

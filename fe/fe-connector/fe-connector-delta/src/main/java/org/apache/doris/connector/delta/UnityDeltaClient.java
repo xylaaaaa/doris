@@ -394,10 +394,7 @@ final class UnityDeltaClient {
             capabilities = table.get("manifest-capabilities");
         }
         if (capabilities == null) {
-            // Older Unity Catalog servers do not expose manifest capabilities. Keep the
-            // format/type checks for those servers; an explicit empty capability set is
-            // handled below as an unsupported table.
-            return true;
+            return false;
         }
         Set<String> capabilityNames = capabilityNames(capabilities);
         return capabilityNames.contains("HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT");
