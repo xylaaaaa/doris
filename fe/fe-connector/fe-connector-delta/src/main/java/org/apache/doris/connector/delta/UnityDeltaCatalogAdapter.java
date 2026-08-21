@@ -218,6 +218,7 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
 
     @Override
     public String testConnection() {
+        client.negotiateDeltaProtocol(catalogName);
         int schemaCount = listDatabaseNames().size();
         return "Unity Catalog '" + catalogName + "' is readable; discovered "
                 + schemaCount + " schema(s)";

@@ -37,8 +37,10 @@ import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.SchemasApi;
 import io.unitycatalog.client.auth.TokenProvider;
+import io.unitycatalog.client.delta.api.DeltaConfigurationApi;
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.api.DeltaTemporaryCredentialsApi;
+import io.unitycatalog.client.delta.model.DeltaCatalogConfig;
 import io.unitycatalog.client.delta.model.DeltaCredentialOperation;
 import io.unitycatalog.client.delta.model.DeltaCredentialsResponse;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
@@ -64,6 +66,7 @@ import java.util.function.Consumer;
 /** Thin wrapper around the official Unity Catalog Java client. */
 final class UnityDeltaClient {
     private static final int PAGE_SIZE = 1000;
+    private static final String DELTA_PROTOCOL_VERSION = "1.0";
     private static final String APP_NAME = "Apache-Doris";
     private static final String APP_VERSION = "native-delta";
     private static final Map<String, String> APP_VERSIONS =
@@ -73,8 +76,10 @@ final class UnityDeltaClient {
     private final TokenProvider tokenProvider;
     private final ApiClient apiClient;
     private final SchemasApi schemasApi;
+    private final DeltaConfigurationApi configurationApi;
     private final DeltaTablesApi deltaTablesApi;
     private final DeltaTemporaryCredentialsApi credentialsApi;
+    private String negotiatedCatalog;
 
     static UnityDeltaClient create(String workspaceUri, String token) {
         return create(workspaceUri, Map.of("type", "static", "token", token));
@@ -144,6 +149,7 @@ final class UnityDeltaClient {
         this.apiClient = apiClient;
         registerCredentialConfigDeserializer(apiClient);
         this.schemasApi = new SchemasApi(apiClient);
+        this.configurationApi = new DeltaConfigurationApi(apiClient);
         this.deltaTablesApi = new DeltaTablesApi(apiClient);
         this.credentialsApi = new DeltaTemporaryCredentialsApi(apiClient);
     }
@@ -231,6 +237,7 @@ final class UnityDeltaClient {
 
     Optional<DeltaLoadTableResponse> loadTable(
             String catalogName, String schemaName, String tableName) {
+        negotiateDeltaProtocol(catalogName);
         try {
             return Optional.of(deltaTablesApi.loadTable(catalogName, schemaName, tableName));
         } catch (ApiException e) {
@@ -257,6 +264,7 @@ final class UnityDeltaClient {
     private Configuration buildHadoopConfiguration(String catalogName, String schemaName,
             String tableName, String location, Configuration baseConfiguration,
             UCCredentialHadoopConfs.TableOperation operation) {
+        negotiateDeltaProtocol(catalogName);
         Configuration configuration = new Configuration(baseConfiguration);
         String scheme = storageScheme(location);
         if ("file".equals(scheme)) {
@@ -296,6 +304,7 @@ final class UnityDeltaClient {
     private DeltaCredentialsResponse getCredentials(
             String catalogName, String schemaName, String tableName,
             DeltaCredentialOperation operation) {
+        negotiateDeltaProtocol(catalogName);
         try {
             return credentialsApi.getTableCredentials(
                     operation, catalogName, schemaName, tableName);
@@ -305,6 +314,30 @@ final class UnityDeltaClient {
                             + catalogName + "."
                             + schemaName + "." + tableName + "'", e);
         }
+    }
+
+    synchronized void negotiateDeltaProtocol(String catalogName) {
+        if (catalogName.equals(negotiatedCatalog)) {
+            return;
+        }
+        DeltaCatalogConfig config;
+        try {
+            config = configurationApi.getConfig(catalogName, DELTA_PROTOCOL_VERSION);
+        } catch (ApiException e) {
+            throw requestFailure(
+                    "negotiate Unity Delta API protocol for catalog '" + catalogName + "'", e);
+        }
+        if (config == null || !DELTA_PROTOCOL_VERSION.equals(config.getProtocolVersion())) {
+            throw new DorisConnectorException(
+                    "Unity Catalog negotiated unsupported Delta API protocol '"
+                            + (config == null ? null : config.getProtocolVersion())
+                            + "'; Doris requires " + DELTA_PROTOCOL_VERSION);
+        }
+        if (config.getEndpoints() == null || config.getEndpoints().isEmpty()) {
+            throw new DorisConnectorException(
+                    "Unity Catalog Delta API configuration contains no endpoints");
+        }
+        negotiatedCatalog = catalogName;
     }
 
     Snapshot loadCatalogManagedSnapshot(Engine engine, String tableId, String tablePath,

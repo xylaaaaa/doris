@@ -59,6 +59,7 @@ public class UnityDeltaCatalogAdapterTest {
     private String tableLocation;
     private String catalogManagedLocation;
     private String catalogManagedTableId;
+    private String deltaProtocolVersion;
     private final List<String> requestPaths = new ArrayList<>();
     private final List<String> requestQueries = new ArrayList<>();
     private final List<String> updateRequestPaths = new ArrayList<>();
@@ -75,6 +76,7 @@ public class UnityDeltaCatalogAdapterTest {
                 getClass().getClassLoader().getResource("delta/catalog_managed_table"));
         catalogManagedLocation = Paths.get(catalogManagedFixture.toURI()).toUri().toString();
         catalogManagedTableId = "c79de738-d13c-44a5-8e75-8435123d60c7";
+        deltaProtocolVersion = "1.0";
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", this::handleRequest);
         server.start();
@@ -123,6 +125,10 @@ public class UnityDeltaCatalogAdapterTest {
         Assertions.assertFalse(scanProperties.containsValue(TEST_TOKEN));
         Assertions.assertTrue(requestPaths.stream().anyMatch(
                 path -> path.endsWith("/delta/v1/catalogs/main/schemas/default/tables/events")));
+        Assertions.assertTrue(requestPaths.stream().anyMatch(
+                path -> path.endsWith("/delta/v1/config")));
+        Assertions.assertTrue(requestQueries.stream().anyMatch(query -> query != null
+                && query.contains("protocol-versions=1.0")));
         Assertions.assertTrue(requestQueries.stream().anyMatch(query -> query != null
                 && query.contains("include_manifest_capabilities=true")));
         Assertions.assertTrue(requestPaths.stream().noneMatch(path -> path.endsWith("/credentials")));
@@ -149,6 +155,17 @@ public class UnityDeltaCatalogAdapterTest {
                 connector.getMetadata(null).listDatabaseNames(null));
         Assertions.assertTrue(requestPaths.stream().anyMatch(
                 path -> path.equals("/oauth/token")));
+    }
+
+    @Test
+    public void testRejectsIncompatibleDeltaApiProtocol() {
+        deltaProtocolVersion = "2.0";
+        UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
+
+        DorisConnectorException exception = Assertions.assertThrows(
+                DorisConnectorException.class,
+                () -> client.loadTable("main", "default", "events"));
+        Assertions.assertTrue(exception.getMessage().contains("requires 1.0"));
     }
 
     @Test
@@ -546,6 +563,13 @@ public class UnityDeltaCatalogAdapterTest {
         if (path.equals("/api/2.1/unity-catalog/schemas")) {
             respond(exchange, 200,
                     "{\"schemas\":[{\"name\":\"default\",\"catalog_name\":\"main\"}]}");
+            return;
+        }
+        if (path.equals("/api/2.1/unity-catalog/delta/v1/config")) {
+            respond(exchange, 200, "{\"endpoints\":["
+                    + "\"GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}\","
+                    + "\"GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials\"],"
+                    + "\"protocol-version\":\"" + deltaProtocolVersion + "\"}");
             return;
         }
         if (path.equals("/api/2.1/unity-catalog/tables")) {
