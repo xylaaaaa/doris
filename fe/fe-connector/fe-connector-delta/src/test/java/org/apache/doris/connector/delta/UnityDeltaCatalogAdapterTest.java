@@ -19,6 +19,7 @@ package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.Connector;
 import org.apache.doris.connector.api.ConnectorCapability;
+import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
@@ -472,6 +473,34 @@ public class UnityDeltaCatalogAdapterTest {
                                 .getFileName().toString())
                         .sorted()
                 .collect(java.util.stream.Collectors.toList()));
+    }
+
+    @Test
+    public void testUnityExternalAndCatalogManagedTimeTravel() {
+        UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
+        UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
+                "main", client, new org.apache.hadoop.conf.Configuration(), Map.of());
+
+        DeltaTableHandle external = adapter.getTableHandle("default", "events").orElseThrow();
+        DeltaTableHandle externalVersionZero = adapter.applyTableSnapshot(
+                external, ConnectorTableSnapshot.version(0));
+        Assertions.assertEquals(0, externalVersionZero.getSnapshotVersion());
+        Assertions.assertEquals(2, adapter.loadSnapshot(externalVersionZero)
+                .getActiveFiles().size());
+
+        DeltaTableHandle managed = adapter.getTableHandle("default", "catalog_managed")
+                .orElseThrow();
+        DeltaTableHandle managedVersionOne = adapter.applyTableSnapshot(
+                managed, ConnectorTableSnapshot.version(1));
+        Assertions.assertEquals(1, managedVersionOne.getSnapshotVersion());
+        Assertions.assertEquals(List.of("part-00001.parquet"),
+                adapter.loadSnapshot(managedVersionOne).getActiveFiles().stream()
+                        .map(file -> Paths.get(URI.create(file.getPath())).getFileName().toString())
+                        .collect(java.util.stream.Collectors.toList()));
+
+        DeltaTableHandle managedAtTimestamp = adapter.applyTableSnapshot(
+                managed, ConnectorTableSnapshot.timestampMillis(1_700_000_000_001L));
+        Assertions.assertEquals(1, managedAtTimestamp.getSnapshotVersion());
     }
 
     @Test

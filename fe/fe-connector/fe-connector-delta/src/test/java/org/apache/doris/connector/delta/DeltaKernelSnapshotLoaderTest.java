@@ -27,15 +27,23 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.thrift.TDeserializer;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
 import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
 public class DeltaKernelSnapshotLoaderTest {
+    @TempDir
+    Path tempDirectory;
+
     @Test
     public void testLoadLatestSnapshotAndActiveFiles() throws Exception {
         URL fixture = Objects.requireNonNull(
@@ -66,6 +74,29 @@ public class DeltaKernelSnapshotLoaderTest {
                 versionZero.getActiveFiles().stream()
                         .map(file -> Paths.get(java.net.URI.create(file.getPath())).getFileName().toString())
                         .collect(Collectors.toList()));
+    }
+
+    @Test
+    public void testLoadSnapshotAsOfTimestamp() throws Exception {
+        URL fixture = Objects.requireNonNull(
+                getClass().getClassLoader().getResource("delta/path_table/_delta_log"));
+        Path targetLog = tempDirectory.resolve("timestamp-table/_delta_log");
+        Files.createDirectories(targetLog);
+        Path versionZero = targetLog.resolve("00000000000000000000.json");
+        Path versionOne = targetLog.resolve("00000000000000000001.json");
+        Files.copy(Paths.get(fixture.toURI()).resolve(versionZero.getFileName()), versionZero,
+                StandardCopyOption.REPLACE_EXISTING);
+        Files.copy(Paths.get(fixture.toURI()).resolve(versionOne.getFileName()), versionOne,
+                StandardCopyOption.REPLACE_EXISTING);
+        Files.setLastModifiedTime(versionZero, FileTime.fromMillis(1_700_000_000_000L));
+        Files.setLastModifiedTime(versionOne, FileTime.fromMillis(1_700_000_002_000L));
+
+        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(
+                DefaultEngine.create(new Configuration()));
+        DeltaKernelSnapshot snapshot = loader.loadTimestamp(
+                targetLog.getParent().toUri().toString(), 1_700_000_001_000L);
+
+        Assertions.assertEquals(0, snapshot.getVersion());
     }
 
     @Test

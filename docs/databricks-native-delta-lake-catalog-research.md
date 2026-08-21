@@ -162,6 +162,7 @@ Spark 和 Starburst 使用已有的完整 Delta 实现；ClickHouse 从自研迁
 
 - 已验证 path Delta，以及通过 Unity REST 按表名发现的 external、普通 managed 和 catalog-managed 读取链路；catalog-managed 读取会走 catalog-held snapshot/log tail，不退化为单纯扫描对象存储路径。
 - 已接入 Delta Kernel 4.3.1 做 snapshot、分区文件规划和受限 table-feature 校验，数据文件继续复用 Doris 原生 Parquet 扫描。
+- 已接通 `FOR VERSION AS OF` 和 `FOR TIME AS OF`，覆盖 path、Unity external/managed 和 catalog-managed snapshot；当前要求历史与当前 schema、分区列一致，跨 schema evolution 会明确拒绝。
 - 已验证 external 和 catalog-managed 的 append 事务样例；尚未实现完整的 create、UPDATE、DELETE、MERGE 和 managed write 产品能力。
 - 已验证 Unity 读取能力声明、凭证操作类型和过期时间的 fail-closed 校验；AWS、Azure 及 GCS OAuth 的初始临时凭证已能进入 FE/BE 读取链路。BE 长查询中的凭证续期、GCS 写入和真实 Databricks 三云联调仍未完成。
 - 本地 Delta fixtures、FE 单测和隔离 FE/BE 回归已通过；这些测试不能替代真实 Databricks workspace 的权限、网络、凭证续期和 catalog-commit 验收。

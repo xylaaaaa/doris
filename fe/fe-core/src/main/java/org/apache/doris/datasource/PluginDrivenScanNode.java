@@ -20,13 +20,18 @@ package org.apache.doris.datasource;
 import org.apache.doris.analysis.CastExpr;
 import org.apache.doris.analysis.Expr;
 import org.apache.doris.analysis.ExprToSqlVisitor;
+import org.apache.doris.analysis.TableSnapshot;
 import org.apache.doris.analysis.ToSqlParams;
 import org.apache.doris.analysis.TupleDescriptor;
 import org.apache.doris.catalog.TableIf;
 import org.apache.doris.common.UserException;
+import org.apache.doris.common.util.TimeUtils;
 import org.apache.doris.connector.api.Connector;
+import org.apache.doris.connector.api.ConnectorCapability;
 import org.apache.doris.connector.api.ConnectorMetadata;
 import org.apache.doris.connector.api.ConnectorSession;
+import org.apache.doris.connector.api.ConnectorTableSnapshot;
+import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.api.handle.ConnectorColumnHandle;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 import org.apache.doris.connector.api.handle.PassthroughQueryTableHandle;
@@ -134,6 +139,47 @@ public class PluginDrivenScanNode extends FileQueryScanNode {
                         "Table handle not found for plugin-driven table: " + dbName + "." + tableName));
         return new PluginDrivenScanNode(id, desc, needCheckColumnPriv, sv,
                 scanContext, connector, session, handle);
+    }
+
+    @Override
+    public void setQueryTableSnapshot(TableSnapshot tableSnapshot) {
+        if (!connector.getCapabilities().contains(ConnectorCapability.SUPPORTS_TIME_TRAVEL)) {
+            throw new DorisConnectorException("Connector does not support table time travel");
+        }
+        ConnectorMetadata metadata = connector.getMetadata(connectorSession);
+        currentHandle = metadata.applyTableSnapshot(
+                connectorSession, currentHandle, toConnectorTableSnapshot(tableSnapshot));
+        super.setQueryTableSnapshot(tableSnapshot);
+        scanNodeProperties = null;
+        cachedPropertiesResult = null;
+        filteredToOriginalIndex = null;
+    }
+
+    static ConnectorTableSnapshot toConnectorTableSnapshot(TableSnapshot snapshot) {
+        if (snapshot.getType() == TableSnapshot.VersionType.VERSION) {
+            try {
+                return ConnectorTableSnapshot.version(Long.parseLong(snapshot.getValue()));
+            } catch (IllegalArgumentException e) {
+                throw new DorisConnectorException(
+                        "Invalid connector table snapshot version '" + snapshot.getValue() + "'", e);
+            }
+        }
+        long timestampMillis;
+        try {
+            timestampMillis = Long.parseLong(snapshot.getValue());
+        } catch (NumberFormatException e) {
+            timestampMillis = TimeUtils.timeStringToLong(
+                    snapshot.getValue(), TimeUtils.getTimeZone());
+            if (timestampMillis < 0) {
+                timestampMillis = TimeUtils.msTimeStringToLong(
+                        snapshot.getValue(), TimeUtils.getTimeZone());
+            }
+        }
+        if (timestampMillis < 0) {
+            throw new DorisConnectorException(
+                    "Invalid connector table snapshot time '" + snapshot.getValue() + "'");
+        }
+        return ConnectorTableSnapshot.timestampMillis(timestampMillis);
     }
 
     @Override

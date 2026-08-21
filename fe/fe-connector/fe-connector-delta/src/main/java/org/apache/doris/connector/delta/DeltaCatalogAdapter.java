@@ -17,6 +17,7 @@
 
 package org.apache.doris.connector.delta;
 
+import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 
 import java.util.List;
@@ -40,6 +41,26 @@ public interface DeltaCatalogAdapter {
 
     /** Loads the snapshot pinned by a table handle. */
     DeltaKernelSnapshot loadSnapshot(DeltaTableHandle tableHandle);
+
+    /** Resolves a version or timestamp boundary to a schema-compatible pinned handle. */
+    default DeltaTableHandle applyTableSnapshot(
+            DeltaTableHandle tableHandle, ConnectorTableSnapshot snapshot) {
+        throw new UnsupportedOperationException(
+                "This Delta catalog adapter does not support time travel");
+    }
+
+    /** Historical scans use the already-bound current schema, so schema evolution must fail closed. */
+    static void requireCompatibleSchema(
+            DeltaKernelSnapshot current, DeltaKernelSnapshot requested) {
+        if (!current.getSchema().equals(requested.getSchema())
+                || !current.getPartitionColumnNames().equals(
+                requested.getPartitionColumnNames())) {
+            throw new UnsupportedOperationException(
+                    "Delta time travel across schema or partition evolution is not supported; "
+                            + "current version=" + current.getVersion()
+                            + ", requested version=" + requested.getVersion());
+        }
+    }
 
     /** Resolves one logical Delta scan file and its delete metadata for Doris BE. */
     default DeltaScanFile getBackendScanFile(DeltaTableHandle tableHandle, DeltaScanFile file) {

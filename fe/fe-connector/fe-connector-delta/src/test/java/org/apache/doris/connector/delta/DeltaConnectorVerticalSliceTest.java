@@ -22,6 +22,7 @@ import org.apache.doris.connector.api.ConnectorCapability;
 import org.apache.doris.connector.api.ConnectorColumn;
 import org.apache.doris.connector.api.ConnectorSession;
 import org.apache.doris.connector.api.ConnectorTableSchema;
+import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.ConnectorType;
 import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
@@ -90,6 +91,8 @@ public class DeltaConnectorVerticalSliceTest {
                 ConnectorCapability.SUPPORTS_PARTITION_PRUNING));
         Assertions.assertTrue(connector.getCapabilities().contains(
                 ConnectorCapability.SUPPORTS_MVCC_SNAPSHOT));
+        Assertions.assertTrue(connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_TIME_TRAVEL));
         Assertions.assertFalse(connector.getCapabilities().contains(
                 ConnectorCapability.SUPPORTS_VENDED_CREDENTIALS));
         Assertions.assertNotNull(connector.getScanPlanProvider());
@@ -146,6 +149,31 @@ public class DeltaConnectorVerticalSliceTest {
         TFileRangeDesc thriftRange = new TFileRangeDesc();
         ranges.get(0).populateRangeParams(new TTableFormatFileDesc(), thriftRange);
         Assertions.assertEquals(TFileFormatType.FORMAT_PARQUET, thriftRange.getFormatType());
+
+        DeltaTableHandle versionZero = (DeltaTableHandle) metadata.applyTableSnapshot(
+                null, handle, ConnectorTableSnapshot.version(0));
+        Assertions.assertEquals(0, versionZero.getSnapshotVersion());
+        Assertions.assertEquals(
+                List.of("part-00000.parquet", "part-00001.parquet"),
+                scanProvider.planScan(null, versionZero, List.of(), java.util.Optional.empty())
+                        .stream().map(range -> Paths.get(URI.create(range.getPath().orElseThrow()))
+                                .getFileName().toString())
+                        .collect(Collectors.toList()));
+    }
+
+    @Test
+    public void testTimeTravelRejectsHistoricalSchemaEvolution() throws Exception {
+        Map<String, String> properties = deltaProperties("delta/schema_evolution_table");
+        DeltaPathCatalogAdapter adapter = pathAdapter(properties);
+        DeltaConnectorMetadata metadata = new DeltaConnectorMetadata(adapter, properties);
+        ConnectorTableHandle latest = metadata.getTableHandle(null, "default", "events")
+                .orElseThrow();
+
+        UnsupportedOperationException exception = Assertions.assertThrows(
+                UnsupportedOperationException.class,
+                () -> metadata.applyTableSnapshot(
+                        null, latest, ConnectorTableSnapshot.version(0)));
+        Assertions.assertTrue(exception.getMessage().contains("schema or partition evolution"));
     }
 
     @Test

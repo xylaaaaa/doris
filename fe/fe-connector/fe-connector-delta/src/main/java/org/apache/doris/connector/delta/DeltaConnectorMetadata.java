@@ -21,6 +21,7 @@ import org.apache.doris.connector.api.ConnectorColumn;
 import org.apache.doris.connector.api.ConnectorMetadata;
 import org.apache.doris.connector.api.ConnectorSession;
 import org.apache.doris.connector.api.ConnectorTableSchema;
+import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.ConnectorType;
 import org.apache.doris.connector.api.handle.ConnectorColumnHandle;
 import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
@@ -86,6 +87,12 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
             ConnectorSession session, String dbName, String tableName) {
         return catalogAdapter.getTableHandle(dbName, tableName)
                 .map(handle -> (ConnectorTableHandle) handle);
+    }
+
+    @Override
+    public ConnectorTableHandle applyTableSnapshot(ConnectorSession session,
+            ConnectorTableHandle handle, ConnectorTableSnapshot snapshot) {
+        return catalogAdapter.applyTableSnapshot((DeltaTableHandle) handle, snapshot);
     }
 
     @Override

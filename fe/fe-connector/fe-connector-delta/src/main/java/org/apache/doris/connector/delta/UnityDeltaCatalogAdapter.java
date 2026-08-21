@@ -17,6 +17,7 @@
 
 package org.apache.doris.connector.delta;
 
+import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 
@@ -135,6 +136,43 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
                             + tableHandle.getSnapshotVersion() + " for '" + catalogName + "."
                             + tableHandle.getDatabaseName() + "." + tableHandle.getTableName() + "'", e);
         }
+    }
+
+    @Override
+    public DeltaTableHandle applyTableSnapshot(
+            DeltaTableHandle tableHandle, ConnectorTableSnapshot snapshot) {
+        DeltaTableMetadata metadata = resolveExistingTable(tableHandle);
+        Configuration configuration = client.buildReadHadoopConfiguration(
+                catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName(),
+                metadata.getLocation(), baseConfiguration);
+        Engine engine = DefaultEngine.create(configuration);
+        DeltaKernelSnapshotLoader loader = new DeltaKernelSnapshotLoader(engine);
+        DeltaKernelSnapshot requested;
+        try {
+            if (tableHandle.isCatalogManaged()) {
+                Optional<Long> version = snapshot.getType() == ConnectorTableSnapshot.Type.VERSION
+                        ? Optional.of(snapshot.getValue()) : Optional.empty();
+                Optional<Long> timestamp = snapshot.getType()
+                        == ConnectorTableSnapshot.Type.TIMESTAMP_MILLIS
+                        ? Optional.of(snapshot.getValue()) : Optional.empty();
+                Snapshot kernelSnapshot = client.loadCatalogManagedSnapshot(
+                        engine, tableHandle.getCatalogTableId(), metadata.getLocation(),
+                        catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName(),
+                        version, timestamp);
+                requested = loader.loadCatalogManagedSnapshot(kernelSnapshot);
+            } else if (snapshot.getType() == ConnectorTableSnapshot.Type.VERSION) {
+                requested = loader.loadVersion(metadata.getLocation(), snapshot.getValue());
+            } else {
+                requested = loader.loadTimestamp(metadata.getLocation(), snapshot.getValue());
+            }
+        } catch (IOException e) {
+            throw new DorisConnectorException(
+                    "Failed to load requested Unity Delta snapshot for '" + catalogName + "."
+                            + tableHandle.getDatabaseName() + "." + tableHandle.getTableName()
+                            + "'", e);
+        }
+        DeltaCatalogAdapter.requireCompatibleSchema(loadSnapshot(tableHandle), requested);
+        return tableHandle.withSnapshotVersion(requested.getVersion());
     }
 
     @Override

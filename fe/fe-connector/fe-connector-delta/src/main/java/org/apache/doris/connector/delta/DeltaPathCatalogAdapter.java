@@ -17,6 +17,7 @@
 
 package org.apache.doris.connector.delta;
 
+import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.DorisConnectorException;
 
 import java.io.IOException;
@@ -79,11 +80,7 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
 
     @Override
     public DeltaKernelSnapshot loadSnapshot(DeltaTableHandle tableHandle) {
-        if (!databaseName.equals(tableHandle.getDatabaseName())
-                || !tableName.equals(tableHandle.getTableName())
-                || !tablePath.equals(tableHandle.getTablePath())) {
-            throw new IllegalArgumentException("Table handle does not belong to this Delta path adapter");
-        }
+        validateHandle(tableHandle);
         try {
             return snapshotLoader.loadVersion(tablePath, tableHandle.getSnapshotVersion());
         } catch (IOException e) {
@@ -93,6 +90,23 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
         }
     }
 
+    @Override
+    public DeltaTableHandle applyTableSnapshot(
+            DeltaTableHandle tableHandle, ConnectorTableSnapshot snapshot) {
+        validateHandle(tableHandle);
+        DeltaKernelSnapshot requested;
+        try {
+            requested = snapshot.getType() == ConnectorTableSnapshot.Type.VERSION
+                    ? snapshotLoader.loadVersion(tablePath, snapshot.getValue())
+                    : snapshotLoader.loadTimestamp(tablePath, snapshot.getValue());
+        } catch (IOException e) {
+            throw new DorisConnectorException(
+                    "Failed to load requested Delta snapshot at '" + tablePath + "'", e);
+        }
+        DeltaCatalogAdapter.requireCompatibleSchema(loadSnapshot(tableHandle), requested);
+        return tableHandle.withSnapshotVersion(requested.getVersion());
+    }
+
     /** Loads the current latest snapshot for connectivity checks and handle creation. */
     public DeltaKernelSnapshot loadLatestSnapshot() {
         try {
@@ -100,6 +114,15 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
         } catch (IOException e) {
             throw new DorisConnectorException(
                     "Failed to load latest Delta snapshot at '" + tablePath + "'", e);
+        }
+    }
+
+    private void validateHandle(DeltaTableHandle tableHandle) {
+        if (!databaseName.equals(tableHandle.getDatabaseName())
+                || !tableName.equals(tableHandle.getTableName())
+                || !tablePath.equals(tableHandle.getTablePath())) {
+            throw new IllegalArgumentException(
+                    "Table handle does not belong to this Delta path adapter");
         }
     }
 

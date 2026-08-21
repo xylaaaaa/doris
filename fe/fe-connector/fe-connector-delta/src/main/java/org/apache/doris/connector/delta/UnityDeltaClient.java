@@ -343,6 +343,13 @@ final class UnityDeltaClient {
     Snapshot loadCatalogManagedSnapshot(Engine engine, String tableId, String tablePath,
             String catalogName, String schemaName, String tableName,
             Optional<Long> version) throws IOException {
+        return loadCatalogManagedSnapshot(engine, tableId, tablePath, catalogName,
+                schemaName, tableName, version, Optional.empty());
+    }
+
+    Snapshot loadCatalogManagedSnapshot(Engine engine, String tableId, String tablePath,
+            String catalogName, String schemaName, String tableName,
+            Optional<Long> version, Optional<Long> timestampMillis) throws IOException {
         UCTableIdentifier tableIdentifier =
                 new UCTableIdentifier(catalogName, schemaName, tableName);
         try (UCDeltaTokenBasedRestClient catalogClient =
@@ -350,7 +357,7 @@ final class UnityDeltaClient {
                         workspaceUri, tokenProvider, APP_VERSIONS)) {
             return new NamedUCCatalogManagedClient(catalogClient, tableIdentifier).loadSnapshot(
                     engine, tableId, tablePath, tableIdentifier,
-                    version, Optional.empty());
+                    version, timestampMillis);
         }
     }
 

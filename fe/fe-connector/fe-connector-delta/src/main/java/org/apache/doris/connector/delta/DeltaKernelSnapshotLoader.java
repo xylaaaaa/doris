@@ -85,6 +85,13 @@ public class DeltaKernelSnapshotLoader {
         return load(tablePath, version);
     }
 
+    public DeltaKernelSnapshot loadTimestamp(String tablePath, long timestampMillis)
+            throws IOException {
+        Snapshot snapshot = Table.forPath(engine, tablePath)
+                .getSnapshotAsOfTimestamp(engine, timestampMillis);
+        return loadSnapshot(snapshot, false);
+    }
+
     DeltaKernelSnapshot loadCatalogManagedSnapshot(Snapshot snapshot) throws IOException {
         return loadSnapshot(snapshot, true);
     }

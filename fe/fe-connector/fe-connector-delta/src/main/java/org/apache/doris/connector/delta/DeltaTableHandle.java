@@ -93,6 +93,11 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
         return externalTable;
     }
 
+    public DeltaTableHandle withSnapshotVersion(long version) {
+        return new DeltaTableHandle(databaseName, tableName, tablePath, version,
+                catalogTableId, catalogManaged, externalTable);
+    }
+
     @Override
     public boolean equals(Object other) {
         if (this == other) {

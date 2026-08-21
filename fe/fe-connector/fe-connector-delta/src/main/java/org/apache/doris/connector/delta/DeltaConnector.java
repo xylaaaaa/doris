@@ -100,7 +100,8 @@ public final class DeltaConnector implements Connector {
     public Set<ConnectorCapability> getCapabilities() {
         EnumSet<ConnectorCapability> capabilities = EnumSet.of(
                 ConnectorCapability.SUPPORTS_PARTITION_PRUNING,
-                ConnectorCapability.SUPPORTS_MVCC_SNAPSHOT);
+                ConnectorCapability.SUPPORTS_MVCC_SNAPSHOT,
+                ConnectorCapability.SUPPORTS_TIME_TRAVEL);
         if (DeltaConnectorProperties.CATALOG_TYPE_UNITY.equals(
                 DeltaConnectorProperties.catalogType(properties))) {
             capabilities.add(ConnectorCapability.SUPPORTS_VENDED_CREDENTIALS);

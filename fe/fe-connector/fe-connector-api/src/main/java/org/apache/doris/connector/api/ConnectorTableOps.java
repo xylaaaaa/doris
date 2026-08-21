@@ -37,6 +37,12 @@ public interface ConnectorTableOps {
         return Optional.empty();
     }
 
+    /** Returns a handle pinned to the requested table snapshot. */
+    default ConnectorTableHandle applyTableSnapshot(ConnectorSession session,
+            ConnectorTableHandle handle, ConnectorTableSnapshot snapshot) {
+        throw new DorisConnectorException("Table time travel is not supported");
+    }
+
     /** Returns the schema (columns, format, etc.) for the given table. */
     default ConnectorTableSchema getTableSchema(
             ConnectorSession session, ConnectorTableHandle handle) {
