@@ -349,6 +349,7 @@ final class UnityDeltaClient {
     void createCatalogManagedTable(DeltaStagingTableResponse staging,
             String catalogName, String schemaName, String tableName,
             StructType schema, Map<String, String> requestedProperties,
+            List<String> partitionColumns,
             Configuration baseConfiguration) {
         if (staging == null || staging.getTableId() == null
                 || staging.getLocation() == null || staging.getLocation().isBlank()) {
@@ -386,6 +387,7 @@ final class UnityDeltaClient {
                             staging.getTableId().toString(), staging.getLocation(), schema,
                             APP_NAME + " native-delta", identifier)
                     .withTableProperties(properties);
+            builder.withDataLayoutSpec(DeltaKernelWriter.dataLayoutSpec(schema, partitionColumns));
             new DeltaKernelWriter(engine).commitCreateTable(builder, staging.getLocation());
         } catch (IOException e) {
             throw new DorisConnectorException(

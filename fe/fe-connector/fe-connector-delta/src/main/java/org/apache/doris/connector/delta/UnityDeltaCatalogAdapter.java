@@ -288,7 +288,7 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
         client.createCatalogManagedTable(staging, catalogName, request.getDatabaseName(),
                 request.getTableSchema().getTableName(),
                 DeltaTypeMapping.toDeltaSchema(request.getTableSchema().getColumns()),
-                request.getProperties(), baseConfiguration);
+                request.getProperties(), request.getPartitionColumns(), baseConfiguration);
         return false;
     }
 

@@ -147,7 +147,7 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
         }
         writer.createTable(tablePath,
                 DeltaTypeMapping.toDeltaSchema(request.getTableSchema().getColumns()),
-                request.getProperties());
+                request.getProperties(), request.getPartitionColumns());
         return false;
     }
 

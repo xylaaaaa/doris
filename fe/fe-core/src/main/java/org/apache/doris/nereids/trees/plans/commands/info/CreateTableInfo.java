@@ -1172,6 +1172,7 @@ public class CreateTableInfo {
             }
             if (!engineName.equals(ENGINE_HIVE) && !engineName.equals(ENGINE_ICEBERG)
                     && !engineName.equals(ENGINE_PAIMON) && !engineName.equals(ENGINE_MAXCOMPUTE)
+                    && !engineName.equals(ENGINE_DELTA)
                     && partitionDesc != null) {
                 throw new AnalysisException("Create " + engineName
                     + " table should not contain partition desc");

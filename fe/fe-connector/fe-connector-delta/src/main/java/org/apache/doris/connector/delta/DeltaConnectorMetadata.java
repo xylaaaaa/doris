@@ -104,10 +104,6 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
             throw new UnsupportedOperationException(
                     "This native Delta catalog adapter does not support CREATE TABLE");
         }
-        if (!request.getPartitionColumns().isEmpty()) {
-            throw new UnsupportedOperationException(
-                    "The initial native Delta CREATE TABLE supports unpartitioned tables only");
-        }
         for (ConnectorColumn column : request.getTableSchema().getColumns()) {
             if (column.getDefaultValue() != null) {
                 throw new UnsupportedOperationException(

@@ -87,9 +87,14 @@ final class DeltaKernelWriter {
 
     DeltaKernelSnapshot createTable(String tablePath, StructType schema,
             Map<String, String> tableProperties) {
+        return createTable(tablePath, schema, tableProperties, List.of());
+    }
+
+    DeltaKernelSnapshot createTable(String tablePath, StructType schema,
+            Map<String, String> tableProperties, List<String> partitionColumns) {
         CreateTableTransactionBuilder builder = TableManager.buildCreateTableTransaction(
                 tablePath, schema, ENGINE_INFO)
-                .withDataLayoutSpec(DataLayoutSpec.noDataLayout())
+                .withDataLayoutSpec(dataLayoutSpec(schema, partitionColumns))
                 .withTableProperties(tableProperties)
                 .withMaxRetries(MAX_COMMIT_RETRIES);
         commitCreateTable(builder, tablePath);
@@ -102,9 +107,7 @@ final class DeltaKernelWriter {
     }
 
     void commitCreateTable(CreateTableTransactionBuilder builder, String tablePath) {
-        Transaction transaction = builder
-                .withDataLayoutSpec(DataLayoutSpec.noDataLayout())
-                .withMaxRetries(MAX_COMMIT_RETRIES)
+        Transaction transaction = builder.withMaxRetries(MAX_COMMIT_RETRIES)
                 .build(engine);
         try (CloseableIterable<Row> actions = CloseableIterable.inMemoryIterable(
                 closeableIterator(java.util.Collections.<Row>emptyIterator()))) {
@@ -114,6 +117,22 @@ final class DeltaKernelWriter {
             throw new DorisConnectorException("Failed to create Delta table at '"
                     + tablePath + "'", e);
         }
+    }
+
+    static DataLayoutSpec dataLayoutSpec(StructType schema, List<String> partitionColumns) {
+        if (partitionColumns.isEmpty()) {
+            return DataLayoutSpec.noDataLayout();
+        }
+        List<io.delta.kernel.expressions.Column> columns = new ArrayList<>(partitionColumns.size());
+        for (String name : partitionColumns) {
+            int index = schema.indexOf(name);
+            if (index < 0) {
+                throw new DorisConnectorException(
+                        "Delta partition column is not present in schema: " + name);
+            }
+            columns.add(schema.column(index));
+        }
+        return DataLayoutSpec.partitioned(columns);
     }
 
     DeltaInsertHandle beginInsert(DeltaTableHandle tableHandle, String applicationId) {

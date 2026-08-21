@@ -24,6 +24,7 @@ import org.apache.doris.connector.api.write.ConnectorFileCommitInfo;
 
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.types.StructType;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -62,6 +63,24 @@ public class DeltaKernelWriterTest {
         Assertions.assertEquals("doris", snapshot.getTableProperties().get("owner"));
         Assertions.assertTrue(Files.exists(tableDirectory.resolve(
                 "_delta_log/00000000000000000000.json")));
+    }
+
+    @Test
+    public void testCreatesPartitionedVersionZeroTable() throws Exception {
+        Path tableDirectory = tempDirectory.resolve("created-partitioned-table");
+        Engine engine = DefaultEngine.create(new Configuration());
+        DeltaKernelWriter writer = new DeltaKernelWriter(engine);
+        StructType schema = DeltaTypeMapping.toDeltaSchema(List.of(
+                new ConnectorColumn("id", ConnectorType.of("BIGINT"), "", false, null),
+                new ConnectorColumn("day", ConnectorType.of("STRING"), "", false, null)));
+
+        DeltaKernelSnapshot snapshot = writer.createTable(
+                tableDirectory.toUri().toString(), schema, Map.of(), List.of("day"));
+
+        Assertions.assertEquals(List.of("day"), snapshot.getPartitionColumnNames());
+        String commit = Files.readString(tableDirectory.resolve(
+                "_delta_log/00000000000000000000.json"));
+        Assertions.assertTrue(commit.contains("\"partitionColumns\":[\"day\"]"));
     }
 
     @Test

@@ -137,9 +137,9 @@ public class DeltaConnectorVerticalSliceTest {
         Assertions.assertTrue(connector.getMetadata(null)
                 .listTableNames(null, "default").isEmpty());
         ConnectorTableCreateRequest partitioned = new ConnectorTableCreateRequest(
-                request.getDatabaseName(), request.getTableSchema(), List.of("id"),
+                request.getDatabaseName(), request.getTableSchema(), List.of("missing"),
                 request.getProperties(), request.getComment(), false);
-        Assertions.assertThrows(UnsupportedOperationException.class,
+        Assertions.assertThrows(DorisConnectorException.class,
                 () -> connector.getMetadata(null).createTable(null, partitioned));
         ConnectorTableCreateRequest withDefault = new ConnectorTableCreateRequest(
                 "default", new ConnectorTableSchema("created_events", List.of(
