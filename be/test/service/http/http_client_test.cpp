@@ -202,7 +202,8 @@ TEST_F(HttpClientTest, file_reader_forwards_bearer_header_on_range_request) {
     io::OpenFileInfo file_info;
     file_info.path = io::Path(hostname + "/bearer_range");
     file_info.extend_info = {{"file_size", "12"},
-                             {"http.header.Authorization", "Bearer gcs-vended-token"}};
+                             {"http.header.Authorization", "Bearer gcs-vended-token"},
+                             {"AWS_TOKEN_EXPIRATION_TIME_MS", "4102444800000"}};
     io::HttpFileReader reader(file_info, file_info.path.native(), 0);
     ASSERT_TRUE(reader.open({}).ok());
 
@@ -212,6 +213,22 @@ TEST_F(HttpClientTest, file_reader_forwards_bearer_header_on_range_request) {
     EXPECT_EQ(bytes_read, sizeof(data));
     EXPECT_EQ(std::string_view(data, bytes_read), "native");
     EXPECT_TRUE(reader.close().ok());
+}
+
+TEST_F(HttpClientTest, file_reader_rejects_expired_bearer_before_request) {
+    io::OpenFileInfo file_info;
+    file_info.path = io::Path(hostname + "/bearer_range");
+    file_info.extend_info = {{"file_size", "12"},
+                             {"http.header.Authorization", "Bearer gcs-vended-token"},
+                             {"AWS_TOKEN_EXPIRATION_TIME_MS", "1"}};
+    io::HttpFileReader reader(file_info, file_info.path.native(), 0);
+    ASSERT_TRUE(reader.open({}).ok());
+
+    char data[1];
+    size_t bytes_read = 0;
+    const Status status = reader.read_at(0, Slice(data, sizeof(data)), &bytes_read);
+    EXPECT_FALSE(status.ok());
+    EXPECT_NE(status.to_string().find("vended token is expired"), std::string::npos);
 }
 
 TEST_F(HttpClientTest, download) {
