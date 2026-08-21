@@ -75,12 +75,15 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
         }
         DeltaKernelSnapshot snapshot = loadLatestSnapshot();
         return Optional.of(new DeltaTableHandle(databaseName, tableName, tablePath,
-                snapshot.getVersion()));
+                snapshot.getVersion()).withPinnedSnapshot(snapshot));
     }
 
     @Override
     public DeltaKernelSnapshot loadSnapshot(DeltaTableHandle tableHandle) {
         validateHandle(tableHandle);
+        if (tableHandle.getPinnedSnapshot() != null) {
+            return tableHandle.getPinnedSnapshot();
+        }
         try {
             return snapshotLoader.loadVersion(tablePath, tableHandle.getSnapshotVersion());
         } catch (IOException e) {
@@ -104,7 +107,8 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
                     "Failed to load requested Delta snapshot at '" + tablePath + "'", e);
         }
         DeltaCatalogAdapter.requireCompatibleSchema(loadSnapshot(tableHandle), requested);
-        return tableHandle.withSnapshotVersion(requested.getVersion());
+        return tableHandle.withSnapshotVersion(requested.getVersion())
+                .withPinnedSnapshot(requested);
     }
 
     /** Loads the current latest snapshot for connectivity checks and handle creation. */

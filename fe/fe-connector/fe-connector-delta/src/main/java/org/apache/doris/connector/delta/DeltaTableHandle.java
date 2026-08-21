@@ -33,6 +33,7 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
     private final String catalogTableId;
     private final boolean catalogManaged;
     private final boolean externalTable;
+    private final transient DeltaKernelSnapshot pinnedSnapshot;
 
     public DeltaTableHandle(String databaseName, String tableName,
             String tablePath, long snapshotVersion) {
@@ -49,6 +50,14 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
     public DeltaTableHandle(String databaseName, String tableName,
             String tablePath, long snapshotVersion, String catalogTableId,
             boolean catalogManaged, boolean externalTable) {
+        this(databaseName, tableName, tablePath, snapshotVersion, catalogTableId,
+                catalogManaged, externalTable, null);
+    }
+
+    private DeltaTableHandle(String databaseName, String tableName,
+            String tablePath, long snapshotVersion, String catalogTableId,
+            boolean catalogManaged, boolean externalTable,
+            DeltaKernelSnapshot pinnedSnapshot) {
         this.databaseName = Objects.requireNonNull(databaseName, "databaseName");
         this.tableName = Objects.requireNonNull(tableName, "tableName");
         this.tablePath = Objects.requireNonNull(tablePath, "tablePath");
@@ -59,6 +68,7 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
         this.catalogTableId = catalogTableId;
         this.catalogManaged = catalogManaged;
         this.externalTable = externalTable;
+        this.pinnedSnapshot = pinnedSnapshot;
         if (catalogManaged && catalogTableId == null) {
             throw new IllegalArgumentException(
                     "Catalog-managed Delta table handle requires a catalog table ID");
@@ -91,6 +101,20 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
 
     public boolean isExternalTable() {
         return externalTable;
+    }
+
+    public DeltaKernelSnapshot getPinnedSnapshot() {
+        return pinnedSnapshot;
+    }
+
+    public DeltaTableHandle withPinnedSnapshot(DeltaKernelSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        if (snapshot.getVersion() != snapshotVersion) {
+            throw new IllegalArgumentException(
+                    "Pinned Delta snapshot version does not match table handle");
+        }
+        return new DeltaTableHandle(databaseName, tableName, tablePath, snapshotVersion,
+                catalogTableId, catalogManaged, externalTable, snapshot);
     }
 
     public DeltaTableHandle withSnapshotVersion(long version) {

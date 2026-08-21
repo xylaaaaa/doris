@@ -118,6 +118,7 @@ public class UnityDeltaCatalogAdapterTest {
         ConnectorTableHandle handle = connector.getMetadata(null)
                 .getTableHandle(null, "default", "events").orElseThrow();
         Assertions.assertEquals(1, ((DeltaTableHandle) handle).getSnapshotVersion());
+        Assertions.assertNotNull(((DeltaTableHandle) handle).getPinnedSnapshot());
         Assertions.assertEquals(2, connector.getScanPlanProvider()
                 .planScan(null, handle, List.of(), java.util.Optional.empty()).size());
         Map<String, String> scanProperties = connector.getScanPlanProvider()
@@ -485,6 +486,7 @@ public class UnityDeltaCatalogAdapterTest {
         DeltaTableHandle externalVersionZero = adapter.applyTableSnapshot(
                 external, ConnectorTableSnapshot.version(0));
         Assertions.assertEquals(0, externalVersionZero.getSnapshotVersion());
+        Assertions.assertNotNull(externalVersionZero.getPinnedSnapshot());
         Assertions.assertEquals(2, adapter.loadSnapshot(externalVersionZero)
                 .getActiveFiles().size());
 
@@ -493,6 +495,7 @@ public class UnityDeltaCatalogAdapterTest {
         DeltaTableHandle managedVersionOne = adapter.applyTableSnapshot(
                 managed, ConnectorTableSnapshot.version(1));
         Assertions.assertEquals(1, managedVersionOne.getSnapshotVersion());
+        Assertions.assertNotNull(managedVersionOne.getPinnedSnapshot());
         Assertions.assertEquals(List.of("part-00001.parquet"),
                 adapter.loadSnapshot(managedVersionOne).getActiveFiles().stream()
                         .map(file -> Paths.get(URI.create(file.getPath())).getFileName().toString())

@@ -109,12 +109,16 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
         }
         return Optional.of(new DeltaTableHandle(databaseName, tableName,
                 metadata.getLocation(), snapshot.getVersion(), tableId, catalogManaged,
-                metadata.getTableType() == DeltaTableType.EXTERNAL));
+                metadata.getTableType() == DeltaTableType.EXTERNAL)
+                .withPinnedSnapshot(snapshot));
     }
 
     @Override
     public DeltaKernelSnapshot loadSnapshot(DeltaTableHandle tableHandle) {
         DeltaTableMetadata metadata = resolveExistingTable(tableHandle);
+        if (tableHandle.getPinnedSnapshot() != null) {
+            return tableHandle.getPinnedSnapshot();
+        }
         Configuration configuration = client.buildReadHadoopConfiguration(
                 catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName(),
                 metadata.getLocation(), baseConfiguration);
@@ -172,7 +176,8 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
                             + "'", e);
         }
         DeltaCatalogAdapter.requireCompatibleSchema(loadSnapshot(tableHandle), requested);
-        return tableHandle.withSnapshotVersion(requested.getVersion());
+        return tableHandle.withSnapshotVersion(requested.getVersion())
+                .withPinnedSnapshot(requested);
     }
 
     @Override

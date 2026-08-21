@@ -48,6 +48,10 @@ import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
@@ -117,6 +121,7 @@ public class DeltaConnectorVerticalSliceTest {
 
         ConnectorTableSchema schema = metadata.getTableSchema(null, handle);
         DeltaKernelSnapshot snapshot = adapter.loadSnapshot((DeltaTableHandle) handle);
+        Assertions.assertSame(((DeltaTableHandle) handle).getPinnedSnapshot(), snapshot);
         Assertions.assertEquals(2, snapshot.getMinWriterVersion());
         Assertions.assertTrue(snapshot.getWriterFeatures().isEmpty());
         Assertions.assertEquals(List.of("id", "name"), schema.getColumns().stream()
@@ -153,12 +158,35 @@ public class DeltaConnectorVerticalSliceTest {
         DeltaTableHandle versionZero = (DeltaTableHandle) metadata.applyTableSnapshot(
                 null, handle, ConnectorTableSnapshot.version(0));
         Assertions.assertEquals(0, versionZero.getSnapshotVersion());
+        Assertions.assertSame(versionZero.getPinnedSnapshot(),
+                adapter.loadSnapshot(versionZero));
         Assertions.assertEquals(
                 List.of("part-00000.parquet", "part-00001.parquet"),
                 scanProvider.planScan(null, versionZero, List.of(), java.util.Optional.empty())
                         .stream().map(range -> Paths.get(URI.create(range.getPath().orElseThrow()))
                                 .getFileName().toString())
                         .collect(Collectors.toList()));
+    }
+
+    @Test
+    public void testPinnedSnapshotIsQueryLocalAndNotSerialized() throws Exception {
+        Map<String, String> properties = deltaProperties("delta/path_table");
+        DeltaTableHandle handle = pathAdapter(properties)
+                .getTableHandle("default", "events").orElseThrow();
+        Assertions.assertNotNull(handle.getPinnedSnapshot());
+
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ObjectOutputStream output = new ObjectOutputStream(bytes)) {
+            output.writeObject(handle);
+        }
+        DeltaTableHandle restored;
+        try (ObjectInputStream input = new ObjectInputStream(
+                new ByteArrayInputStream(bytes.toByteArray()))) {
+            restored = (DeltaTableHandle) input.readObject();
+        }
+
+        Assertions.assertEquals(handle, restored);
+        Assertions.assertNull(restored.getPinnedSnapshot());
     }
 
     @Test
