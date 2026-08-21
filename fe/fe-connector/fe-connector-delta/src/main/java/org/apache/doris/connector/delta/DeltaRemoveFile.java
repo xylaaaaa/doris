@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 /** Materialized metadata needed to tombstone one active Delta add-file. */
 final class DeltaRemoveFile {
@@ -38,10 +39,11 @@ final class DeltaRemoveFile {
     private final DeletionVectorDescriptor deletionVector;
     private final Optional<Long> baseRowId;
     private final Optional<Long> defaultRowCommitVersion;
+    private final Optional<Long> recordCount;
 
     DeltaRemoveFile(String path, long size, Map<String, String> partitionValues,
             DeletionVectorDescriptor deletionVector, Optional<Long> baseRowId,
-            Optional<Long> defaultRowCommitVersion) {
+            Optional<Long> defaultRowCommitVersion, Optional<Long> recordCount) {
         this.path = path;
         this.size = size;
         this.partitionValues = Collections.unmodifiableMap(
@@ -49,10 +51,24 @@ final class DeltaRemoveFile {
         this.deletionVector = deletionVector;
         this.baseRowId = baseRowId;
         this.defaultRowCommitVersion = defaultRowCommitVersion;
+        this.recordCount = recordCount;
     }
 
     String getPath() {
         return path;
+    }
+
+    OptionalLong getLiveRowCount() {
+        if (!recordCount.isPresent()) {
+            return OptionalLong.empty();
+        }
+        long deletedRows = deletionVector == null ? 0 : deletionVector.getCardinality();
+        long liveRows = recordCount.get() - deletedRows;
+        if (liveRows < 0) {
+            throw new IllegalArgumentException(
+                    "Delta deletion vector cardinality exceeds file record count: " + path);
+        }
+        return OptionalLong.of(liveRows);
     }
 
     Row toSingleAction(long deletionTimestamp) {

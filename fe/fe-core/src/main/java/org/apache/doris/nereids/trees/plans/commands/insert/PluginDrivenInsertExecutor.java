@@ -43,6 +43,7 @@ import org.apache.logging.log4j.Logger;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -59,6 +60,7 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
     private transient ConnectorWriteOps writeOps;
     private transient ConnectorWriteType resolvedWriteType;
     private final boolean overwrite;
+    private final boolean reportRemovedRows;
 
     /**
      * constructor
@@ -73,6 +75,21 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
                 .map(BaseExternalTableInsertCommandContext.class::cast)
                 .map(BaseExternalTableInsertCommandContext::isOverwrite)
                 .orElse(false);
+        this.reportRemovedRows = insertCtx
+                .filter(PluginDrivenInsertCommandContext.class::isInstance)
+                .map(PluginDrivenInsertCommandContext.class::cast)
+                .map(PluginDrivenInsertCommandContext::isReportRemovedRows)
+                .orElse(false);
+    }
+
+    @Override
+    public boolean isEmptyInsert() {
+        // An empty overwrite still has to commit removal of the current files.
+        return canSkipEmptyInput(super.isEmptyInsert(), overwrite);
+    }
+
+    static boolean canSkipEmptyInput(boolean emptyInput, boolean overwrite) {
+        return emptyInput && !overwrite;
     }
 
     @Override
@@ -93,8 +110,14 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
         ExternalTable extTable = (ExternalTable) table;
         String remoteDbName = extTable.getRemoteDbName();
         String remoteTableName = extTable.getRemoteName();
-        Optional<ConnectorTableHandle> tableHandle = metadata.getTableHandle(
-                connectorSession, remoteDbName, remoteTableName);
+        Optional<ConnectorTableHandle> tableHandle = insertCtx
+                .filter(PluginDrivenInsertCommandContext.class::isInstance)
+                .map(PluginDrivenInsertCommandContext.class::cast)
+                .flatMap(PluginDrivenInsertCommandContext::getOverwriteBaseHandle);
+        if (!overwrite || !tableHandle.isPresent()) {
+            tableHandle = metadata.getTableHandle(
+                    connectorSession, remoteDbName, remoteTableName);
+        }
         if (!tableHandle.isPresent()) {
             throw new UserException("Table not found via connector: "
                     + remoteDbName + "." + remoteTableName);
@@ -124,12 +147,31 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
                     .collect(Collectors.toList());
             validateReportedFiles(resolvedWriteType, emptyInsert, files, table.getName());
             loadedRows = files.stream().mapToLong(ConnectorFileCommitInfo::getRowCount).sum();
+            OptionalLong originalRowCount = insertHandle.getOriginalRowCount();
+            OptionalLong removedRowCount = reportRemovedRows
+                    ? calculateRemovedRowCount(originalRowCount, loadedRows)
+                    : OptionalLong.empty();
             if (resolvedWriteType == ConnectorWriteType.FILE_WRITE) {
                 writeOps.finishFileInsert(connectorSession, insertHandle, files);
             } else {
                 writeOps.finishInsert(connectorSession, insertHandle, List.of());
             }
+            if (removedRowCount.isPresent()) {
+                loadedRows = removedRowCount.getAsLong();
+            }
         }
+    }
+
+    static OptionalLong calculateRemovedRowCount(
+            OptionalLong originalRowCount, long replacementRowCount) throws UserException {
+        if (!originalRowCount.isPresent()) {
+            return OptionalLong.empty();
+        }
+        if (replacementRowCount > originalRowCount.getAsLong()) {
+            throw new UserException(
+                    "Connector DELETE produced more survivor rows than its base snapshot");
+        }
+        return OptionalLong.of(originalRowCount.getAsLong() - replacementRowCount);
     }
 
     /**

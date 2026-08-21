@@ -127,14 +127,19 @@ public class PluginDrivenExternalTableEngineTest {
     public void testInsertOverwriteCapabilityIsConnectorControlled() {
         Connector supported = createMockConnector(true, false);
         Mockito.when(supported.getCapabilities()).thenReturn(
-                Set.of(ConnectorCapability.SUPPORTS_INSERT_OVERWRITE));
+                Set.of(ConnectorCapability.SUPPORTS_INSERT_OVERWRITE,
+                        ConnectorCapability.SUPPORTS_DELETE));
         Connector unsupported = createMockConnector(true, false);
         Mockito.when(unsupported.getCapabilities()).thenReturn(Set.of());
 
         Assertions.assertTrue(createTableWithCatalogType("delta", supported)
                 .supportsInsertOverwrite());
+        Assertions.assertTrue(createTableWithCatalogType("delta", supported)
+                .supportsDelete());
         Assertions.assertFalse(createTableWithCatalogType("jdbc", unsupported)
                 .supportsInsertOverwrite());
+        Assertions.assertFalse(createTableWithCatalogType("jdbc", unsupported)
+                .supportsDelete());
     }
 
     // -------- Helpers --------

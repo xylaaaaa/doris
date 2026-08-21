@@ -23,6 +23,7 @@ import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** FE-owned Delta transaction state for one append or full-table overwrite. */
@@ -34,6 +35,7 @@ final class DeltaInsertHandle implements ConnectorInsertHandle {
     private final AutoCloseable resource;
     private final boolean overwrite;
     private final List<DeltaRemoveFile> overwriteRemoves;
+    private final OptionalLong originalRowCount;
     private final AtomicBoolean resourceClosed = new AtomicBoolean();
 
     DeltaInsertHandle(DeltaKernelWriter writer, Transaction transaction, Row transactionState) {
@@ -42,18 +44,20 @@ final class DeltaInsertHandle implements ConnectorInsertHandle {
 
     DeltaInsertHandle(DeltaKernelWriter writer, Transaction transaction, Row transactionState,
             AutoCloseable resource) {
-        this(writer, transaction, transactionState, resource, false, List.of());
+        this(writer, transaction, transactionState, resource, false, List.of(),
+                OptionalLong.empty());
     }
 
     DeltaInsertHandle(DeltaKernelWriter writer, Transaction transaction, Row transactionState,
             AutoCloseable resource, boolean overwrite,
-            List<DeltaRemoveFile> overwriteRemoves) {
+            List<DeltaRemoveFile> overwriteRemoves, OptionalLong originalRowCount) {
         this.writer = writer;
         this.transaction = transaction;
         this.transactionState = transactionState;
         this.resource = resource;
         this.overwrite = overwrite;
         this.overwriteRemoves = List.copyOf(overwriteRemoves);
+        this.originalRowCount = originalRowCount;
     }
 
     DeltaKernelWriter getWriter() {
@@ -74,6 +78,11 @@ final class DeltaInsertHandle implements ConnectorInsertHandle {
 
     List<DeltaRemoveFile> getOverwriteRemoves() {
         return overwriteRemoves;
+    }
+
+    @Override
+    public OptionalLong getOriginalRowCount() {
+        return originalRowCount;
     }
 
     void closeResource() throws Exception {

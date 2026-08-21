@@ -87,6 +87,16 @@ public class PluginDrivenExternalTable extends ExternalTable {
                         ConnectorCapability.SUPPORTS_INSERT_OVERWRITE);
     }
 
+    /** Returns whether the connector supports row deletion. */
+    public boolean supportsDelete() {
+        if (!(catalog instanceof PluginDrivenExternalCatalog)) {
+            return false;
+        }
+        Connector connector = ((PluginDrivenExternalCatalog) catalog).getConnector();
+        return connector != null
+                && connector.getCapabilities().contains(ConnectorCapability.SUPPORTS_DELETE);
+    }
+
     @Override
     public boolean supportsExternalMetadataPreload() {
         if (!(catalog instanceof PluginDrivenExternalCatalog)) {

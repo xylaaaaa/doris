@@ -26,7 +26,13 @@ import org.apache.doris.common.ErrorCode;
 import org.apache.doris.common.ErrorReport;
 import org.apache.doris.common.UserException;
 import org.apache.doris.common.util.InternalDatabaseUtil;
+import org.apache.doris.connector.api.Connector;
+import org.apache.doris.connector.api.ConnectorMetadata;
+import org.apache.doris.connector.api.ConnectorSession;
+import org.apache.doris.connector.api.handle.ConnectorTableHandle;
+import org.apache.doris.datasource.PluginDrivenExternalCatalog;
 import org.apache.doris.datasource.PluginDrivenExternalTable;
+import org.apache.doris.datasource.PluginDrivenScanNode;
 import org.apache.doris.datasource.doris.RemoteDorisExternalTable;
 import org.apache.doris.datasource.doris.RemoteOlapTable;
 import org.apache.doris.datasource.hive.HMSExternalTable;
@@ -61,6 +67,7 @@ import org.apache.doris.nereids.trees.plans.algebra.TVFRelation;
 import org.apache.doris.nereids.trees.plans.commands.Command;
 import org.apache.doris.nereids.trees.plans.commands.ForwardWithSync;
 import org.apache.doris.nereids.trees.plans.commands.NeedAuditEncryption;
+import org.apache.doris.nereids.trees.plans.commands.info.DMLCommandType;
 import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
 import org.apache.doris.nereids.trees.plans.logical.UnboundLogicalSink;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalIcebergTableSink;
@@ -110,6 +117,7 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
     private AtomicBoolean isRunning = new AtomicBoolean(false);
     private Optional<String> branchName;
     private Optional<Plan> lineagePlan = Optional.empty();
+    private Optional<ConnectorTableHandle> connectorOverwriteBaseHandle = Optional.empty();
 
     /**
      * constructor
@@ -185,6 +193,7 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
         Preconditions.checkArgument(plan.isPresent(), "insert into command must contain OlapTableSinkNode");
         PhysicalTableSink<?> physicalTableSink = ((PhysicalTableSink<?>) plan.get());
         TableIf targetTable = physicalTableSink.getTargetTable();
+        connectorOverwriteBaseHandle = resolveConnectorOverwriteBaseHandle(planner, targetTable);
         List<String> partitionNames;
         boolean wholeTable = false;
         if (physicalTableSink instanceof PhysicalOlapTableSink) {
@@ -431,6 +440,9 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
             PluginDrivenInsertCommandContext connectorCtx =
                     new PluginDrivenInsertCommandContext();
             connectorCtx.setOverwrite(true);
+            connectorCtx.setReportRemovedRows(
+                    sink.getDMLCommandType() == DMLCommandType.DELETE);
+            connectorOverwriteBaseHandle.ifPresent(connectorCtx::setOverwriteBaseHandle);
             insertCtx = connectorCtx;
         } else {
             throw new UserException("Current catalog does not support insert overwrite yet.");
@@ -444,6 +456,45 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
             throw new UserException(
                     "Plugin connector INSERT OVERWRITE currently supports full tables only");
         }
+    }
+
+    private Optional<ConnectorTableHandle> resolveConnectorOverwriteBaseHandle(
+            NereidsPlanner planner, TableIf targetTable) {
+        if (!(targetTable instanceof PluginDrivenExternalTable)
+                || !(getLogicalQuery() instanceof UnboundConnectorTableSink)
+                || ((UnboundConnectorTableSink<?>) getLogicalQuery()).getDMLCommandType()
+                        != DMLCommandType.DELETE) {
+            return Optional.empty();
+        }
+        PluginDrivenExternalTable connectorTable = (PluginDrivenExternalTable) targetTable;
+        PluginDrivenExternalCatalog catalog =
+                (PluginDrivenExternalCatalog) connectorTable.getCatalog();
+        Connector connector = catalog.getConnector();
+        ConnectorSession session = catalog.buildConnectorSession();
+        ConnectorMetadata metadata = connector.getMetadata(session);
+        ConnectorTableHandle targetHandle = metadata.getTableHandle(session,
+                connectorTable.getRemoteDbName(), connectorTable.getRemoteName())
+                .orElseThrow(() -> new AnalysisException("Table not found while planning DELETE: "
+                        + connectorTable.getRemoteDbName() + "." + connectorTable.getRemoteName()));
+        List<ConnectorTableHandle> sourceHandles = planner.getScanNodes().stream()
+                .filter(PluginDrivenScanNode.class::isInstance)
+                .map(PluginDrivenScanNode.class::cast)
+                .filter(scanNode -> scanNode.getTupleDesc().getTable() == targetTable)
+                .map(PluginDrivenScanNode::getTableHandle)
+                .collect(java.util.stream.Collectors.toList());
+        return Optional.of(requireConsistentConnectorOverwriteSnapshot(
+                targetHandle, sourceHandles));
+    }
+
+    static ConnectorTableHandle requireConsistentConnectorOverwriteSnapshot(
+            ConnectorTableHandle targetHandle, List<ConnectorTableHandle> sourceHandles) {
+        for (ConnectorTableHandle sourceHandle : sourceHandles) {
+            if (!targetHandle.equals(sourceHandle)) {
+                throw new AnalysisException(
+                        "Connector table changed while planning copy-on-write DELETE");
+            }
+        }
+        return targetHandle;
     }
 
     /**

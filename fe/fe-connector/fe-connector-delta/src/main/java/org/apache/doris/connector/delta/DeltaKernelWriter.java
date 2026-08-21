@@ -33,6 +33,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.util.PartitionUtils;
+import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
@@ -66,6 +67,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /** Delta Kernel blind-append lifecycle used by the connector write SPI. */
@@ -204,7 +206,8 @@ final class DeltaKernelWriter {
         List<DeltaRemoveFile> removes = overwrite
                 ? snapshot.getActiveRemoveFiles() : List.of();
         return new DeltaInsertHandle(this, transaction, transactionState, resource,
-                overwrite, removes);
+                overwrite, removes,
+                overwrite ? snapshot.getActiveRowCount() : OptionalLong.empty());
     }
 
     void finishInsert(DeltaInsertHandle insertHandle,
@@ -234,8 +237,10 @@ final class DeltaKernelWriter {
                         schema, partitionColumns, file);
                 DataWriteContext writeContext = Transaction.getWriteContext(
                         engine, insertHandle.getTransactionState(), partitionValues);
+                DataFileStatistics statistics = new DataFileStatistics(
+                        file.getRowCount(), Map.of(), Map.of(), Map.of(), Optional.empty());
                 DataFileStatus dataFile = new DataFileStatus(file.getFilePath(), file.getFileSize(),
-                        file.getModificationTime(), Optional.empty());
+                        file.getModificationTime(), Optional.of(statistics));
                 actions.addAll(generateAppendActions(
                         insertHandle.getTransactionState(), writeContext, dataFile));
             }

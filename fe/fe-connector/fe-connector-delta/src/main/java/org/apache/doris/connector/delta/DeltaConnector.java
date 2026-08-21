@@ -114,6 +114,9 @@ public final class DeltaConnector implements Connector {
             if (metadata.supportsInsertOverwrite()) {
                 capabilities.add(ConnectorCapability.SUPPORTS_INSERT_OVERWRITE);
             }
+            if (metadata.supportsDelete()) {
+                capabilities.add(ConnectorCapability.SUPPORTS_DELETE);
+            }
             if (catalogAdapter.supportsCreateTable()) {
                 capabilities.add(ConnectorCapability.SUPPORTS_CREATE_TABLE);
             }

@@ -126,6 +126,44 @@ public class DeltaKernelWriterTest {
     }
 
     @Test
+    public void testOverwriteReportsRemovedRowsFromDeltaFileStatistics() throws Exception {
+        Path tableDirectory = tempDirectory.resolve("row-count-table");
+        Path original = tableDirectory.resolve("part-original.parquet");
+        Path replacement = tableDirectory.resolve("part-replacement.parquet");
+        Files.createDirectories(tableDirectory);
+        Files.write(original, new byte[] {1, 2, 3});
+        Files.write(replacement, new byte[] {4, 5, 6});
+        Engine engine = DefaultEngine.create(new Configuration());
+        DeltaKernelWriter writer = new DeltaKernelWriter(engine);
+        StructType schema = DeltaTypeMapping.toDeltaSchema(List.of(
+                new ConnectorColumn("id", ConnectorType.of("BIGINT"), "", false, null)));
+        DeltaKernelSnapshot created = writer.createTable(
+                tableDirectory.toUri().toString(), schema, Map.of());
+        DeltaTableHandle createdHandle = new DeltaTableHandle(
+                "default", "events", tableDirectory.toUri().toString(), created.getVersion());
+        writer.finishInsert(writer.beginInsert(createdHandle), List.of(
+                new ConnectorFileCommitInfo(original.toUri().toString(), 3,
+                        Files.size(original), Files.getLastModifiedTime(original).toMillis(),
+                        Map.of())));
+        DeltaKernelSnapshot before = new DeltaKernelSnapshotLoader(engine)
+                .loadLatest(tableDirectory.toUri().toString());
+        Assertions.assertEquals(3, before.getActiveRowCount().orElseThrow());
+
+        DeltaInsertHandle overwrite = writer.beginOverwrite(
+                new DeltaTableHandle("default", "events", tableDirectory.toUri().toString(),
+                        before.getVersion()), before, null);
+        writer.finishInsert(overwrite, List.of(
+                new ConnectorFileCommitInfo(replacement.toUri().toString(), 1,
+                        Files.size(replacement),
+                        Files.getLastModifiedTime(replacement).toMillis(), Map.of())));
+
+        Assertions.assertEquals(3, overwrite.getOriginalRowCount().orElseThrow());
+        DeltaKernelSnapshot after = new DeltaKernelSnapshotLoader(engine)
+                .loadLatest(tableDirectory.toUri().toString());
+        Assertions.assertEquals(1, after.getActiveRowCount().orElseThrow());
+    }
+
+    @Test
     public void testOverwriteAtomicallyReplacesActiveFiles() throws Exception {
         Path tableDirectory = copyPathTableFixture();
         Path replacement = tableDirectory.resolve("part-replacement.parquet");

@@ -78,6 +78,24 @@ suite("test_native_delta_path", "p0,external") {
         FROM ${createCatalogName}.`default`.created_events
         ORDER BY id
     """
+    sql """
+        INSERT INTO ${createCatalogName}.`default`.created_events VALUES
+        (3, 'keep'), (4, NULL)
+    """
+    order_qt_deleted_matching """
+        DELETE FROM ${createCatalogName}.`default`.created_events
+        WHERE payload = 'overwritten'
+    """
+    order_qt_created_after_delete """
+        SELECT id, payload
+        FROM ${createCatalogName}.`default`.created_events
+        ORDER BY id
+    """
+    order_qt_deleted_all "DELETE FROM ${createCatalogName}.`default`.created_events"
+    order_qt_created_after_delete_all """
+        SELECT COUNT(*)
+        FROM ${createCatalogName}.`default`.created_events
+    """
 
     def sourceTable = new File(dorisHome,
             "samples/datalake/deltalake_and_kudu/data/customer").toPath()

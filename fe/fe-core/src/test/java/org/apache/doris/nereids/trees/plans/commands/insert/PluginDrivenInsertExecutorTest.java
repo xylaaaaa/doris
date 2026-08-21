@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.OptionalLong;
 
 class PluginDrivenInsertExecutorTest {
 
@@ -42,5 +43,24 @@ class PluginDrivenInsertExecutorTest {
         Assertions.assertDoesNotThrow(
                 () -> PluginDrivenInsertExecutor.validateReportedFiles(
                         ConnectorWriteType.JDBC_WRITE, false, List.of(), "events"));
+    }
+
+    @Test
+    void emptyOverwriteCannotUseTheEmptyInsertFastPath() {
+        Assertions.assertTrue(PluginDrivenInsertExecutor.canSkipEmptyInput(true, false));
+        Assertions.assertFalse(PluginDrivenInsertExecutor.canSkipEmptyInput(true, true));
+        Assertions.assertFalse(PluginDrivenInsertExecutor.canSkipEmptyInput(false, true));
+    }
+
+    @Test
+    void removedRowsAreCalculatedBeforeCommit() throws Exception {
+        Assertions.assertEquals(2,
+                PluginDrivenInsertExecutor.calculateRemovedRowCount(
+                        OptionalLong.of(3), 1).orElseThrow());
+        Assertions.assertFalse(PluginDrivenInsertExecutor.calculateRemovedRowCount(
+                OptionalLong.empty(), 1).isPresent());
+        Assertions.assertThrows(UserException.class,
+                () -> PluginDrivenInsertExecutor.calculateRemovedRowCount(
+                        OptionalLong.of(1), 2));
     }
 }

@@ -18,6 +18,8 @@
 package org.apache.doris.nereids.trees.plans.commands.insert;
 
 import org.apache.doris.common.UserException;
+import org.apache.doris.connector.api.handle.ConnectorTableHandle;
+import org.apache.doris.nereids.exceptions.AnalysisException;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -33,5 +35,22 @@ class InsertOverwriteTableCommandTest {
         Assertions.assertThrows(UserException.class,
                 () -> InsertOverwriteTableCommand.requireFullTableConnectorOverwrite(
                         List.of("p20260822")));
+    }
+
+    @Test
+    void copyOnWriteDeleteRequiresOneConsistentSnapshot() {
+        ConnectorTableHandle target = new TestConnectorTableHandle();
+        ConnectorTableHandle changed = new TestConnectorTableHandle();
+
+        Assertions.assertSame(target,
+                InsertOverwriteTableCommand.requireConsistentConnectorOverwriteSnapshot(
+                        target, List.of(target, target)));
+        Assertions.assertThrows(AnalysisException.class,
+                () -> InsertOverwriteTableCommand.requireConsistentConnectorOverwriteSnapshot(
+                        target, List.of(changed)));
+    }
+
+    private static final class TestConnectorTableHandle implements ConnectorTableHandle {
+        private static final long serialVersionUID = 1L;
     }
 }

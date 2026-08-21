@@ -103,6 +103,7 @@ public class PluginDrivenScanNode extends FileQueryScanNode {
     private final ConnectorSession connectorSession;
 
     // Set during filter pushdown; may be updated from the original table handle.
+    private ConnectorTableHandle tableHandle;
     private ConnectorTableHandle currentHandle;
 
     // Populated from ConnectorScanPlanProvider.getScanNodePropertiesResult()
@@ -118,6 +119,7 @@ public class PluginDrivenScanNode extends FileQueryScanNode {
         super(id, desc, "PluginDrivenScanNode", scanContext, needCheckColumnPriv, sv);
         this.connector = connector;
         this.connectorSession = connectorSession;
+        this.tableHandle = tableHandle;
         this.currentHandle = tableHandle;
     }
 
@@ -149,10 +151,16 @@ public class PluginDrivenScanNode extends FileQueryScanNode {
         ConnectorMetadata metadata = connector.getMetadata(connectorSession);
         currentHandle = metadata.applyTableSnapshot(
                 connectorSession, currentHandle, toConnectorTableSnapshot(tableSnapshot));
+        tableHandle = currentHandle;
         super.setQueryTableSnapshot(tableSnapshot);
         scanNodeProperties = null;
         cachedPropertiesResult = null;
         filteredToOriginalIndex = null;
+    }
+
+    /** Returns the snapshot-pinned handle before filter, limit, or projection pushdown. */
+    public ConnectorTableHandle getTableHandle() {
+        return tableHandle;
     }
 
     static ConnectorTableSnapshot toConnectorTableSnapshot(TableSnapshot snapshot) {

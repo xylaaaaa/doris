@@ -40,6 +40,7 @@ import org.apache.doris.common.Config;
 import org.apache.doris.common.ErrorCode;
 import org.apache.doris.common.ErrorReport;
 import org.apache.doris.common.util.Util;
+import org.apache.doris.datasource.PluginDrivenExternalTable;
 import org.apache.doris.datasource.iceberg.IcebergExternalTable;
 import org.apache.doris.mysql.privilege.PrivPredicate;
 import org.apache.doris.nereids.CascadesContext;
@@ -152,6 +153,17 @@ public class DeleteFromCommand extends Command implements ForwardWithSync, Expla
                     nameParts, tableAlias, isTempPart, partitions, logicalQuery,
                     deleteCtx);
             icebergDeleteCommand.run(ctx, executor);
+            return;
+        }
+
+        if (table instanceof PluginDrivenExternalTable) {
+            PluginDrivenExternalTable connectorTable = (PluginDrivenExternalTable) table;
+            if (!connectorTable.supportsDelete()) {
+                throw new AnalysisException("Connector does not support DELETE for table: "
+                        + connectorTable.getName());
+            }
+            new ConnectorDeleteCommand(nameParts, isTempPart, partitions, logicalQuery)
+                    .run(ctx, executor);
             return;
         }
 
@@ -509,6 +521,15 @@ public class DeleteFromCommand extends Command implements ForwardWithSync, Expla
             IcebergDeleteCommand icebergDeleteCommand = new IcebergDeleteCommand(
                     nameParts, tableAlias, isTempPart, partitions, logicalQuery, deleteCtx);
             return icebergDeleteCommand.getExplainPlan(ctx);
+        }
+        if (table instanceof PluginDrivenExternalTable) {
+            PluginDrivenExternalTable connectorTable = (PluginDrivenExternalTable) table;
+            if (!connectorTable.supportsDelete()) {
+                throw new AnalysisException("Connector does not support DELETE for table: "
+                        + connectorTable.getName());
+            }
+            return new ConnectorDeleteCommand(nameParts, isTempPart, partitions, logicalQuery)
+                    .getExplainPlan(ctx);
         }
         return completeQueryPlan(ctx, logicalQuery);
     }

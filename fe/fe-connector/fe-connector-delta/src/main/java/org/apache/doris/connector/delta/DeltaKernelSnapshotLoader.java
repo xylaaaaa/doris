@@ -24,7 +24,9 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.ScanImpl;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.utils.CloseableIterator;
@@ -105,7 +107,8 @@ public class DeltaKernelSnapshotLoader {
         List<DeltaRemoveFile> activeRemoveFiles = new ArrayList<>();
         List<String> partitionColumns = snapshot.getPartitionColumnNames();
 
-        try (CloseableIterator<FilteredColumnarBatch> batches = scan.getScanFiles(engine)) {
+        try (CloseableIterator<FilteredColumnarBatch> batches =
+                ((ScanImpl) scan).getScanFiles(engine, true)) {
             while (batches.hasNext()) {
                 try (CloseableIterator<Row> rows = batches.next().getRows()) {
                     while (rows.hasNext()) {
@@ -131,7 +134,9 @@ public class DeltaKernelSnapshotLoader {
                                 InternalScanFileUtils.getFilePath(row), file.getSize(),
                                 partitionValues, deletionVector,
                                 InternalScanFileUtils.getBaseRowId(row),
-                                InternalScanFileUtils.getDefaultRowCommitVersion(row)));
+                                InternalScanFileUtils.getDefaultRowCommitVersion(row),
+                                new AddFile(row.getStruct(InternalScanFileUtils.ADD_FILE_ORDINAL))
+                                        .getNumRecords()));
                     }
                 }
             }

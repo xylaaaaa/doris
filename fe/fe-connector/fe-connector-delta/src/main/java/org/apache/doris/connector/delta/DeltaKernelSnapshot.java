@@ -23,6 +23,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /** A consistent Delta table snapshot and its active data files. */
@@ -93,5 +94,17 @@ public class DeltaKernelSnapshot {
 
     List<DeltaRemoveFile> getActiveRemoveFiles() {
         return activeRemoveFiles;
+    }
+
+    OptionalLong getActiveRowCount() {
+        long rowCount = 0;
+        for (DeltaRemoveFile file : activeRemoveFiles) {
+            OptionalLong fileRowCount = file.getLiveRowCount();
+            if (!fileRowCount.isPresent()) {
+                return OptionalLong.empty();
+            }
+            rowCount += fileRowCount.getAsLong();
+        }
+        return OptionalLong.of(rowCount);
     }
 }

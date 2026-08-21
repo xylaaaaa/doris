@@ -20,6 +20,19 @@ c_comment	text	Yes	false	\N
 -- !created_after_overwrite --
 2	overwritten
 
+-- !deleted_matching --
+1
+
+-- !created_after_delete --
+3	keep
+4	\N
+
+-- !deleted_all --
+2
+
+-- !created_after_delete_all --
+0
+
 -- !count_after_insert --
 18752
 

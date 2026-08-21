@@ -17,10 +17,32 @@
 
 package org.apache.doris.nereids.trees.plans.commands.insert;
 
+import org.apache.doris.connector.api.handle.ConnectorTableHandle;
+
+import java.util.Optional;
+
 /**
  * Insert command context for plugin-driven connector catalogs.
- * No additional fields — overwrite is inherited from BaseExternalTableInsertCommandContext.
+ * Overwrite is inherited from {@link BaseExternalTableInsertCommandContext}.
  * Connector plugins provide write config through the ConnectorWriteOps SPI.
  */
 public class PluginDrivenInsertCommandContext extends BaseExternalTableInsertCommandContext {
+    private Optional<ConnectorTableHandle> overwriteBaseHandle = Optional.empty();
+    private boolean reportRemovedRows;
+
+    public Optional<ConnectorTableHandle> getOverwriteBaseHandle() {
+        return overwriteBaseHandle;
+    }
+
+    public void setOverwriteBaseHandle(ConnectorTableHandle overwriteBaseHandle) {
+        this.overwriteBaseHandle = Optional.of(overwriteBaseHandle);
+    }
+
+    public boolean isReportRemovedRows() {
+        return reportRemovedRows;
+    }
+
+    public void setReportRemovedRows(boolean reportRemovedRows) {
+        this.reportRemovedRows = reportRemovedRows;
+    }
 }

@@ -17,8 +17,14 @@
 
 package org.apache.doris.connector.api.handle;
 
+import java.util.OptionalLong;
+
 /**
  * Opaque insert handle returned by {@code beginInsert}.
  */
 public interface ConnectorInsertHandle {
+    /** Returns the row count at the overwrite base snapshot when it is known. */
+    default OptionalLong getOriginalRowCount() {
+        return OptionalLong.empty();
+    }
 }
