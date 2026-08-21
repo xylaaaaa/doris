@@ -529,6 +529,7 @@ public class UnityDeltaCatalogAdapterTest {
 
         for (String invalidUri : List.of(
                 "ftp://workspace.example.test",
+                "http://workspace.example.test",
                 "https:missing-host",
                 "https://workspace.example.test/api/2.1/unity-catalog",
                 "https://user@workspace.example.test",
@@ -539,6 +540,17 @@ public class UnityDeltaCatalogAdapterTest {
             Assertions.assertThrows(IllegalArgumentException.class,
                     () -> provider.validateProperties(properties), invalidUri);
         }
+
+        Map<String, String> insecureOauth = new java.util.HashMap<>(base);
+        insecureOauth.put(DeltaConnectorProperties.UNITY_URI, "https://workspace.example.test");
+        insecureOauth.put(DeltaConnectorProperties.UNITY_AUTH_TYPE, "oauth");
+        insecureOauth.remove(DeltaConnectorProperties.UNITY_TOKEN);
+        insecureOauth.put(DeltaConnectorProperties.UNITY_OAUTH_URI,
+                "http://login.example.test/oauth/token");
+        insecureOauth.put(DeltaConnectorProperties.UNITY_OAUTH_CLIENT_ID, "client-id");
+        insecureOauth.put(DeltaConnectorProperties.UNITY_OAUTH_CLIENT_SECRET, "client-secret");
+        Assertions.assertThrows(IllegalArgumentException.class,
+                () -> provider.validateProperties(insecureOauth));
     }
 
     private void handleRequest(HttpExchange exchange) throws IOException {

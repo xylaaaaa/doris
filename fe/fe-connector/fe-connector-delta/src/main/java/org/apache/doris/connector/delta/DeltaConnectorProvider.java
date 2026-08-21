@@ -93,7 +93,7 @@ public class DeltaConnectorProvider implements ConnectorProvider {
                 requireNonBlank(properties, DeltaConnectorProperties.UNITY_OAUTH_URI);
                 requireNonBlank(properties, DeltaConnectorProperties.UNITY_OAUTH_CLIENT_ID);
                 requireNonBlank(properties, DeltaConnectorProperties.UNITY_OAUTH_CLIENT_SECRET);
-                validateHttpUri(properties.get(DeltaConnectorProperties.UNITY_OAUTH_URI),
+                validateSecureHttpUri(properties.get(DeltaConnectorProperties.UNITY_OAUTH_URI),
                         DeltaConnectorProperties.UNITY_OAUTH_URI);
                 break;
             default:
@@ -101,7 +101,7 @@ public class DeltaConnectorProvider implements ConnectorProvider {
                         "Unsupported Unity authentication type '" + authType
                                 + "'; expected 'pat' or 'oauth'");
         }
-        URI unityUri = validateHttpUri(properties.get(DeltaConnectorProperties.UNITY_URI),
+        URI unityUri = validateSecureHttpUri(properties.get(DeltaConnectorProperties.UNITY_URI),
                 DeltaConnectorProperties.UNITY_URI);
         if (unityUri.getPath() != null && !unityUri.getPath().isEmpty()
                 && !"/".equals(unityUri.getPath())) {
@@ -133,6 +133,23 @@ public class DeltaConnectorProvider implements ConnectorProvider {
                             + "' must not contain user info, query parameters, or a fragment");
         }
         return uri;
+    }
+
+    private static URI validateSecureHttpUri(String value, String property) {
+        URI uri = validateHttpUri(value, property);
+        if ("http".equalsIgnoreCase(uri.getScheme()) && !isLoopbackHost(uri.getHost())) {
+            throw new IllegalArgumentException(
+                    "Unity property '" + property
+                            + "' must use HTTPS unless the host is loopback");
+        }
+        return uri;
+    }
+
+    private static boolean isLoopbackHost(String host) {
+        String normalized = host.toLowerCase(java.util.Locale.ROOT);
+        return "localhost".equals(normalized) || "::1".equals(normalized)
+                || "[::1]".equals(normalized)
+                || normalized.matches("127(?:\\.\\d{1,3}){3}");
     }
 
     private static void requireNonBlank(Map<String, String> properties, String key) {
