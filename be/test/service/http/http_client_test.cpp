@@ -29,6 +29,7 @@
 #include <filesystem>
 
 #include "gtest/gtest_pred_impl.h"
+#include "io/fs/http_file_reader.h"
 #include "runtime/exec_env.h"
 #include "service/backend_service.h"
 #include "service/http/ev_http_server.h"
@@ -119,6 +120,18 @@ public:
     }
 };
 
+class HttpBearerRangeHandler : public HttpHandler {
+public:
+    void handle(HttpRequest* req) override {
+        if (req->header(HttpHeaders::AUTHORIZATION) != "Bearer gcs-vended-token" ||
+            req->header(HttpHeaders::RANGE).empty()) {
+            HttpChannel::send_reply(req, HttpStatus::UNAUTHORIZED, "missing bearer or range");
+            return;
+        }
+        HttpChannel::send_reply(req, HttpStatus::PARTIAL_CONTENT, "native-delta");
+    }
+};
+
 static EvHttpServer* s_server = nullptr;
 static int real_port = 0;
 static std::string hostname = "";
@@ -130,6 +143,7 @@ static HttpClientTestSimplePostHandler s_simple_post_handler;
 static HttpNotFoundHandler s_not_found_handler;
 static HttpDownloadFileHandler s_download_file_handler;
 static HttpBatchDownloadFileHandler s_batch_download_file_handler;
+static HttpBearerRangeHandler s_bearer_range_handler;
 
 class HttpClientTest : public testing::Test {
 public:
@@ -149,6 +163,7 @@ public:
                                    &s_batch_download_file_handler);
         s_server->register_handler(POST, "/api/_tablet/_batch_download",
                                    &s_batch_download_file_handler);
+        s_server->register_handler(GET, "/bearer_range", &s_bearer_range_handler);
         static_cast<void>(s_server->start());
         real_port = s_server->get_real_port();
         EXPECT_NE(0, real_port);
@@ -181,6 +196,22 @@ TEST_F(HttpClientTest, get_normal) {
     st = client.get_content_length(&len);
     EXPECT_TRUE(st.ok());
     EXPECT_EQ(5, len);
+}
+
+TEST_F(HttpClientTest, file_reader_forwards_bearer_header_on_range_request) {
+    io::OpenFileInfo file_info;
+    file_info.path = io::Path(hostname + "/bearer_range");
+    file_info.extend_info = {{"file_size", "12"},
+                             {"http.header.Authorization", "Bearer gcs-vended-token"}};
+    io::HttpFileReader reader(file_info, file_info.path.native(), 0);
+    ASSERT_TRUE(reader.open({}).ok());
+
+    char data[6];
+    size_t bytes_read = 0;
+    ASSERT_TRUE(reader.read_at(0, Slice(data, sizeof(data)), &bytes_read).ok());
+    EXPECT_EQ(bytes_read, sizeof(data));
+    EXPECT_EQ(std::string_view(data, bytes_read), "native");
+    EXPECT_TRUE(reader.close().ok());
 }
 
 TEST_F(HttpClientTest, download) {
