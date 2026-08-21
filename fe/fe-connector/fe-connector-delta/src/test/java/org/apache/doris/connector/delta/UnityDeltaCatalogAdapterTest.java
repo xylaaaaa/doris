@@ -280,6 +280,39 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
+    public void testGcsScanFileAndDeletionVectorPathsUseHttps() {
+        Map<String, String> properties = Map.of(
+                "gcs.endpoint", "https://gcs.example.test/base");
+        DeltaDeletionVector absoluteDv = new DeltaDeletionVector(
+                "p", "gs://delta-bucket/tables/events/dv.bin",
+                java.util.Optional.of(4), 16, 2);
+        DeltaScanFile absolute = UnityDeltaStorageProperties.toBackendScanFile(
+                new DeltaScanFile("gs://delta-bucket/tables/events/part.parquet", 100, 10,
+                        Map.of(), absoluteDv, "gs://delta-bucket/tables/events"), properties);
+
+        Assertions.assertEquals(
+                "https://gcs.example.test/base/delta-bucket/tables/events/part.parquet",
+                absolute.getPath());
+        Assertions.assertEquals(
+                "https://gcs.example.test/base/delta-bucket/tables/events",
+                absolute.getTablePath());
+        Assertions.assertEquals(
+                "https://gcs.example.test/base/delta-bucket/tables/events/dv.bin",
+                absolute.getDeletionVector().getPathOrInlineDv());
+
+        DeltaDeletionVector uuidDv = new DeltaDeletionVector(
+                "u", "prefix-and-encoded-uuid", java.util.Optional.of(0), 16, 2);
+        DeltaScanFile uuid = UnityDeltaStorageProperties.toBackendScanFile(
+                new DeltaScanFile("gs://delta-bucket/tables/events/part.parquet", 100, 10,
+                        Map.of(), uuidDv, "gs://delta-bucket/tables/events"), properties);
+        Assertions.assertEquals("prefix-and-encoded-uuid",
+                uuid.getDeletionVector().getPathOrInlineDv());
+        Assertions.assertEquals(
+                "https://gcs.example.test/base/delta-bucket/tables/events",
+                uuid.getTablePath());
+    }
+
+    @Test
     public void testRejectMissingVendedCredentials() {
         DeltaCredentialsResponse empty = new DeltaCredentialsResponse();
         IllegalArgumentException exception = Assertions.assertThrows(

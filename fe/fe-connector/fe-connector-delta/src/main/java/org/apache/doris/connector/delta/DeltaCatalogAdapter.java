@@ -41,9 +41,9 @@ public interface DeltaCatalogAdapter {
     /** Loads the snapshot pinned by a table handle. */
     DeltaKernelSnapshot loadSnapshot(DeltaTableHandle tableHandle);
 
-    /** Resolves one logical Delta data-file path to the path consumed by Doris BE. */
-    default String getBackendScanPath(DeltaTableHandle tableHandle, DeltaScanFile file) {
-        return file.getPath();
+    /** Resolves one logical Delta scan file and its delete metadata for Doris BE. */
+    default DeltaScanFile getBackendScanFile(DeltaTableHandle tableHandle, DeltaScanFile file) {
+        return file;
     }
 
     /** Returns short-lived storage settings consumed by the backend for this table. */

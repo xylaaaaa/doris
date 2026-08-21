@@ -42,11 +42,7 @@ public final class DeltaScanRange implements ConnectorScanRange {
     private final String tablePath;
 
     public DeltaScanRange(DeltaScanFile file) {
-        this(file, file.getPath());
-    }
-
-    public DeltaScanRange(DeltaScanFile file, String scanPath) {
-        this.path = scanPath;
+        this.path = file.getPath();
         this.size = file.getSize();
         this.modificationTime = file.getModificationTime();
         this.partitionValues = file.getPartitionValues();

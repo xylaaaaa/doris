@@ -65,8 +65,8 @@ public final class DeltaScanPlanProvider implements ConnectorScanPlanProvider {
         for (DeltaScanFile file : snapshot.getActiveFiles()) {
             if (filter.isEmpty() || DeltaPartitionPruner.mayMatch(
                     file.getPartitionValues(), filter.get())) {
-                ranges.add(new DeltaScanRange(file,
-                        catalogAdapter.getBackendScanPath(deltaHandle, file)));
+                ranges.add(new DeltaScanRange(
+                        catalogAdapter.getBackendScanFile(deltaHandle, file)));
             }
         }
         return ranges;

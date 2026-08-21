@@ -175,7 +175,26 @@ final class UnityDeltaStorageProperties {
                 + (location.getRawPath() == null ? "" : location.getRawPath());
     }
 
-    static boolean isGcsPath(String path) {
+    static DeltaScanFile toBackendScanFile(
+            DeltaScanFile file, Map<String, String> catalogProperties) {
+        if (!isGcsPath(file.getPath())) {
+            return file;
+        }
+        DeltaDeletionVector deletionVector = file.getDeletionVector();
+        if (deletionVector != null && "p".equals(deletionVector.getStorageType())) {
+            deletionVector = new DeltaDeletionVector(deletionVector.getStorageType(),
+                    toBackendPath(deletionVector.getPathOrInlineDv(), catalogProperties),
+                    deletionVector.getOffset(), deletionVector.getSizeInBytes(),
+                    deletionVector.getCardinality());
+        }
+        String tablePath = file.getTablePath() == null ? null
+                : toBackendPath(file.getTablePath(), catalogProperties);
+        return new DeltaScanFile(toBackendPath(file.getPath(), catalogProperties),
+                file.getSize(), file.getModificationTime(), file.getPartitionValues(),
+                deletionVector, tablePath);
+    }
+
+    private static boolean isGcsPath(String path) {
         return "gs".equalsIgnoreCase(URI.create(path).getScheme());
     }
 
