@@ -19,7 +19,11 @@ package org.apache.doris.connector.delta;
 
 import org.apache.doris.connector.api.Connector;
 import org.apache.doris.connector.api.ConnectorCapability;
+import org.apache.doris.connector.api.ConnectorColumn;
+import org.apache.doris.connector.api.ConnectorTableCreateRequest;
+import org.apache.doris.connector.api.ConnectorTableSchema;
 import org.apache.doris.connector.api.ConnectorTableSnapshot;
+import org.apache.doris.connector.api.ConnectorType;
 import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
@@ -61,6 +65,7 @@ public class UnityDeltaCatalogAdapterTest {
     private String catalogManagedLocation;
     private String catalogManagedTableId;
     private String deltaProtocolVersion;
+    private String createStagingLocation;
     private final List<String> requestPaths = new ArrayList<>();
     private final List<String> requestQueries = new ArrayList<>();
     private final List<String> updateRequestPaths = new ArrayList<>();
@@ -78,6 +83,7 @@ public class UnityDeltaCatalogAdapterTest {
         catalogManagedLocation = Paths.get(catalogManagedFixture.toURI()).toUri().toString();
         catalogManagedTableId = "c79de738-d13c-44a5-8e75-8435123d60c7";
         deltaProtocolVersion = "1.0";
+        createStagingLocation = tempDirectory.resolve("unity-created-table").toUri().toString();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", this::handleRequest);
         server.start();
@@ -507,6 +513,29 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
+    public void testUnityManagedCreateUsesStagingAndFinalize() {
+        Map<String, String> properties = Map.of(
+                DeltaConnectorProperties.WRITE_ENABLED, "true",
+                DeltaConnectorProperties.CREATE_ENABLED, "true");
+        UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
+        UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
+                "main", client, new org.apache.hadoop.conf.Configuration(), properties);
+        ConnectorTableCreateRequest request = new ConnectorTableCreateRequest(
+                "default", new ConnectorTableSchema("created_events", List.of(
+                        new ConnectorColumn("id", ConnectorType.of("BIGINT"), "", false, null)),
+                        "DELTA", Map.of()), List.of(), Map.of(), "created events", false);
+
+        Assertions.assertTrue(adapter.supportsCreateTable());
+        Assertions.assertFalse(adapter.createTable(request));
+        Assertions.assertTrue(Files.exists(Paths.get(URI.create(createStagingLocation))
+                .resolve("_delta_log/00000000000000000000.json")));
+        Assertions.assertTrue(requestPaths.stream().anyMatch(path -> path.endsWith(
+                "/delta/v1/catalogs/main/schemas/default/staging-tables")));
+        Assertions.assertTrue(updateRequestPaths.stream().anyMatch(path -> path.endsWith(
+                "/delta/v1/catalogs/main/schemas/default/tables")));
+    }
+
+    @Test
     public void testCatalogManagedInsertUsesUnityCatalogCommitter() throws Exception {
         catalogManagedLocation = copyCatalogManagedFixture().toUri().toString();
         UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
@@ -614,6 +643,23 @@ public class UnityDeltaCatalogAdapterTest {
                     + "\"GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}\","
                     + "\"GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials\"],"
                     + "\"protocol-version\":\"" + deltaProtocolVersion + "\"}");
+            return;
+        }
+        if (path.equals("/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/staging-tables")) {
+            respond(exchange, 200, "{\"table-id\":\"4ae3f0d4-7d7f-43d6-9d2f-1f6e6c8e14aa\","
+                    + "\"table-type\":\"MANAGED\",\"location\":\""
+                    + createStagingLocation + "\",\"storage-credentials\":[],"
+                    + "\"required-protocol\":{\"min-reader-version\":3,"
+                    + "\"min-writer-version\":7,\"writer-features\":["
+                    + "\"catalogManaged\",\"vacuumProtocolCheck\"]},"
+                    + "\"required-properties\":{\"delta.enableInCommitTimestamps\":\"true\"}}");
+            return;
+        }
+        if (path.equals("/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/tables")
+                && "POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            exchange.getRequestBody().readAllBytes();
+            updateRequestPaths.add(path);
+            respond(exchange, 200, loadTableResponse(Map.of()));
             return;
         }
         if (path.equals("/api/2.1/unity-catalog/tables")) {

@@ -41,6 +41,7 @@ public class DeltaConnectorProvider implements ConnectorProvider {
     @Override
     public void validateProperties(Map<String, String> properties) {
         validateBooleanProperty(properties, DeltaConnectorProperties.WRITE_ENABLED);
+        validateBooleanProperty(properties, DeltaConnectorProperties.CREATE_ENABLED);
         validateTimeoutProperties(properties);
         String catalogType = DeltaConnectorProperties.catalogType(properties);
         switch (catalogType) {

@@ -33,6 +33,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.util.PartitionUtils;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.BooleanType;
@@ -86,18 +87,29 @@ final class DeltaKernelWriter {
 
     DeltaKernelSnapshot createTable(String tablePath, StructType schema,
             Map<String, String> tableProperties) {
-        Transaction transaction = TableManager.buildCreateTableTransaction(
+        CreateTableTransactionBuilder builder = TableManager.buildCreateTableTransaction(
                 tablePath, schema, ENGINE_INFO)
                 .withDataLayoutSpec(DataLayoutSpec.noDataLayout())
                 .withTableProperties(tableProperties)
+                .withMaxRetries(MAX_COMMIT_RETRIES);
+        commitCreateTable(builder, tablePath);
+        try {
+            return new DeltaKernelSnapshotLoader(engine).loadVersion(tablePath, 0);
+        } catch (IOException e) {
+            throw new DorisConnectorException("Failed to load created Delta table at '"
+                    + tablePath + "'", e);
+        }
+    }
+
+    void commitCreateTable(CreateTableTransactionBuilder builder, String tablePath) {
+        Transaction transaction = builder
+                .withDataLayoutSpec(DataLayoutSpec.noDataLayout())
                 .withMaxRetries(MAX_COMMIT_RETRIES)
                 .build(engine);
         try (CloseableIterable<Row> actions = CloseableIterable.inMemoryIterable(
                 closeableIterator(java.util.Collections.<Row>emptyIterator()))) {
             TransactionCommitResult result = transaction.commit(engine, actions);
             runPostCommitHooks(result);
-            return new DeltaKernelSnapshotLoader(engine).loadVersion(
-                    tablePath, result.getVersion());
         } catch (IOException e) {
             throw new DorisConnectorException("Failed to create Delta table at '"
                     + tablePath + "'", e);

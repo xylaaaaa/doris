@@ -17,6 +17,7 @@
 
 package org.apache.doris.connector.delta;
 
+import org.apache.doris.connector.api.ConnectorTableCreateRequest;
 import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
@@ -26,6 +27,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.unitycatalog.client.delta.model.DeltaCredentialOperation;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.delta.model.DeltaStagingTableResponse;
 import io.unitycatalog.client.delta.model.DeltaTableMetadata;
 import io.unitycatalog.client.delta.model.DeltaTableType;
 import org.apache.hadoop.conf.Configuration;
@@ -257,6 +259,43 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
     public boolean supportsInsert() {
         return Boolean.parseBoolean(catalogProperties.getOrDefault(
                 DeltaConnectorProperties.WRITE_ENABLED, "false"));
+    }
+
+    @Override
+    public boolean createTable(ConnectorTableCreateRequest request) {
+        if (!Boolean.parseBoolean(catalogProperties.getOrDefault(
+                DeltaConnectorProperties.CREATE_ENABLED, "false"))) {
+            throw new UnsupportedOperationException(
+                    "Unity managed Delta CREATE TABLE requires delta.create.enabled=true");
+        }
+        Optional<DeltaTableHandle> existing = getTableHandle(
+                request.getDatabaseName(), request.getTableSchema().getTableName());
+        if (existing.isPresent()) {
+            if (request.isIfNotExists()) {
+                return true;
+            }
+            throw new DorisConnectorException(
+                    "Unity Delta table already exists: " + request.getDatabaseName() + "."
+                            + request.getTableSchema().getTableName());
+        }
+        if (request.getProperties().containsKey("location")
+                || request.getProperties().containsKey("delta.table.path")) {
+            throw new UnsupportedOperationException(
+                    "The initial Unity Delta CREATE TABLE slice creates managed tables only");
+        }
+        DeltaStagingTableResponse staging = client.createStagingTable(
+                catalogName, request.getDatabaseName(), request.getTableSchema().getTableName());
+        client.createCatalogManagedTable(staging, catalogName, request.getDatabaseName(),
+                request.getTableSchema().getTableName(),
+                DeltaTypeMapping.toDeltaSchema(request.getTableSchema().getColumns()),
+                request.getProperties(), baseConfiguration);
+        return false;
+    }
+
+    @Override
+    public boolean supportsCreateTable() {
+        return Boolean.parseBoolean(catalogProperties.getOrDefault(
+                DeltaConnectorProperties.CREATE_ENABLED, "false"));
     }
 
     @Override

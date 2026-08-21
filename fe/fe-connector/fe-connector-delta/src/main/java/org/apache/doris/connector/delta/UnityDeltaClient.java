@@ -26,10 +26,14 @@ import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.commit.Committer;
+import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.unitycatalog.UCCatalogManagedCommitter;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
+import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient;
 import io.unitycatalog.client.ApiClient;
@@ -41,10 +45,13 @@ import io.unitycatalog.client.delta.api.DeltaConfigurationApi;
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.api.DeltaTemporaryCredentialsApi;
 import io.unitycatalog.client.delta.model.DeltaCatalogConfig;
+import io.unitycatalog.client.delta.model.DeltaCreateStagingTableRequest;
 import io.unitycatalog.client.delta.model.DeltaCredentialOperation;
 import io.unitycatalog.client.delta.model.DeltaCredentialsResponse;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.delta.model.DeltaStagingTableResponse;
 import io.unitycatalog.client.delta.model.DeltaStorageCredentialConfig;
+import io.unitycatalog.client.delta.model.DeltaTableType;
 import io.unitycatalog.client.model.ListSchemasResponse;
 import io.unitycatalog.client.model.SchemaInfo;
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs;
@@ -62,6 +69,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 /** Thin wrapper around the official Unity Catalog Java client. */
 final class UnityDeltaClient {
@@ -299,6 +307,154 @@ final class UnityDeltaClient {
             String catalogName, String schemaName, String tableName) {
         return getCredentials(catalogName, schemaName, tableName,
                 DeltaCredentialOperation.READ_WRITE);
+    }
+
+    DeltaStagingTableResponse createStagingTable(
+            String catalogName, String schemaName, String tableName) {
+        negotiateDeltaProtocol(catalogName);
+        try {
+            return deltaTablesApi.createStagingTable(catalogName, schemaName,
+                    new DeltaCreateStagingTableRequest().name(tableName));
+        } catch (ApiException e) {
+            throw requestFailure("create Unity Delta staging table '" + catalogName + "."
+                    + schemaName + "." + tableName + "'", e);
+        }
+    }
+
+    Configuration buildStagingHadoopConfiguration(String location, String stagingTableId,
+            Configuration baseConfiguration) {
+        Configuration configuration = new Configuration(baseConfiguration);
+        String scheme = storageScheme(location);
+        if ("file".equals(scheme)) {
+            return configuration;
+        }
+        try {
+            Map<String, String> credentialProperties = UCCredentialHadoopConfs
+                    .builder(workspaceUri, scheme)
+                    .tokenProvider(tokenProvider)
+                    .apiClient(apiClient)
+                    .enableCredentialRenewal(true)
+                    .enableCredentialScopedFs(true)
+                    .hadoopConf(configuration)
+                    .addAppVersions(APP_VERSIONS)
+                    .buildForStagingTable(stagingTableId, location);
+            credentialProperties.forEach(configuration::set);
+            return configuration;
+        } catch (ApiException e) {
+            throw requestFailure("vend staging credentials for Unity Delta table at '"
+                    + location + "'", e);
+        }
+    }
+
+    void createCatalogManagedTable(DeltaStagingTableResponse staging,
+            String catalogName, String schemaName, String tableName,
+            StructType schema, Map<String, String> requestedProperties,
+            Configuration baseConfiguration) {
+        if (staging == null || staging.getTableId() == null
+                || staging.getLocation() == null || staging.getLocation().isBlank()) {
+            throw new DorisConnectorException(
+                    "Unity Delta staging response is missing table ID or location");
+        }
+        if (staging.getTableType() != null && staging.getTableType() != DeltaTableType.MANAGED) {
+            throw new DorisConnectorException(
+                    "Unity Delta staging endpoint returned a non-managed table");
+        }
+        validateStagingProtocol(staging);
+        Map<String, String> properties = new java.util.LinkedHashMap<>(requestedProperties);
+        if (staging.getRequiredProperties() != null) {
+            for (Map.Entry<String, String> entry : staging.getRequiredProperties().entrySet()) {
+                if (entry.getValue() != null && properties.containsKey(entry.getKey())
+                        && !entry.getValue().equals(properties.get(entry.getKey()))) {
+                    throw new DorisConnectorException(
+                            "Unity Delta required table property conflicts with CREATE request: "
+                                    + entry.getKey());
+                }
+                if (entry.getValue() != null) {
+                    properties.put(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+        Configuration configuration = buildStagingHadoopConfiguration(
+                staging.getLocation(), staging.getTableId().toString(), baseConfiguration);
+        Engine engine = DefaultEngine.create(configuration);
+        try (UCDeltaTokenBasedRestClient catalogClient = new NormalizingUCDeltaTokenBasedRestClient(
+                workspaceUri, tokenProvider, APP_VERSIONS)) {
+            UCTableIdentifier identifier = new UCTableIdentifier(
+                    catalogName, schemaName, tableName);
+            CreateTableTransactionBuilder builder = new NamedUCCatalogManagedClient(
+                    catalogClient, identifier).buildCreateTableTransaction(
+                            staging.getTableId().toString(), staging.getLocation(), schema,
+                            APP_NAME + " native-delta", identifier)
+                    .withTableProperties(properties);
+            new DeltaKernelWriter(engine).commitCreateTable(builder, staging.getLocation());
+        } catch (IOException e) {
+            throw new DorisConnectorException(
+                    "Failed to close Unity Delta create client for '" + catalogName + "."
+                            + schemaName + "." + tableName + "'", e);
+        }
+    }
+
+    /**
+     * Unity client 0.5.0 expects ColumnDef.typeJson to contain a complete struct field, while
+     * Delta Kernel emits the valid type-only JSON form. Normalize only at this SDK boundary.
+     */
+    private static final class NormalizingUCDeltaTokenBasedRestClient
+            extends UCDeltaTokenBasedRestClient {
+        private NormalizingUCDeltaTokenBasedRestClient(String baseUri,
+                TokenProvider tokenProvider, Map<String, String> appVersions) {
+            super(baseUri, tokenProvider, appVersions);
+        }
+
+        @Override
+        public void finalizeCreate(String tableName, String catalogName, String schemaName,
+                String storageLocation, List<UCClient.ColumnDef> columns,
+                Map<String, String> properties) throws CommitFailedException {
+            List<UCClient.ColumnDef> normalized = columns.stream()
+                    .map(NormalizingUCDeltaTokenBasedRestClient::normalizeColumn)
+                    .collect(Collectors.toList());
+            super.finalizeCreate(tableName, catalogName, schemaName, storageLocation,
+                    normalized, properties);
+        }
+
+        private static UCClient.ColumnDef normalizeColumn(UCClient.ColumnDef column) {
+            String typeJson = column.getTypeJson();
+            if (typeJson == null || typeJson.isBlank()
+                    || (typeJson.trim().startsWith("{")
+                    && typeJson.contains("\"name\""))) {
+                return column;
+            }
+            String escapedName = column.getName().replace("\\", "\\\\")
+                    .replace("\"", "\\\"");
+            String fieldJson = "{\"name\":\"" + escapedName + "\",\"type\":"
+                    + typeJson + ",\"nullable\":" + column.isNullable()
+                    + ",\"metadata\":{}}";
+            return new UCClient.ColumnDef(column.getName(), column.getTypeName(),
+                    column.getTypeText(), fieldJson, column.isNullable(), column.getPosition());
+        }
+    }
+
+    private static void validateStagingProtocol(DeltaStagingTableResponse staging) {
+        if (staging.getRequiredProtocol() == null) {
+            throw new DorisConnectorException(
+                    "Unity Delta staging response has no required protocol");
+        }
+        Integer reader = staging.getRequiredProtocol().getMinReaderVersion();
+        Integer writer = staging.getRequiredProtocol().getMinWriterVersion();
+        if (reader == null || writer == null || reader > 3 || writer > 7) {
+            throw new DorisConnectorException(
+                    "Unity Delta staging protocol exceeds Doris native create support");
+        }
+        Set<String> unsupportedWriterFeatures = new HashSet<>();
+        if (staging.getRequiredProtocol().getWriterFeatures() != null) {
+            unsupportedWriterFeatures.addAll(staging.getRequiredProtocol().getWriterFeatures());
+        }
+        unsupportedWriterFeatures.remove("catalogManaged");
+        unsupportedWriterFeatures.remove("vacuumProtocolCheck");
+        if (!unsupportedWriterFeatures.isEmpty()) {
+            throw new DorisConnectorException(
+                    "Unity Delta staging requires unsupported writer features: "
+                            + unsupportedWriterFeatures);
+        }
     }
 
     private DeltaCredentialsResponse getCredentials(

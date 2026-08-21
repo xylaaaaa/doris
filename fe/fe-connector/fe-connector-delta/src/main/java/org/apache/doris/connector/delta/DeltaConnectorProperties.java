@@ -42,6 +42,7 @@ public final class DeltaConnectorProperties {
     public static final long DEFAULT_UNITY_READ_TIMEOUT_MS = 30_000L;
     public static final long DEFAULT_UNITY_CREDENTIAL_MIN_LIFETIME_MS = 60_000L;
     public static final String WRITE_ENABLED = "delta.write.enabled";
+    public static final String CREATE_ENABLED = "delta.create.enabled";
 
     public static String catalogType(java.util.Map<String, String> properties) {
         String configured = properties.get(CATALOG_TYPE);

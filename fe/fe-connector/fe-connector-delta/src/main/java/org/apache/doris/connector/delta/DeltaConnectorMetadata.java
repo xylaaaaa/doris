@@ -168,10 +168,14 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
                 throw new UnsupportedOperationException(
                         "Catalog-managed Delta writes require " + IN_COMMIT_TIMESTAMPS + "=true");
             }
+            Set<String> supportedCatalogManagedWriterFeatures =
+                    Set.of("catalogManaged", "vacuumProtocolCheck");
             if (snapshot.getMinWriterVersion() != 7
-                    || !snapshot.getWriterFeatures().equals(Set.of("catalogManaged"))) {
+                    || !supportedCatalogManagedWriterFeatures.containsAll(
+                    snapshot.getWriterFeatures())) {
                 throw new UnsupportedOperationException(
-                        "The initial catalog-managed Delta writer supports only the catalogManaged "
+                        "The initial catalog-managed Delta writer supports only catalogManaged and "
+                                + "vacuumProtocolCheck "
                                 + "writer protocol; table requires minWriterVersion="
                                 + snapshot.getMinWriterVersion() + ", writerFeatures="
                                 + snapshot.getWriterFeatures());
