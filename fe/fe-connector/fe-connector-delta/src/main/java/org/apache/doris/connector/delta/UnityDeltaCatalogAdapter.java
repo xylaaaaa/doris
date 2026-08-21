@@ -220,14 +220,27 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
     @Override
     public ConnectorInsertHandle beginInsert(DeltaTableHandle tableHandle,
             String applicationId) {
+        return beginWrite(tableHandle, applicationId, false);
+    }
+
+    @Override
+    public ConnectorInsertHandle beginOverwrite(DeltaTableHandle tableHandle,
+            String applicationId) {
+        return beginWrite(tableHandle, applicationId, true);
+    }
+
+    private ConnectorInsertHandle beginWrite(DeltaTableHandle tableHandle,
+            String applicationId, boolean overwrite) {
         if (!tableHandle.isCatalogManaged() && tableHandle.isExternalTable()) {
             DeltaTableMetadata metadata = resolveExistingTable(tableHandle);
             Configuration configuration = client.buildWriteHadoopConfiguration(
                     catalogName, tableHandle.getDatabaseName(), tableHandle.getTableName(),
                     metadata.getLocation(), baseConfiguration);
-            return new DeltaKernelWriter(
-                    io.delta.kernel.defaults.engine.DefaultEngine.create(configuration))
-                    .beginInsert(tableHandle, applicationId);
+            DeltaKernelWriter writer = new DeltaKernelWriter(
+                    io.delta.kernel.defaults.engine.DefaultEngine.create(configuration));
+            return overwrite
+                    ? writer.beginOverwrite(tableHandle, loadSnapshot(tableHandle), applicationId)
+                    : writer.beginInsert(tableHandle, applicationId);
         }
         if (!tableHandle.isCatalogManaged()) {
             throw new UnsupportedOperationException(
@@ -251,14 +264,48 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
                             + "." + tableHandle.getDatabaseName() + "."
                             + tableHandle.getTableName() + "'", e);
         }
-        return new DeltaKernelWriter(engine).beginCatalogManagedInsert(
-                tableHandle, openSnapshot.getSnapshot(), applicationId, openSnapshot);
+        DeltaKernelWriter writer = new DeltaKernelWriter(engine);
+        if (overwrite) {
+            DeltaKernelSnapshot snapshotMetadata;
+            try {
+                snapshotMetadata = new DeltaKernelSnapshotLoader(engine)
+                        .loadCatalogManagedSnapshot(openSnapshot.getSnapshot());
+            } catch (IOException e) {
+                DorisConnectorException failure = new DorisConnectorException(
+                        "Failed to load Unity catalog-managed Delta overwrite snapshot for '"
+                                + catalogName + "." + tableHandle.getDatabaseName() + "."
+                                + tableHandle.getTableName() + "'", e);
+                closeAfterOverwriteBeginFailure(openSnapshot, failure);
+                throw failure;
+            } catch (RuntimeException e) {
+                closeAfterOverwriteBeginFailure(openSnapshot, e);
+                throw e;
+            }
+            return writer.beginCatalogManagedOverwrite(tableHandle,
+                    openSnapshot.getSnapshot(), snapshotMetadata, applicationId, openSnapshot);
+        }
+        return writer.beginCatalogManagedInsert(tableHandle,
+                openSnapshot.getSnapshot(), applicationId, openSnapshot);
     }
 
     @Override
     public boolean supportsInsert() {
         return Boolean.parseBoolean(catalogProperties.getOrDefault(
                 DeltaConnectorProperties.WRITE_ENABLED, "false"));
+    }
+
+    @Override
+    public boolean supportsOverwrite() {
+        return supportsInsert();
+    }
+
+    private static void closeAfterOverwriteBeginFailure(
+            UnityDeltaClient.CatalogManagedSnapshot snapshot, RuntimeException failure) {
+        try {
+            snapshot.close();
+        } catch (IOException closeFailure) {
+            failure.addSuppressed(closeFailure);
+        }
     }
 
     @Override

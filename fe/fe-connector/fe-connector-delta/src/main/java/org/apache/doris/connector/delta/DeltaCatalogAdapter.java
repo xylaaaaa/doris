@@ -101,8 +101,19 @@ public interface DeltaCatalogAdapter {
         return beginInsert(tableHandle);
     }
 
+    /** Starts a full-table overwrite transaction using catalog-specific commit semantics. */
+    default ConnectorInsertHandle beginOverwrite(DeltaTableHandle tableHandle,
+            String applicationId) {
+        throw new UnsupportedOperationException(
+                "This Delta catalog adapter does not support INSERT OVERWRITE");
+    }
+
     /** Whether this adapter can start an append transaction for at least one table. */
     default boolean supportsInsert() {
+        return false;
+    }
+
+    default boolean supportsOverwrite() {
         return false;
     }
 

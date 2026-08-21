@@ -48,6 +48,11 @@ public interface ConnectorWriteOps {
         return false;
     }
 
+    /** Returns {@code true} if this connector can atomically replace a table through INSERT OVERWRITE. */
+    default boolean supportsInsertOverwrite() {
+        return false;
+    }
+
     /** Returns {@code true} if this connector supports DELETE operations. */
     default boolean supportsDelete() {
         return false;
@@ -93,6 +98,14 @@ public interface ConnectorWriteOps {
             ConnectorTableHandle handle,
             List<ConnectorColumn> columns) {
         throw new DorisConnectorException("INSERT not supported");
+    }
+
+    /** Begins a full-table INSERT OVERWRITE operation. */
+    default ConnectorInsertHandle beginInsertOverwrite(
+            ConnectorSession session,
+            ConnectorTableHandle handle,
+            List<ConnectorColumn> columns) {
+        throw new DorisConnectorException("INSERT OVERWRITE not supported");
     }
 
     /**

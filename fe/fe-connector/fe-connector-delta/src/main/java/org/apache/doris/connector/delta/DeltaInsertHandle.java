@@ -22,15 +22,18 @@ import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** FE-owned Delta transaction state for one blind append. */
+/** FE-owned Delta transaction state for one append or full-table overwrite. */
 final class DeltaInsertHandle implements ConnectorInsertHandle {
 
     private final DeltaKernelWriter writer;
     private final Transaction transaction;
     private final Row transactionState;
     private final AutoCloseable resource;
+    private final boolean overwrite;
+    private final List<DeltaRemoveFile> overwriteRemoves;
     private final AtomicBoolean resourceClosed = new AtomicBoolean();
 
     DeltaInsertHandle(DeltaKernelWriter writer, Transaction transaction, Row transactionState) {
@@ -39,10 +42,18 @@ final class DeltaInsertHandle implements ConnectorInsertHandle {
 
     DeltaInsertHandle(DeltaKernelWriter writer, Transaction transaction, Row transactionState,
             AutoCloseable resource) {
+        this(writer, transaction, transactionState, resource, false, List.of());
+    }
+
+    DeltaInsertHandle(DeltaKernelWriter writer, Transaction transaction, Row transactionState,
+            AutoCloseable resource, boolean overwrite,
+            List<DeltaRemoveFile> overwriteRemoves) {
         this.writer = writer;
         this.transaction = transaction;
         this.transactionState = transactionState;
         this.resource = resource;
+        this.overwrite = overwrite;
+        this.overwriteRemoves = List.copyOf(overwriteRemoves);
     }
 
     DeltaKernelWriter getWriter() {
@@ -55,6 +66,14 @@ final class DeltaInsertHandle implements ConnectorInsertHandle {
 
     Row getTransactionState() {
         return transactionState;
+    }
+
+    boolean isOverwrite() {
+        return overwrite;
+    }
+
+    List<DeltaRemoveFile> getOverwriteRemoves() {
+        return overwriteRemoves;
     }
 
     void closeResource() throws Exception {

@@ -19,6 +19,7 @@ package org.apache.doris.datasource;
 
 import org.apache.doris.catalog.TableIf.TableType;
 import org.apache.doris.connector.api.Connector;
+import org.apache.doris.connector.api.ConnectorCapability;
 import org.apache.doris.connector.api.ConnectorColumn;
 import org.apache.doris.connector.api.ConnectorMetadata;
 import org.apache.doris.connector.api.ConnectorSession;
@@ -35,6 +36,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Tests that {@link PluginDrivenExternalTable} returns the correct legacy engine
@@ -119,6 +121,20 @@ public class PluginDrivenExternalTableEngineTest {
         Assertions.assertTrue(schema.isPresent(), "Schema should be present when a table handle exists");
         Assertions.assertEquals("mapped_id", schema.get().getSchema().get(0).getName(),
                 "Mapped remote column names should be reflected in Doris schema metadata");
+    }
+
+    @Test
+    public void testInsertOverwriteCapabilityIsConnectorControlled() {
+        Connector supported = createMockConnector(true, false);
+        Mockito.when(supported.getCapabilities()).thenReturn(
+                Set.of(ConnectorCapability.SUPPORTS_INSERT_OVERWRITE));
+        Connector unsupported = createMockConnector(true, false);
+        Mockito.when(unsupported.getCapabilities()).thenReturn(Set.of());
+
+        Assertions.assertTrue(createTableWithCatalogType("delta", supported)
+                .supportsInsertOverwrite());
+        Assertions.assertFalse(createTableWithCatalogType("jdbc", unsupported)
+                .supportsInsertOverwrite());
     }
 
     // -------- Helpers --------

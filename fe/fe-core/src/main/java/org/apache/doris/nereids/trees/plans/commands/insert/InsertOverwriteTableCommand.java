@@ -26,6 +26,7 @@ import org.apache.doris.common.ErrorCode;
 import org.apache.doris.common.ErrorReport;
 import org.apache.doris.common.UserException;
 import org.apache.doris.common.util.InternalDatabaseUtil;
+import org.apache.doris.datasource.PluginDrivenExternalTable;
 import org.apache.doris.datasource.doris.RemoteDorisExternalTable;
 import org.apache.doris.datasource.doris.RemoteOlapTable;
 import org.apache.doris.datasource.hive.HMSExternalTable;
@@ -39,6 +40,7 @@ import org.apache.doris.mysql.privilege.PrivPredicate;
 import org.apache.doris.nereids.CascadesContext;
 import org.apache.doris.nereids.NereidsPlanner;
 import org.apache.doris.nereids.StatementContext;
+import org.apache.doris.nereids.analyzer.UnboundConnectorTableSink;
 import org.apache.doris.nereids.analyzer.UnboundHiveTableSink;
 import org.apache.doris.nereids.analyzer.UnboundIcebergTableSink;
 import org.apache.doris.nereids.analyzer.UnboundMaxComputeTableSink;
@@ -140,7 +142,8 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
         TableIf targetTableIf = InsertUtils.getTargetTable(originLogicalQuery, ctx);
         // check allow insert overwrite
         if (!allowInsertOverwrite(targetTableIf)) {
-            String errMsg = "insert into overwrite only support OLAP/Remote OLAP and HMS/ICEBERG table."
+            String errMsg = "insert overwrite only supports OLAP, Remote OLAP, HMS, Iceberg, "
+                    + "MaxCompute, and capable plugin connector tables."
                     + " But current table type is " + targetTableIf.getType();
             LOG.error(errMsg);
             throw new AnalysisException(errMsg);
@@ -317,7 +320,9 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
         } else {
             return targetTable instanceof HMSExternalTable
                     || targetTable instanceof IcebergExternalTable
-                    || targetTable instanceof MaxComputeExternalTable;
+                    || targetTable instanceof MaxComputeExternalTable
+                    || (targetTable instanceof PluginDrivenExternalTable
+                        && ((PluginDrivenExternalTable) targetTable).supportsInsertOverwrite());
         }
     }
 
@@ -416,10 +421,29 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
                 mcCtx.setStaticPartitionSpec(staticSpec);
             }
             insertCtx = mcCtx;
+        } else if (logicalQuery instanceof UnboundConnectorTableSink) {
+            UnboundConnectorTableSink<?> sink = (UnboundConnectorTableSink<?>) logicalQuery;
+            requireFullTableConnectorOverwrite(sink.getPartitions());
+            copySink = (UnboundLogicalSink<?>) UnboundTableSinkCreator.createUnboundTableSink(
+                    sink.getNameParts(), sink.getColNames(), sink.getHints(), false,
+                    sink.getPartitions(), false, TPartialUpdateNewRowPolicy.APPEND,
+                    sink.getDMLCommandType(), (LogicalPlan) sink.child(0));
+            PluginDrivenInsertCommandContext connectorCtx =
+                    new PluginDrivenInsertCommandContext();
+            connectorCtx.setOverwrite(true);
+            insertCtx = connectorCtx;
         } else {
             throw new UserException("Current catalog does not support insert overwrite yet.");
         }
         runInsertCommand(copySink, insertCtx, ctx, executor);
+    }
+
+    static void requireFullTableConnectorOverwrite(List<String> partitions)
+            throws UserException {
+        if (!partitions.isEmpty()) {
+            throw new UserException(
+                    "Plugin connector INSERT OVERWRITE currently supports full tables only");
+        }
     }
 
     /**

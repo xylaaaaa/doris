@@ -567,6 +567,38 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
+    public void testCatalogManagedOverwriteUsesUnityCatalogCommitter() throws Exception {
+        catalogManagedLocation = copyCatalogManagedFixture().toUri().toString();
+        UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
+        UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
+                "main", client, new org.apache.hadoop.conf.Configuration(), Map.of(
+                        DeltaConnectorProperties.WRITE_ENABLED, "true"));
+        DeltaTableHandle handle = adapter.getTableHandle("default", "catalog_managed")
+                .orElseThrow();
+        Path dataFile = Paths.get(URI.create(catalogManagedLocation))
+                .resolve("part-overwrite.parquet");
+        Files.write(dataFile, new byte[] {9, 8, 7});
+
+        DeltaInsertHandle overwrite = (DeltaInsertHandle) adapter.beginOverwrite(
+                handle, "doris-catalog-managed-overwrite");
+        overwrite.getWriter().finishInsert(overwrite, List.of(new ConnectorFileCommitInfo(
+                dataFile.toUri().toString(), 1, Files.size(dataFile),
+                Files.getLastModifiedTime(dataFile).toMillis(), Map.of())));
+
+        Path stagedCommit;
+        try (java.util.stream.Stream<Path> stagedCommits = Files.list(
+                Paths.get(URI.create(catalogManagedLocation)).resolve("_delta_log/_staged_commits"))) {
+            stagedCommit = stagedCommits.filter(
+                    path -> path.getFileName().toString().startsWith("00000000000000000003."))
+                    .findFirst().orElseThrow();
+        }
+        String commit = Files.readString(stagedCommit);
+        Assertions.assertEquals(2, countOccurrences(commit, "\"remove\""));
+        Assertions.assertEquals(1, countOccurrences(commit, "\"add\""));
+        Assertions.assertTrue(commit.contains("part-overwrite.parquet"));
+    }
+
+    @Test
     public void testRejectRecreatedUnityTableWhilePlanningPinnedHandle() {
         UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
         UnityDeltaCatalogAdapter adapter = new UnityDeltaCatalogAdapter(
@@ -816,6 +848,16 @@ public class UnityDeltaCatalogAdapterTest {
                 + (1700000000000L + version) + ",\"file-name\":\"" + fileName + "\","
                 + "\"file-size\":" + fileSize + ",\"file-modification-timestamp\":"
                 + (1700000000000L + version) + "}";
+    }
+
+    private static int countOccurrences(String value, String needle) {
+        int count = 0;
+        int offset = 0;
+        while ((offset = value.indexOf(needle, offset)) >= 0) {
+            count++;
+            offset += needle.length();
+        }
+        return count;
     }
 
     private static DeltaCredentialsResponse credentials(

@@ -58,6 +58,7 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
     private transient ConnectorSession connectorSession;
     private transient ConnectorWriteOps writeOps;
     private transient ConnectorWriteType resolvedWriteType;
+    private final boolean overwrite;
 
     /**
      * constructor
@@ -67,6 +68,11 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
                                       Optional<InsertCommandContext> insertCtx,
                                       boolean emptyInsert, long jobId) {
         super(ctx, table, labelName, planner, insertCtx, emptyInsert, jobId);
+        this.overwrite = insertCtx
+                .filter(BaseExternalTableInsertCommandContext.class::isInstance)
+                .map(BaseExternalTableInsertCommandContext.class::cast)
+                .map(BaseExternalTableInsertCommandContext::isOverwrite)
+                .orElse(false);
     }
 
     @Override
@@ -77,8 +83,9 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
         connectorSession = catalog.buildConnectorSession();
         ConnectorMetadata metadata = connector.getMetadata(connectorSession);
         writeOps = metadata;
-        if (!writeOps.supportsInsert()) {
-            throw new UserException("Connector does not support INSERT for table: "
+        if (overwrite ? !writeOps.supportsInsertOverwrite() : !writeOps.supportsInsert()) {
+            throw new UserException("Connector does not support "
+                    + (overwrite ? "INSERT OVERWRITE" : "INSERT") + " for table: "
                     + table.getName());
         }
 
@@ -101,8 +108,11 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
                 connectorSession, tableHandle.get(), columns).getWriteType();
 
         // Begin insert
-        insertHandle = writeOps.beginInsert(connectorSession, tableHandle.get(), columns);
-        LOG.info("Plugin-driven insert started for table {}.{}, txnId={}",
+        insertHandle = overwrite
+                ? writeOps.beginInsertOverwrite(connectorSession, tableHandle.get(), columns)
+                : writeOps.beginInsert(connectorSession, tableHandle.get(), columns);
+        LOG.info("Plugin-driven {} started for table {}.{}, txnId={}",
+                overwrite ? "insert overwrite" : "insert",
                 remoteDbName, remoteTableName, txnId);
     }
 

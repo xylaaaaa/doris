@@ -69,6 +69,15 @@ suite("test_native_delta_path", "p0,external") {
         )
     """
     sql "INSERT INTO ${createCatalogName}.`default`.created_events VALUES (1, 'created')"
+    sql """
+        INSERT OVERWRITE TABLE ${createCatalogName}.`default`.created_events
+        SELECT 2, 'overwritten'
+    """
+    order_qt_created_after_overwrite """
+        SELECT id, payload
+        FROM ${createCatalogName}.`default`.created_events
+        ORDER BY id
+    """
 
     def sourceTable = new File(dorisHome,
             "samples/datalake/deltalake_and_kudu/data/customer").toPath()

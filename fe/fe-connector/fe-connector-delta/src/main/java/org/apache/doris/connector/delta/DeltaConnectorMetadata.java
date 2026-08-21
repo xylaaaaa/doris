@@ -149,6 +149,11 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
     }
 
     @Override
+    public boolean supportsInsertOverwrite() {
+        return writeEnabled && (writer != null || catalogAdapter.supportsOverwrite());
+    }
+
+    @Override
     public ConnectorWriteConfig getWriteConfig(ConnectorSession session,
             ConnectorTableHandle handle, List<ConnectorColumn> columns) {
         requireWriteEnabled();
@@ -212,6 +217,19 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
             return writer.beginInsert(deltaHandle, applicationId);
         }
         return catalogAdapter.beginInsert(deltaHandle, applicationId);
+    }
+
+    @Override
+    public ConnectorInsertHandle beginInsertOverwrite(ConnectorSession session,
+            ConnectorTableHandle handle, List<ConnectorColumn> columns) {
+        requireWriteEnabled();
+        DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;
+        DeltaKernelSnapshot snapshot = catalogAdapter.loadSnapshot(deltaHandle);
+        String applicationId = session == null ? null : session.getQueryId();
+        if (writer != null) {
+            return writer.beginOverwrite(deltaHandle, snapshot, applicationId);
+        }
+        return catalogAdapter.beginOverwrite(deltaHandle, applicationId);
     }
 
     @Override

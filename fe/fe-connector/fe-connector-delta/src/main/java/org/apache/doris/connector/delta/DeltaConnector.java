@@ -111,6 +111,9 @@ public final class DeltaConnector implements Connector {
         if (Boolean.parseBoolean(properties.getOrDefault(
                 DeltaConnectorProperties.WRITE_ENABLED, "false"))) {
             capabilities.add(ConnectorCapability.SUPPORTS_INSERT);
+            if (metadata.supportsInsertOverwrite()) {
+                capabilities.add(ConnectorCapability.SUPPORTS_INSERT_OVERWRITE);
+            }
             if (catalogAdapter.supportsCreateTable()) {
                 capabilities.add(ConnectorCapability.SUPPORTS_CREATE_TABLE);
             }

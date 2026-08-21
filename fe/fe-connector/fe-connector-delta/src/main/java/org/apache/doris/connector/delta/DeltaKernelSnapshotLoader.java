@@ -102,6 +102,7 @@ public class DeltaKernelSnapshotLoader {
         Protocol protocol = ((SnapshotImpl) snapshot).getProtocol();
         Scan scan = snapshot.getScanBuilder().build();
         List<DeltaScanFile> activeFiles = new ArrayList<>();
+        List<DeltaRemoveFile> activeRemoveFiles = new ArrayList<>();
         List<String> partitionColumns = snapshot.getPartitionColumnNames();
 
         try (CloseableIterator<FilteredColumnarBatch> batches = scan.getScanFiles(engine)) {
@@ -120,23 +121,31 @@ public class DeltaKernelSnapshotLoader {
                             throw new IllegalArgumentException(
                                     "Delta data file has an invalid size: " + file.getPath());
                         }
+                        Map<String, String> partitionValues =
+                                InternalScanFileUtils.getPartitionValues(row);
                         activeFiles.add(new DeltaScanFile(
                                 file.getPath(), file.getSize(), file.getModificationTime(),
-                                orderedPartitionValues(row, partitionColumns),
+                                orderedPartitionValues(partitionValues, partitionColumns),
                                 toDeletionVector(deletionVector), snapshot.getPath()));
+                        activeRemoveFiles.add(new DeltaRemoveFile(
+                                InternalScanFileUtils.getFilePath(row), file.getSize(),
+                                partitionValues, deletionVector,
+                                InternalScanFileUtils.getBaseRowId(row),
+                                InternalScanFileUtils.getDefaultRowCommitVersion(row)));
                     }
                 }
             }
         }
         activeFiles.sort(Comparator.comparing(DeltaScanFile::getPath));
+        activeRemoveFiles.sort(Comparator.comparing(DeltaRemoveFile::getPath));
         return new DeltaKernelSnapshot(snapshot.getPath(), snapshot.getVersion(),
                 snapshot.getSchema(), partitionColumns, snapshot.getTableProperties(),
-                protocol.getMinWriterVersion(), protocol.getWriterFeatures(), activeFiles);
+                protocol.getMinWriterVersion(), protocol.getWriterFeatures(), activeFiles,
+                activeRemoveFiles);
     }
 
-    private static Map<String, String> orderedPartitionValues(Row row,
+    private static Map<String, String> orderedPartitionValues(Map<String, String> values,
             List<String> partitionColumns) {
-        Map<String, String> values = InternalScanFileUtils.getPartitionValues(row);
         Map<String, String> orderedValues = new LinkedHashMap<>();
         for (String column : partitionColumns) {
             if (!values.containsKey(column)) {

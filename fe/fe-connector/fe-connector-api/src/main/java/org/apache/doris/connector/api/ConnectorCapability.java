@@ -56,5 +56,6 @@ public enum ConnectorCapability {
      * {@link ConnectorTableOps#getColumnsFromQuery} to provide column metadata
      * for arbitrary SQL queries passed through to the remote data source.</p>
      */
-    SUPPORTS_PASSTHROUGH_QUERY
+    SUPPORTS_PASSTHROUGH_QUERY,
+    SUPPORTS_INSERT_OVERWRITE
 }

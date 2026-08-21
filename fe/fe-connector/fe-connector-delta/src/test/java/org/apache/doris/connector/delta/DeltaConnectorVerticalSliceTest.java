@@ -26,6 +26,7 @@ import org.apache.doris.connector.api.ConnectorTableSchema;
 import org.apache.doris.connector.api.ConnectorTableSnapshot;
 import org.apache.doris.connector.api.ConnectorType;
 import org.apache.doris.connector.api.DorisConnectorException;
+import org.apache.doris.connector.api.handle.ConnectorInsertHandle;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 import org.apache.doris.connector.api.scan.ConnectorScanRange;
 import org.apache.doris.connector.api.write.ConnectorWriteConfig;
@@ -133,6 +134,8 @@ public class DeltaConnectorVerticalSliceTest {
 
         Assertions.assertTrue(connector.getCapabilities().contains(
                 ConnectorCapability.SUPPORTS_CREATE_TABLE));
+        Assertions.assertTrue(connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_INSERT_OVERWRITE));
         Assertions.assertTrue(connector.testConnection(null).isSuccess());
         Assertions.assertTrue(connector.getMetadata(null)
                 .listTableNames(null, "default").isEmpty());
@@ -169,6 +172,8 @@ public class DeltaConnectorVerticalSliceTest {
                 readOnlyProperties, connectorContext());
         Assertions.assertFalse(readOnly.getCapabilities().contains(
                 ConnectorCapability.SUPPORTS_CREATE_TABLE));
+        Assertions.assertFalse(readOnly.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_INSERT_OVERWRITE));
         Assertions.assertFalse(readOnly.testConnection(null).isSuccess());
     }
 
@@ -524,6 +529,10 @@ public class DeltaConnectorVerticalSliceTest {
         Assertions.assertThrows(UnsupportedOperationException.class,
                 () -> metadata.getWriteConfig(null, handle,
                         List.of(wrongType, columns.get(1))));
+        ConnectorInsertHandle overwrite = metadata.beginInsertOverwrite(
+                null, handle, columns);
+        Assertions.assertTrue(((DeltaInsertHandle) overwrite).isOverwrite());
+        metadata.abortInsert(null, overwrite);
     }
 
     @Test

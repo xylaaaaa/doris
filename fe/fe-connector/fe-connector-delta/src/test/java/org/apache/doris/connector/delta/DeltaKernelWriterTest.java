@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -125,6 +126,82 @@ public class DeltaKernelWriterTest {
     }
 
     @Test
+    public void testOverwriteAtomicallyReplacesActiveFiles() throws Exception {
+        Path tableDirectory = copyPathTableFixture();
+        Path replacement = tableDirectory.resolve("part-replacement.parquet");
+        Files.write(replacement, new byte[] {7, 8, 9});
+        Engine engine = DefaultEngine.create(new Configuration());
+        DeltaKernelWriter writer = new DeltaKernelWriter(engine);
+        DeltaKernelSnapshot before = new DeltaKernelSnapshotLoader(engine)
+                .loadLatest(tableDirectory.toUri().toString());
+        DeltaTableHandle tableHandle = new DeltaTableHandle(
+                "default", "events", tableDirectory.toUri().toString(), before.getVersion());
+
+        DeltaInsertHandle overwrite = writer.beginOverwrite(
+                tableHandle, before, "doris-overwrite-1");
+        writer.finishInsert(overwrite, List.of(commitInfo(replacement, Map.of(), Set.of())));
+
+        DeltaKernelSnapshot after = new DeltaKernelSnapshotLoader(engine)
+                .loadLatest(tableDirectory.toUri().toString());
+        Assertions.assertEquals(2, after.getVersion());
+        Assertions.assertEquals(List.of("part-replacement.parquet"), after.getActiveFiles().stream()
+                .map(file -> Paths.get(URI.create(file.getPath())).getFileName().toString())
+                .collect(java.util.stream.Collectors.toList()));
+        String commit = Files.readString(tableDirectory.resolve(
+                "_delta_log/00000000000000000002.json"));
+        Assertions.assertEquals(2, countOccurrences(commit, "\"remove\""));
+        Assertions.assertEquals(1, countOccurrences(commit, "\"add\""));
+    }
+
+    @Test
+    public void testOverwriteCanReplaceTableWithNoFiles() throws Exception {
+        Path tableDirectory = copyPathTableFixture();
+        Engine engine = DefaultEngine.create(new Configuration());
+        DeltaKernelWriter writer = new DeltaKernelWriter(engine);
+        DeltaKernelSnapshot before = new DeltaKernelSnapshotLoader(engine)
+                .loadLatest(tableDirectory.toUri().toString());
+        DeltaTableHandle tableHandle = new DeltaTableHandle(
+                "default", "events", tableDirectory.toUri().toString(), before.getVersion());
+
+        writer.finishInsert(writer.beginOverwrite(tableHandle, before, null), List.of());
+
+        DeltaKernelSnapshot after = new DeltaKernelSnapshotLoader(engine)
+                .loadLatest(tableDirectory.toUri().toString());
+        Assertions.assertEquals(2, after.getVersion());
+        Assertions.assertTrue(after.getActiveFiles().isEmpty());
+    }
+
+    @Test
+    public void testOverwriteRejectsConcurrentAppend() throws Exception {
+        Path tableDirectory = copyPathTableFixture();
+        Path concurrentFile = tableDirectory.resolve("part-concurrent.parquet");
+        Path replacement = tableDirectory.resolve("part-stale-overwrite.parquet");
+        Files.write(concurrentFile, new byte[] {1});
+        Files.write(replacement, new byte[] {2});
+        Engine engine = DefaultEngine.create(new Configuration());
+        DeltaKernelWriter writer = new DeltaKernelWriter(engine);
+        DeltaKernelSnapshot before = new DeltaKernelSnapshotLoader(engine)
+                .loadLatest(tableDirectory.toUri().toString());
+        DeltaTableHandle tableHandle = new DeltaTableHandle(
+                "default", "events", tableDirectory.toUri().toString(), before.getVersion());
+        DeltaInsertHandle overwrite = writer.beginOverwrite(tableHandle, before, null);
+
+        writer.finishInsert(writer.beginInsert(tableHandle),
+                List.of(commitInfo(concurrentFile, Map.of(), Set.of())));
+
+        Assertions.assertThrows(RuntimeException.class,
+                () -> writer.finishInsert(overwrite,
+                        List.of(commitInfo(replacement, Map.of(), Set.of()))));
+        DeltaKernelSnapshot after = new DeltaKernelSnapshotLoader(engine)
+                .loadLatest(tableDirectory.toUri().toString());
+        Assertions.assertEquals(2, after.getVersion());
+        Assertions.assertTrue(after.getActiveFiles().stream()
+                .anyMatch(file -> file.getPath().endsWith("part-concurrent.parquet")));
+        Assertions.assertFalse(after.getActiveFiles().stream()
+                .anyMatch(file -> file.getPath().endsWith("part-stale-overwrite.parquet")));
+    }
+
+    @Test
     public void testPartitionedAppendPreservesOrderAndNullValues() throws Exception {
         Path tableDirectory = copyFixture(
                 "delta/partitioned_table/_delta_log",
@@ -180,6 +257,16 @@ public class DeltaKernelWriterTest {
             Set<String> nullPartitionColumns) throws Exception {
         return new ConnectorFileCommitInfo(file.toUri().toString(), 1, Files.size(file),
                 Files.getLastModifiedTime(file).toMillis(), partitionValues, nullPartitionColumns);
+    }
+
+    private static int countOccurrences(String value, String needle) {
+        int count = 0;
+        int offset = 0;
+        while ((offset = value.indexOf(needle, offset)) >= 0) {
+            count++;
+            offset += needle.length();
+        }
+        return count;
     }
 
     private Path copyFixture(String resource, List<String> fileNames) throws Exception {

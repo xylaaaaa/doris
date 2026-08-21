@@ -136,6 +136,16 @@ final class DeltaKernelWriter {
     }
 
     DeltaInsertHandle beginInsert(DeltaTableHandle tableHandle, String applicationId) {
+        return beginInsert(tableHandle, applicationId, false, null);
+    }
+
+    DeltaInsertHandle beginOverwrite(DeltaTableHandle tableHandle,
+            DeltaKernelSnapshot snapshot, String applicationId) {
+        return beginInsert(tableHandle, applicationId, true, snapshot);
+    }
+
+    private DeltaInsertHandle beginInsert(DeltaTableHandle tableHandle, String applicationId,
+            boolean overwrite, DeltaKernelSnapshot snapshot) {
         if (!tableHandle.isExternalTable()) {
             throw new UnsupportedOperationException(
                     "Unity managed Delta writes require catalog commits");
@@ -143,24 +153,40 @@ final class DeltaKernelWriter {
         TransactionBuilder transactionBuilder = Table.forPath(
                 engine, tableHandle.getTablePath())
                 .createTransactionBuilder(engine, ENGINE_INFO, Operation.WRITE)
-                .withMaxRetries(MAX_COMMIT_RETRIES);
+                .withMaxRetries(overwrite ? 0 : MAX_COMMIT_RETRIES);
         if (applicationId != null && !applicationId.isBlank()) {
             transactionBuilder.withTransactionId(engine, applicationId, 0L);
         }
         Transaction transaction = transactionBuilder.build(engine);
-        return createInsertHandle(transaction, tableHandle.getSnapshotVersion(), null);
+        return createInsertHandle(transaction, tableHandle.getSnapshotVersion(), null,
+                overwrite, snapshot);
     }
 
     DeltaInsertHandle beginCatalogManagedInsert(DeltaTableHandle tableHandle, Snapshot snapshot,
             String applicationId, AutoCloseable resource) {
+        return beginCatalogManagedInsert(tableHandle, snapshot, applicationId, resource,
+                false, null);
+    }
+
+    DeltaInsertHandle beginCatalogManagedOverwrite(DeltaTableHandle tableHandle, Snapshot snapshot,
+            DeltaKernelSnapshot snapshotMetadata, String applicationId,
+            AutoCloseable resource) {
+        return beginCatalogManagedInsert(tableHandle, snapshot, applicationId, resource,
+                true, snapshotMetadata);
+    }
+
+    private DeltaInsertHandle beginCatalogManagedInsert(DeltaTableHandle tableHandle,
+            Snapshot snapshot, String applicationId, AutoCloseable resource,
+            boolean overwrite, DeltaKernelSnapshot snapshotMetadata) {
         try {
             UpdateTableTransactionBuilder transactionBuilder = snapshot.buildUpdateTableTransaction(
-                    ENGINE_INFO, Operation.WRITE).withMaxRetries(MAX_COMMIT_RETRIES);
+                    ENGINE_INFO, Operation.WRITE)
+                    .withMaxRetries(overwrite ? 0 : MAX_COMMIT_RETRIES);
             if (applicationId != null && !applicationId.isBlank()) {
                 transactionBuilder.withTransactionId(applicationId, 0L);
             }
             return createInsertHandle(transactionBuilder.build(engine),
-                    tableHandle.getSnapshotVersion(), resource);
+                    tableHandle.getSnapshotVersion(), resource, overwrite, snapshotMetadata);
         } catch (RuntimeException e) {
             closeResourceAfterBeginFailure(resource, e);
             throw e;
@@ -168,27 +194,35 @@ final class DeltaKernelWriter {
     }
 
     private DeltaInsertHandle createInsertHandle(Transaction transaction, long expectedVersion,
-            AutoCloseable resource) {
+            AutoCloseable resource, boolean overwrite, DeltaKernelSnapshot snapshot) {
         if (transaction.getReadTableVersion() != expectedVersion) {
             throw new DorisConnectorException("Delta table changed while preparing INSERT: expected version "
                     + expectedVersion + " but transaction read version "
                     + transaction.getReadTableVersion());
         }
         Row transactionState = transaction.getTransactionState(engine);
-        return new DeltaInsertHandle(this, transaction, transactionState, resource);
+        List<DeltaRemoveFile> removes = overwrite
+                ? snapshot.getActiveRemoveFiles() : List.of();
+        return new DeltaInsertHandle(this, transaction, transactionState, resource,
+                overwrite, removes);
     }
 
     void finishInsert(DeltaInsertHandle insertHandle,
             Collection<ConnectorFileCommitInfo> files) {
         try {
-            if (files.isEmpty()) {
+            if (files.isEmpty() && !insertHandle.isOverwrite()) {
                 return;
             }
             Transaction transaction = insertHandle.getTransaction();
             List<String> partitionColumns = transaction.getPartitionColumns(engine);
             StructType schema = transaction.getSchema(engine);
             Set<String> expectedPartitionColumns = Set.copyOf(partitionColumns);
-            List<Row> appendActions = new ArrayList<>(files.size());
+            List<Row> actions = new ArrayList<>(
+                    insertHandle.getOverwriteRemoves().size() + files.size());
+            long deletionTimestamp = System.currentTimeMillis();
+            for (DeltaRemoveFile remove : insertHandle.getOverwriteRemoves()) {
+                actions.add(remove.toSingleAction(deletionTimestamp));
+            }
             for (ConnectorFileCommitInfo file : files) {
                 if (!file.getPartitionValues().keySet().equals(expectedPartitionColumns)) {
                     throw new DorisConnectorException(
@@ -202,12 +236,15 @@ final class DeltaKernelWriter {
                         engine, insertHandle.getTransactionState(), partitionValues);
                 DataFileStatus dataFile = new DataFileStatus(file.getFilePath(), file.getFileSize(),
                         file.getModificationTime(), Optional.empty());
-                appendActions.addAll(generateAppendActions(
+                actions.addAll(generateAppendActions(
                         insertHandle.getTransactionState(), writeContext, dataFile));
+            }
+            if (actions.isEmpty()) {
+                return;
             }
 
             try (CloseableIterable<Row> actionIterable = CloseableIterable.inMemoryIterable(
-                    closeableIterator(appendActions.iterator()))) {
+                    closeableIterator(actions.iterator()))) {
                 TransactionCommitResult result = transaction.commit(engine, actionIterable);
                 runPostCommitHooks(result);
             } catch (IOException e) {

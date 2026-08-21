@@ -76,6 +76,17 @@ public class PluginDrivenExternalTable extends ExternalTable {
                 && connector.getCapabilities().contains(ConnectorCapability.SUPPORTS_PARALLEL_WRITE);
     }
 
+    /** Returns whether the connector can atomically replace all table data. */
+    public boolean supportsInsertOverwrite() {
+        if (!(catalog instanceof PluginDrivenExternalCatalog)) {
+            return false;
+        }
+        Connector connector = ((PluginDrivenExternalCatalog) catalog).getConnector();
+        return connector != null
+                && connector.getCapabilities().contains(
+                        ConnectorCapability.SUPPORTS_INSERT_OVERWRITE);
+    }
+
     @Override
     public boolean supportsExternalMetadataPreload() {
         if (!(catalog instanceof PluginDrivenExternalCatalog)) {

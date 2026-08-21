@@ -17,6 +17,9 @@ c_comment	text	Yes	false	\N
 2	Customer#000000002
 3	Customer#000000003
 
+-- !created_after_overwrite --
+2	overwritten
+
 -- !count_after_insert --
 18752
 

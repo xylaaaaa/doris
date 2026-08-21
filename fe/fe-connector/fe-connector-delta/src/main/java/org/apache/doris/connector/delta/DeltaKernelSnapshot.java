@@ -35,10 +35,19 @@ public class DeltaKernelSnapshot {
     private final int minWriterVersion;
     private final Set<String> writerFeatures;
     private final List<DeltaScanFile> activeFiles;
+    private final List<DeltaRemoveFile> activeRemoveFiles;
 
     public DeltaKernelSnapshot(String tablePath, long version, StructType schema,
             List<String> partitionColumnNames, Map<String, String> tableProperties,
             int minWriterVersion, Set<String> writerFeatures, List<DeltaScanFile> activeFiles) {
+        this(tablePath, version, schema, partitionColumnNames, tableProperties,
+                minWriterVersion, writerFeatures, activeFiles, List.of());
+    }
+
+    DeltaKernelSnapshot(String tablePath, long version, StructType schema,
+            List<String> partitionColumnNames, Map<String, String> tableProperties,
+            int minWriterVersion, Set<String> writerFeatures, List<DeltaScanFile> activeFiles,
+            List<DeltaRemoveFile> activeRemoveFiles) {
         this.tablePath = tablePath;
         this.version = version;
         this.schema = schema;
@@ -47,6 +56,7 @@ public class DeltaKernelSnapshot {
         this.minWriterVersion = minWriterVersion;
         this.writerFeatures = Set.copyOf(writerFeatures);
         this.activeFiles = List.copyOf(activeFiles);
+        this.activeRemoveFiles = List.copyOf(activeRemoveFiles);
     }
 
     public String getTablePath() {
@@ -79,5 +89,9 @@ public class DeltaKernelSnapshot {
 
     public List<DeltaScanFile> getActiveFiles() {
         return activeFiles;
+    }
+
+    List<DeltaRemoveFile> getActiveRemoveFiles() {
+        return activeRemoveFiles;
     }
 }
