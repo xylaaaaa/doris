@@ -31,6 +31,7 @@ final class DeltaStorageProperties {
     static final String S3_TOKEN = "AWS_TOKEN";
     static final String S3_TOKEN_EXPIRATION_TIME_MS = "AWS_TOKEN_EXPIRATION_TIME_MS";
     static final String USE_PATH_STYLE = "use_path_style";
+    static final String GCS_PROVIDER = "GCP";
 
     private DeltaStorageProperties() {
     }
@@ -130,6 +131,7 @@ final class DeltaStorageProperties {
                 || key.startsWith("cos.") || key.startsWith("oss.") || key.startsWith("obs.")
                 || key.startsWith("azure.") || key.startsWith("adls.")
                 || key.startsWith("gcs.") || key.startsWith("google.") || key.equals("uri")
+                || key.startsWith("http.")
                 || key.equals(S3_TOKEN_EXPIRATION_TIME_MS);
     }
 

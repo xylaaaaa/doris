@@ -219,11 +219,31 @@ public class UnityDeltaCatalogAdapterTest {
         DeltaCredentialsResponse gcsResponse = credentials(
                 "gs://delta-bucket/tables/events",
                 new DeltaStorageCredentialConfig().gcsOauthToken("gcs-oauth"));
-        UnsupportedOperationException exception = Assertions.assertThrows(
-                UnsupportedOperationException.class,
+        Map<String, String> gcs = UnityDeltaStorageProperties.toBackendProperties(
+                "gs://delta-bucket/tables/events", gcsResponse, Map.of());
+        Assertions.assertEquals("GCP", gcs.get("provider"));
+        Assertions.assertEquals("https://storage.googleapis.com", gcs.get("uri"));
+        Assertions.assertEquals("Bearer gcs-oauth", gcs.get("http.header.Authorization"));
+        Assertions.assertTrue(Long.parseLong(gcs.get("AWS_TOKEN_EXPIRATION_TIME_MS"))
+                > System.currentTimeMillis());
+        Assertions.assertEquals("https://storage.googleapis.com/delta-bucket/tables/events",
+                UnityDeltaStorageProperties.toBackendPath(
+                        "gs://delta-bucket/tables/events", gcs));
+        Assertions.assertEquals("https://gcs.example.test/base/delta-bucket/tables/events",
+                UnityDeltaStorageProperties.toBackendPath(
+                        "gs://delta-bucket/tables/events",
+                        Map.of("gcs.endpoint", "https://gcs.example.test/base/")));
+        Assertions.assertThrows(IllegalArgumentException.class,
+                () -> UnityDeltaStorageProperties.toBackendPath(
+                        "gs://delta-bucket/tables/events",
+                        Map.of("gcs.endpoint", "http://gcs.example.test")));
+        Assertions.assertThrows(UnsupportedOperationException.class,
                 () -> UnityDeltaStorageProperties.toBackendProperties(
-                        "gs://delta-bucket/tables/events", gcsResponse, Map.of()));
-        Assertions.assertTrue(exception.getMessage().contains("GCS OAuth"));
+                        "gs://delta-bucket/tables/events", credentials(
+                                "gs://delta-bucket/tables/events",
+                                new DeltaStorageCredentialConfig().gcsOauthToken("gcs-oauth"),
+                                DeltaCredentialOperation.READ_WRITE), Map.of(),
+                        DeltaCredentialOperation.READ_WRITE));
     }
 
     @Test
@@ -248,6 +268,15 @@ public class UnityDeltaCatalogAdapterTest {
                         "abfss://container@account.dfs.core.windows.net/tables/events",
                         incompleteAzure, Map.of()));
         Assertions.assertTrue(azureException.getMessage().contains("Azure SAS token"));
+
+        DeltaCredentialsResponse incompleteGcs = credentials(
+                "gs://delta-bucket/tables/events",
+                new DeltaStorageCredentialConfig().gcsOauthToken(""));
+        IllegalArgumentException gcsException = Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> UnityDeltaStorageProperties.toBackendProperties(
+                        "gs://delta-bucket/tables/events", incompleteGcs, Map.of()));
+        Assertions.assertTrue(gcsException.getMessage().contains("GCS OAuth token"));
     }
 
     @Test
@@ -604,10 +633,15 @@ public class UnityDeltaCatalogAdapterTest {
 
     private static DeltaCredentialsResponse credentials(
             String prefix, DeltaStorageCredentialConfig config) {
+        return credentials(prefix, config, DeltaCredentialOperation.READ);
+    }
+
+    private static DeltaCredentialsResponse credentials(
+            String prefix, DeltaStorageCredentialConfig config, DeltaCredentialOperation operation) {
         return new DeltaCredentialsResponse().addStorageCredentialsItem(
                 new DeltaStorageCredential()
                         .prefix(prefix)
-                        .operation(DeltaCredentialOperation.READ)
+                        .operation(operation)
                         .config(config)
                         .expirationTimeMs(System.currentTimeMillis() + 3600000));
     }

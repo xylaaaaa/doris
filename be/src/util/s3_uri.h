@@ -34,6 +34,7 @@ namespace doris {
 // 3. abfss://container@account.dfs.core.windows.net/path/to/file.txt
 //      bucket: container
 //      key: path/to/file.txt
+// 4. gs://bucket_name/path/to/file.txt (GCS S3-compatible access)
 class S3URI {
 public:
     S3URI(const std::string& location) : _location(location) {}
@@ -47,6 +48,7 @@ private:
     static const std::string _SCHEME_S3;
     static const std::string _SCHEME_S3A;
     static const std::string _SCHEME_S3N;
+    static const std::string _SCHEME_GS;
     static const std::string _SCHEME_ABFS;
     static const std::string _SCHEME_ABFSS;
     static const std::string _SCHEME_WASB;

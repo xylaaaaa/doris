@@ -150,6 +150,9 @@ public class DeltaConnectorVerticalSliceTest {
 
     @Test
     public void testStoragePropertiesFeedKernelAndNativeBackend() {
+        Assertions.assertDoesNotThrow(() -> Class.forName(
+                "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem"));
+
         Map<String, String> properties = new LinkedHashMap<>();
         properties.put("AWS_ENDPOINT", "https://storage.example.test");
         properties.put("AWS_REGION", "us-west-2");

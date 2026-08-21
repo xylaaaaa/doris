@@ -27,6 +27,7 @@ namespace doris {
 const std::string S3URI::_SCHEME_S3 = "s3";
 const std::string S3URI::_SCHEME_S3A = "s3a";
 const std::string S3URI::_SCHEME_S3N = "s3n";
+const std::string S3URI::_SCHEME_GS = "gs";
 const std::string S3URI::_SCHEME_ABFS = "abfs";
 const std::string S3URI::_SCHEME_ABFSS = "abfss";
 const std::string S3URI::_SCHEME_WASB = "wasb";
@@ -51,7 +52,7 @@ Status S3URI::parse() {
     std::string rest;
     if (scheme_split.size() == 2) {
         if (scheme_split[0] == _SCHEME_S3 || scheme_split[0] == _SCHEME_S3A ||
-            scheme_split[0] == _SCHEME_S3N) {
+            scheme_split[0] == _SCHEME_S3N || scheme_split[0] == _SCHEME_GS) {
             // has scheme, eg: s3://bucket1/path/to/file.txt
             rest = scheme_split[1];
             std::vector<std::string> authority_split =

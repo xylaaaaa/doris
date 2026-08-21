@@ -138,6 +138,16 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
     }
 
     @Override
+    public String getBackendScanPath(DeltaTableHandle tableHandle, DeltaScanFile file) {
+        if (file.getDeletionVector() != null
+                && UnityDeltaStorageProperties.isGcsPath(file.getPath())) {
+            throw new DorisConnectorException(
+                    "Native Unity GCS Delta scans with deletion vectors are not supported");
+        }
+        return UnityDeltaStorageProperties.toBackendPath(file.getPath(), catalogProperties);
+    }
+
+    @Override
     public Map<String, String> getBackendStorageProperties(DeltaTableHandle tableHandle) {
         DeltaTableMetadata metadata = resolveExistingTable(tableHandle);
         if ("file".equalsIgnoreCase(URI.create(metadata.getLocation()).getScheme())) {

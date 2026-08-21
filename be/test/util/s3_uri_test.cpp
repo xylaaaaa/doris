@@ -50,6 +50,11 @@ TEST_F(S3URITest, S3CompatibleSchemes) {
     EXPECT_TRUE(s3n.parse());
     EXPECT_EQ("bucket", s3n.get_bucket());
     EXPECT_EQ("another/file.parquet", s3n.get_key());
+
+    S3URI gcs("gs://bucket/gcs/file.parquet");
+    EXPECT_TRUE(gcs.parse());
+    EXPECT_EQ("bucket", gcs.get_bucket());
+    EXPECT_EQ("gcs/file.parquet", gcs.get_key());
 }
 
 TEST_F(S3URITest, PathLocationParsing) {

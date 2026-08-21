@@ -55,6 +55,7 @@ public class DatasourcePrintableMap<K, V> extends BasicPrintableMap<K, V> {
         SENSITIVE_KEY.add("bos_secret_accesskey");
         SENSITIVE_KEY.add("jdbc.password");
         SENSITIVE_KEY.add("elasticsearch.password");
+        SENSITIVE_KEY.add("http.header.Authorization");
         SENSITIVE_KEY.add("unity.token");
         SENSITIVE_KEY.add("unity.oauth.client-secret");
         SENSITIVE_KEY.addAll(Arrays.asList(

@@ -59,12 +59,14 @@ public final class DeltaScanPlanProvider implements ConnectorScanPlanProvider {
     public List<ConnectorScanRange> planScan(ConnectorSession session,
             ConnectorTableHandle handle, List<ConnectorColumnHandle> columns,
             Optional<ConnectorExpression> filter) {
-        DeltaKernelSnapshot snapshot = catalogAdapter.loadSnapshot((DeltaTableHandle) handle);
+        DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;
+        DeltaKernelSnapshot snapshot = catalogAdapter.loadSnapshot(deltaHandle);
         List<ConnectorScanRange> ranges = new ArrayList<>(snapshot.getActiveFiles().size());
         for (DeltaScanFile file : snapshot.getActiveFiles()) {
             if (filter.isEmpty() || DeltaPartitionPruner.mayMatch(
                     file.getPartitionValues(), filter.get())) {
-                ranges.add(new DeltaScanRange(file));
+                ranges.add(new DeltaScanRange(file,
+                        catalogAdapter.getBackendScanPath(deltaHandle, file)));
             }
         }
         return ranges;

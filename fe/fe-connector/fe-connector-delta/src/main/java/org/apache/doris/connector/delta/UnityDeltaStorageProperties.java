@@ -121,9 +121,88 @@ final class UnityDeltaStorageProperties {
                     String.valueOf(credential.getExpirationTimeMs()));
             return properties;
         }
+        if (temporary.getGcpOauthToken() != null) {
+            String gcsOauthToken = temporary.getGcpOauthToken().getOauthToken();
+            if (gcsOauthToken == null || gcsOauthToken.trim().isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Unity Catalog returned an empty GCS OAuth token");
+            }
+            if (expectedOperation == DeltaCredentialOperation.READ_WRITE) {
+                throw new UnsupportedOperationException(
+                        "Native Unity GCS Delta writes are not supported");
+            }
+            return gcsProperties(locationUri, gcsOauthToken, credential, catalogProperties);
+        }
         throw new UnsupportedOperationException(
-                "Unity Catalog returned a GCS OAuth credential, but Doris BE does not yet "
-                        + "support OAuth-authenticated native GCS scans");
+                "Unity Catalog returned an unsupported temporary credential for " + location);
+    }
+
+    /**
+     * Native BE has no GCS OAuth client. Use its range-capable HTTP reader against the GCS
+     * HTTPS object endpoint while FE Delta Kernel continues to use the official gs filesystem.
+     */
+    private static Map<String, String> gcsProperties(URI locationUri, String oauthToken,
+            DeltaStorageCredential credential, Map<String, String> catalogProperties) {
+        if (!"gs".equalsIgnoreCase(locationUri.getScheme())) {
+            throw new IllegalArgumentException(
+                    "Unity Catalog returned a GCS credential for a non-GCS Delta location");
+        }
+        String endpoint = gcsEndpoint(catalogProperties);
+        String bucket = locationUri.getHost();
+        if (bucket == null || bucket.isEmpty()) {
+            throw new IllegalArgumentException("GCS Delta location does not contain a bucket");
+        }
+        Map<String, String> properties = new LinkedHashMap<>();
+        properties.put("provider", DeltaStorageProperties.GCS_PROVIDER);
+        properties.put("uri", stripTrailingSlash(endpoint));
+        properties.put("http.header.Authorization", "Bearer " + oauthToken);
+        properties.put(DeltaStorageProperties.S3_TOKEN_EXPIRATION_TIME_MS,
+                String.valueOf(credential.getExpirationTimeMs()));
+        return properties;
+    }
+
+    static String toBackendPath(String path, Map<String, String> catalogProperties) {
+        URI location = URI.create(path);
+        if (!"gs".equalsIgnoreCase(location.getScheme())) {
+            return path;
+        }
+        String endpoint = gcsEndpoint(catalogProperties);
+        String bucket = location.getHost();
+        if (bucket == null || bucket.isEmpty()) {
+            throw new IllegalArgumentException("GCS Delta path does not contain a bucket");
+        }
+        return stripTrailingSlash(endpoint) + "/" + bucket
+                + (location.getRawPath() == null ? "" : location.getRawPath());
+    }
+
+    static boolean isGcsPath(String path) {
+        return "gs".equalsIgnoreCase(URI.create(path).getScheme());
+    }
+
+    private static String gcsEndpoint(Map<String, String> catalogProperties) {
+        String endpoint = DeltaStorageProperties.firstNonBlank(catalogProperties,
+                "gcs.endpoint", "gs.endpoint");
+        if (endpoint == null) {
+            endpoint = "https://storage.googleapis.com";
+        }
+        URI endpointUri = URI.create(endpoint);
+        if (!"https".equalsIgnoreCase(endpointUri.getScheme())) {
+            throw new IllegalArgumentException("GCS OAuth endpoint must use HTTPS");
+        }
+        if (endpointUri.getHost() == null || endpointUri.getHost().isEmpty()
+                || endpointUri.getUserInfo() != null || endpointUri.getQuery() != null
+                || endpointUri.getFragment() != null) {
+            throw new IllegalArgumentException("GCS endpoint must contain only a host and path");
+        }
+        return endpoint;
+    }
+
+    private static String stripTrailingSlash(String value) {
+        String result = value;
+        while (result.endsWith("/") && result.length() > 1) {
+            result = result.substring(0, result.length() - 1);
+        }
+        return result;
     }
 
     /** The BE Azure object client uses Blob APIs; map an ABFS DFS host to its Blob endpoint. */
