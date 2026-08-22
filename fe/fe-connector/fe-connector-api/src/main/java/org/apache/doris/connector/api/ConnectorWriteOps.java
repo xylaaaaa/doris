@@ -58,6 +58,11 @@ public interface ConnectorWriteOps {
         return false;
     }
 
+    /** Returns {@code true} if this connector supports UPDATE operations. */
+    default boolean supportsUpdate() {
+        return false;
+    }
+
     /** Returns {@code true} if this connector supports MERGE (INSERT + DELETE) operations. */
     default boolean supportsMerge() {
         return false;

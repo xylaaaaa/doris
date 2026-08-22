@@ -97,6 +97,16 @@ public class PluginDrivenExternalTable extends ExternalTable {
                 && connector.getCapabilities().contains(ConnectorCapability.SUPPORTS_DELETE);
     }
 
+    /** Returns whether the connector supports row updates. */
+    public boolean supportsUpdate() {
+        if (!(catalog instanceof PluginDrivenExternalCatalog)) {
+            return false;
+        }
+        Connector connector = ((PluginDrivenExternalCatalog) catalog).getConnector();
+        return connector != null
+                && connector.getCapabilities().contains(ConnectorCapability.SUPPORTS_UPDATE);
+    }
+
     @Override
     public boolean supportsExternalMetadataPreload() {
         if (!(catalog instanceof PluginDrivenExternalCatalog)) {

@@ -25,6 +25,7 @@ import org.apache.doris.catalog.OlapTable;
 import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.TableIf;
 import org.apache.doris.common.util.Util;
+import org.apache.doris.datasource.PluginDrivenExternalTable;
 import org.apache.doris.datasource.iceberg.IcebergExternalTable;
 import org.apache.doris.nereids.analyzer.UnboundAlias;
 import org.apache.doris.nereids.analyzer.UnboundSlot;
@@ -116,6 +117,17 @@ public class UpdateCommand extends Command implements ForwardWithSync, Explainab
                     nameParts, tableAlias, assignments, logicalQuery,
                     deleteCtx);
             icebergUpdateCommand.run(ctx, executor);
+            return;
+        }
+
+        if (table instanceof PluginDrivenExternalTable) {
+            PluginDrivenExternalTable connectorTable = (PluginDrivenExternalTable) table;
+            if (!connectorTable.supportsUpdate()) {
+                throw new AnalysisException("Connector does not support UPDATE for table: "
+                        + connectorTable.getName());
+            }
+            new ConnectorUpdateCommand(
+                    nameParts, tableAlias, assignments, logicalQuery, cte).run(ctx, executor);
             return;
         }
 
@@ -287,6 +299,15 @@ public class UpdateCommand extends Command implements ForwardWithSync, Explainab
             IcebergUpdateCommand icebergUpdateCommand = new IcebergUpdateCommand(
                     nameParts, tableAlias, assignments, logicalQuery, deleteCtx);
             return icebergUpdateCommand.getExplainPlan(ctx);
+        }
+        if (table instanceof PluginDrivenExternalTable) {
+            PluginDrivenExternalTable connectorTable = (PluginDrivenExternalTable) table;
+            if (!connectorTable.supportsUpdate()) {
+                throw new AnalysisException("Connector does not support UPDATE for table: "
+                        + connectorTable.getName());
+            }
+            return new ConnectorUpdateCommand(
+                    nameParts, tableAlias, assignments, logicalQuery, cte).getExplainPlan(ctx);
         }
         return completeQueryPlan(ctx, logicalQuery);
     }

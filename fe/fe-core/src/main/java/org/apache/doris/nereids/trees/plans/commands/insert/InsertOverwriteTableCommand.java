@@ -94,6 +94,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -118,6 +119,7 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
     private Optional<String> branchName;
     private Optional<Plan> lineagePlan = Optional.empty();
     private Optional<ConnectorTableHandle> connectorOverwriteBaseHandle = Optional.empty();
+    private OptionalLong connectorAffectedRowCount = OptionalLong.empty();
 
     /**
      * constructor
@@ -443,6 +445,9 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
             connectorCtx.setReportRemovedRows(
                     sink.getDMLCommandType() == DMLCommandType.DELETE);
             connectorOverwriteBaseHandle.ifPresent(connectorCtx::setOverwriteBaseHandle);
+            if (connectorAffectedRowCount.isPresent()) {
+                connectorCtx.setAffectedRowCount(connectorAffectedRowCount.getAsLong());
+            }
             insertCtx = connectorCtx;
         } else {
             throw new UserException("Current catalog does not support insert overwrite yet.");
@@ -462,8 +467,7 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
             NereidsPlanner planner, TableIf targetTable) {
         if (!(targetTable instanceof PluginDrivenExternalTable)
                 || !(getLogicalQuery() instanceof UnboundConnectorTableSink)
-                || ((UnboundConnectorTableSink<?>) getLogicalQuery()).getDMLCommandType()
-                        != DMLCommandType.DELETE) {
+                || !isCopyOnWriteDml((UnboundConnectorTableSink<?>) getLogicalQuery())) {
             return Optional.empty();
         }
         PluginDrivenExternalTable connectorTable = (PluginDrivenExternalTable) targetTable;
@@ -472,10 +476,16 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
         Connector connector = catalog.getConnector();
         ConnectorSession session = catalog.buildConnectorSession();
         ConnectorMetadata metadata = connector.getMetadata(session);
-        ConnectorTableHandle targetHandle = metadata.getTableHandle(session,
+        ConnectorTableHandle currentTargetHandle = metadata.getTableHandle(session,
                 connectorTable.getRemoteDbName(), connectorTable.getRemoteName())
-                .orElseThrow(() -> new AnalysisException("Table not found while planning DELETE: "
+                .orElseThrow(() -> new AnalysisException("Table not found while planning copy-on-write DML: "
                         + connectorTable.getRemoteDbName() + "." + connectorTable.getRemoteName()));
+        ConnectorTableHandle baseHandle = connectorOverwriteBaseHandle
+                .orElse(currentTargetHandle);
+        if (!currentTargetHandle.equals(baseHandle)) {
+            throw new AnalysisException(
+                    "Connector table changed before planning copy-on-write DML");
+        }
         List<ConnectorTableHandle> sourceHandles = planner.getScanNodes().stream()
                 .filter(PluginDrivenScanNode.class::isInstance)
                 .map(PluginDrivenScanNode.class::cast)
@@ -483,7 +493,12 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
                 .map(PluginDrivenScanNode::getTableHandle)
                 .collect(java.util.stream.Collectors.toList());
         return Optional.of(requireConsistentConnectorOverwriteSnapshot(
-                targetHandle, sourceHandles));
+                baseHandle, sourceHandles));
+    }
+
+    private static boolean isCopyOnWriteDml(UnboundConnectorTableSink<?> sink) {
+        return sink.getDMLCommandType() == DMLCommandType.DELETE
+                || sink.getDMLCommandType() == DMLCommandType.UPDATE;
     }
 
     static ConnectorTableHandle requireConsistentConnectorOverwriteSnapshot(
@@ -495,6 +510,14 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
             }
         }
         return targetHandle;
+    }
+
+    public void setConnectorOverwriteBaseHandle(ConnectorTableHandle baseHandle) {
+        this.connectorOverwriteBaseHandle = Optional.of(baseHandle);
+    }
+
+    public void setConnectorAffectedRowCount(long affectedRowCount) {
+        this.connectorAffectedRowCount = OptionalLong.of(affectedRowCount);
     }
 
     /**

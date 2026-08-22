@@ -20,6 +20,7 @@ package org.apache.doris.connector.delta;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 
 import java.util.Objects;
+import java.util.OptionalLong;
 
 /** Serializable coordinates for a Delta table pinned to one snapshot version. */
 public final class DeltaTableHandle implements ConnectorTableHandle {
@@ -89,6 +90,11 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
 
     public long getSnapshotVersion() {
         return snapshotVersion;
+    }
+
+    @Override
+    public OptionalLong getCopyOnWriteSnapshotVersion() {
+        return OptionalLong.of(snapshotVersion);
     }
 
     public String getCatalogTableId() {

@@ -20,7 +20,6 @@ package org.apache.doris.nereids.trees.plans.commands;
 import org.apache.doris.analysis.StmtType;
 import org.apache.doris.catalog.TableIf;
 import org.apache.doris.datasource.PluginDrivenExternalTable;
-import org.apache.doris.mysql.privilege.AccessControllerManager;
 import org.apache.doris.nereids.analyzer.UnboundTableSinkCreator;
 import org.apache.doris.nereids.exceptions.AnalysisException;
 import org.apache.doris.nereids.trees.expressions.IsTrue;
@@ -64,14 +63,14 @@ public final class ConnectorDeleteCommand extends Command implements ForwardWith
     @Override
     public void run(ConnectContext ctx, StmtExecutor executor) throws Exception {
         PluginDrivenExternalTable table = requireDeleteTable(ctx);
-        requireUnrestrictedSource(ctx, table);
+        ConnectorCopyOnWriteUtils.requireUnrestrictedSource(ctx, table);
         buildOverwriteCommand().run(ctx, executor);
     }
 
     @Override
     public Plan getExplainPlan(ConnectContext ctx) {
         PluginDrivenExternalTable table = requireDeleteTable(ctx);
-        requireUnrestrictedSource(ctx, table);
+        ConnectorCopyOnWriteUtils.requireUnrestrictedSource(ctx, table);
         return buildOverwriteCommand().getExplainPlan(ctx);
     }
 
@@ -88,30 +87,6 @@ public final class ConnectorDeleteCommand extends Command implements ForwardWith
                     + connectorTable.getName());
         }
         return connectorTable;
-    }
-
-    private static void requireUnrestrictedSource(
-            ConnectContext ctx, PluginDrivenExternalTable table) {
-        if (ctx.getCurrentUserIdentity().isRootUser()
-                || ctx.getCurrentUserIdentity().isAdminUser()) {
-            return;
-        }
-        AccessControllerManager accessManager = ctx.getEnv().getAccessManager();
-        String catalogName = table.getDatabase().getCatalog().getName();
-        String databaseName = table.getDatabase().getFullName();
-        String tableName = table.getName();
-        if (!accessManager.evalRowFilterPolicies(ctx.getCurrentUserIdentity(),
-                catalogName, databaseName, tableName).isEmpty()) {
-            throw new AnalysisException(
-                    "Connector copy-on-write DELETE does not support row filter policies");
-        }
-        boolean hasDataMask = table.getBaseSchema(true).stream().anyMatch(column ->
-                accessManager.evalDataMaskPolicy(ctx.getCurrentUserIdentity(), catalogName,
-                        databaseName, tableName, column.getName()).isPresent());
-        if (hasDataMask) {
-            throw new AnalysisException(
-                    "Connector copy-on-write DELETE does not support data masking policies");
-        }
     }
 
     private InsertOverwriteTableCommand buildOverwriteCommand() {

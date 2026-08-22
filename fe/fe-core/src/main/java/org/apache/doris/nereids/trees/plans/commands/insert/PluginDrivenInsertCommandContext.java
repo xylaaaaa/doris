@@ -20,6 +20,7 @@ package org.apache.doris.nereids.trees.plans.commands.insert;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 
 import java.util.Optional;
+import java.util.OptionalLong;
 
 /**
  * Insert command context for plugin-driven connector catalogs.
@@ -29,6 +30,7 @@ import java.util.Optional;
 public class PluginDrivenInsertCommandContext extends BaseExternalTableInsertCommandContext {
     private Optional<ConnectorTableHandle> overwriteBaseHandle = Optional.empty();
     private boolean reportRemovedRows;
+    private OptionalLong affectedRowCount = OptionalLong.empty();
 
     public Optional<ConnectorTableHandle> getOverwriteBaseHandle() {
         return overwriteBaseHandle;
@@ -44,5 +46,13 @@ public class PluginDrivenInsertCommandContext extends BaseExternalTableInsertCom
 
     public void setReportRemovedRows(boolean reportRemovedRows) {
         this.reportRemovedRows = reportRemovedRows;
+    }
+
+    public OptionalLong getAffectedRowCount() {
+        return affectedRowCount;
+    }
+
+    public void setAffectedRowCount(long affectedRowCount) {
+        this.affectedRowCount = OptionalLong.of(affectedRowCount);
     }
 }

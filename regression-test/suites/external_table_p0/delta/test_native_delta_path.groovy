@@ -96,6 +96,34 @@ suite("test_native_delta_path", "p0,external") {
         SELECT COUNT(*)
         FROM ${createCatalogName}.`default`.created_events
     """
+    sql """
+        INSERT INTO ${createCatalogName}.`default`.created_events VALUES
+        (10, 'alpha'), (11, 'beta'), (12, NULL)
+    """
+    order_qt_updated_matching """
+        UPDATE ${createCatalogName}.`default`.created_events AS e
+        SET e.id = e.id + 100, e.payload = concat(e.payload, '-u')
+        WHERE e.id = 10
+    """
+    order_qt_updated_null """
+        UPDATE ${createCatalogName}.`default`.created_events
+        SET payload = 'null-updated'
+        WHERE payload IS NULL
+    """
+    order_qt_updated_none """
+        UPDATE ${createCatalogName}.`default`.created_events
+        SET payload = 'missing'
+        WHERE id = 99
+    """
+    order_qt_updated_all """
+        UPDATE ${createCatalogName}.`default`.created_events
+        SET id = id + 1000
+    """
+    order_qt_created_after_update """
+        SELECT id, payload
+        FROM ${createCatalogName}.`default`.created_events
+        ORDER BY id
+    """
 
     def sourceTable = new File(dorisHome,
             "samples/datalake/deltalake_and_kudu/data/customer").toPath()

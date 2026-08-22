@@ -159,6 +159,11 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
     }
 
     @Override
+    public boolean supportsUpdate() {
+        return supportsInsertOverwrite();
+    }
+
+    @Override
     public ConnectorWriteConfig getWriteConfig(ConnectorSession session,
             ConnectorTableHandle handle, List<ConnectorColumn> columns) {
         requireWriteEnabled();

@@ -61,6 +61,7 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
     private transient ConnectorWriteType resolvedWriteType;
     private final boolean overwrite;
     private final boolean reportRemovedRows;
+    private final OptionalLong explicitAffectedRowCount;
 
     /**
      * constructor
@@ -80,6 +81,11 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
                 .map(PluginDrivenInsertCommandContext.class::cast)
                 .map(PluginDrivenInsertCommandContext::isReportRemovedRows)
                 .orElse(false);
+        this.explicitAffectedRowCount = insertCtx
+                .filter(PluginDrivenInsertCommandContext.class::isInstance)
+                .map(PluginDrivenInsertCommandContext.class::cast)
+                .map(PluginDrivenInsertCommandContext::getAffectedRowCount)
+                .orElse(OptionalLong.empty());
     }
 
     @Override
@@ -158,6 +164,8 @@ public class PluginDrivenInsertExecutor extends BaseExternalTableInsertExecutor 
             }
             if (removedRowCount.isPresent()) {
                 loadedRows = removedRowCount.getAsLong();
+            } else if (explicitAffectedRowCount.isPresent()) {
+                loadedRows = explicitAffectedRowCount.getAsLong();
             }
         }
     }

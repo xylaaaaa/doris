@@ -138,6 +138,8 @@ public class DeltaConnectorVerticalSliceTest {
                 ConnectorCapability.SUPPORTS_INSERT_OVERWRITE));
         Assertions.assertTrue(connector.getCapabilities().contains(
                 ConnectorCapability.SUPPORTS_DELETE));
+        Assertions.assertTrue(connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_UPDATE));
         Assertions.assertTrue(connector.testConnection(null).isSuccess());
         Assertions.assertTrue(connector.getMetadata(null)
                 .listTableNames(null, "default").isEmpty());
@@ -178,6 +180,8 @@ public class DeltaConnectorVerticalSliceTest {
                 ConnectorCapability.SUPPORTS_INSERT_OVERWRITE));
         Assertions.assertFalse(readOnly.getCapabilities().contains(
                 ConnectorCapability.SUPPORTS_DELETE));
+        Assertions.assertFalse(readOnly.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_UPDATE));
         Assertions.assertFalse(readOnly.testConnection(null).isSuccess());
     }
 
