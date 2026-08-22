@@ -603,6 +603,11 @@ final class UnityDeltaClient {
                 && !"EXTERNAL".equalsIgnoreCase(tableType))) {
             return false;
         }
+        // The native Parquet scan does not evaluate Unity cross-engine ABAC policies yet.
+        // Keep policy-bearing tables out of discovery instead of exposing unfiltered data.
+        if (hasPolicy(table, "row_filter", "row-filter", "column_masks", "column-masks")) {
+            return false;
+        }
         JsonNode capabilities = table.get("manifest_capabilities");
         if (capabilities == null) {
             capabilities = table.get("manifest-capabilities");
@@ -612,6 +617,18 @@ final class UnityDeltaClient {
         }
         Set<String> capabilityNames = capabilityNames(capabilities);
         return capabilityNames.contains("HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT");
+    }
+
+    private static boolean hasPolicy(JsonNode table, String... fieldNames) {
+        for (String fieldName : fieldNames) {
+            JsonNode policy = table.get(fieldName);
+            if (policy != null && !policy.isNull()
+                    && !(policy.isObject() && policy.isEmpty())
+                    && !(policy.isArray() && policy.isEmpty())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String textValue(JsonNode node, String fieldName) {

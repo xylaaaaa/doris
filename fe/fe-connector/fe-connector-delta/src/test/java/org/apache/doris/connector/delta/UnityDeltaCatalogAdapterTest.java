@@ -120,8 +120,10 @@ public class UnityDeltaCatalogAdapterTest {
         Assertions.assertEquals(List.of("default"),
                 connector.getMetadata(null).listDatabaseNames(null));
         Assertions.assertEquals(List.of("events", "catalog_managed", "propertyless",
-                        "missing_type"),
+                "missing_type"),
                 connector.getMetadata(null).listTableNames(null, "default"));
+        Assertions.assertTrue(connector.getMetadata(null)
+                .getTableHandle(null, "default", "policy_table").isEmpty());
         Assertions.assertTrue(connector.getMetadata(null)
                 .getTableHandle(null, "default", "blocked").isEmpty());
         Assertions.assertTrue(connector.getMetadata(null)
@@ -827,6 +829,11 @@ public class UnityDeltaCatalogAdapterTest {
                     + "{\"name\":\"missing_type\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
                     + "\"data_source_format\":\"DELTA\","
+                    + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]},"
+                    + "{\"name\":\"policy_table\",\"catalog_name\":\"main\","
+                    + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
+                    + "\"data_source_format\":\"DELTA\","
+                    + "\"row_filter\":{\"expression\":\"id > 0\"},"
                     + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]},"
                     + "{\"name\":\"raw\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
