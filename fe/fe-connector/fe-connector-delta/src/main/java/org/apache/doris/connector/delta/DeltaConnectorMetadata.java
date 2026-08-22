@@ -179,6 +179,11 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
     }
 
     @Override
+    public boolean supportsTruncateTable() {
+        return supportsInsertOverwrite();
+    }
+
+    @Override
     public ConnectorWriteConfig getWriteConfig(ConnectorSession session,
             ConnectorTableHandle handle, List<ConnectorColumn> columns) {
         requireWriteEnabled();
@@ -272,6 +277,20 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
     public void abortInsert(ConnectorSession session, ConnectorInsertHandle handle) {
         if (handle instanceof DeltaInsertHandle) {
             ((DeltaInsertHandle) handle).getWriter().abortInsert((DeltaInsertHandle) handle);
+        }
+    }
+
+    @Override
+    public void truncateTable(ConnectorSession session, ConnectorTableHandle handle) {
+        requireWriteEnabled();
+        DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;
+        requireExternalWriteCapability(deltaHandle);
+        ConnectorInsertHandle overwrite = beginInsertOverwrite(session, handle, List.of());
+        try {
+            finishFileInsert(session, overwrite, List.of());
+        } catch (RuntimeException e) {
+            abortInsert(session, overwrite);
+            throw e;
         }
     }
 

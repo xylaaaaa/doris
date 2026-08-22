@@ -68,6 +68,11 @@ public interface ConnectorWriteOps {
         return false;
     }
 
+    /** Returns {@code true} if this connector can atomically truncate a full table. */
+    default boolean supportsTruncateTable() {
+        return false;
+    }
+
     // ──────────────────── Write Configuration ────────────────────
 
     /**
@@ -149,6 +154,11 @@ public interface ConnectorWriteOps {
     default void abortInsert(ConnectorSession session,
             ConnectorInsertHandle handle) {
         // default: no-op — connector may not require explicit cleanup
+    }
+
+    /** Atomically removes every row from a table without dropping its catalog registration. */
+    default void truncateTable(ConnectorSession session, ConnectorTableHandle handle) {
+        throw new DorisConnectorException("TRUNCATE TABLE not supported");
     }
 
     // ──────────────────── DELETE ────────────────────

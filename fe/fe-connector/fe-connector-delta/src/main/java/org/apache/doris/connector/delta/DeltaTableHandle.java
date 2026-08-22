@@ -171,6 +171,7 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
     public String toString() {
         return "DeltaTableHandle{" + databaseName + "." + tableName
                 + ", path=" + tablePath + ", version=" + snapshotVersion
-                + ", catalogManaged=" + catalogManaged + ", external=" + externalTable + "}";
+                + ", catalogManaged=" + catalogManaged + ", external=" + externalTable
+                + ", externalWrite=" + externalWriteSupported + "}";
     }
 }

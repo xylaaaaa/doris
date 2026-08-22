@@ -123,6 +123,9 @@ public final class DeltaConnector implements Connector {
             if (metadata.supportsMerge()) {
                 capabilities.add(ConnectorCapability.SUPPORTS_MERGE);
             }
+            if (metadata.supportsTruncateTable()) {
+                capabilities.add(ConnectorCapability.SUPPORTS_TRUNCATE_TABLE);
+            }
             if (catalogAdapter.supportsCreateTable()) {
                 capabilities.add(ConnectorCapability.SUPPORTS_CREATE_TABLE);
             }

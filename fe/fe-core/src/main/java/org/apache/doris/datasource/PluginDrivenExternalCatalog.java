@@ -20,6 +20,7 @@ package org.apache.doris.datasource;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.TableIf;
+import org.apache.doris.catalog.info.PartitionNamesInfo;
 import org.apache.doris.common.DdlException;
 import org.apache.doris.connector.ConnectorFactory;
 import org.apache.doris.connector.ConnectorSessionBuilder;
@@ -37,6 +38,7 @@ import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 import org.apache.doris.datasource.property.metastore.MetastoreProperties;
 import org.apache.doris.nereids.trees.plans.commands.info.CreateTableInfo;
 import org.apache.doris.persist.DropInfo;
+import org.apache.doris.persist.TruncateTableInfo;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.transaction.PluginDrivenTransactionManager;
 
@@ -345,6 +347,61 @@ public class PluginDrivenExternalCatalog extends ExternalCatalog {
     @Override
     public void replayDropTable(String dbName, String tblName) {
         getDbForReplay(dbName).ifPresent(database -> database.unregisterTable(tblName));
+    }
+
+    @Override
+    public void truncateTable(String dbName, String tableName,
+            PartitionNamesInfo partitionNamesInfo, boolean forceDrop,
+            String rawTruncateSql) throws DdlException {
+        if (partitionNamesInfo != null) {
+            throw new DdlException(
+                    "Plugin connector TRUNCATE TABLE supports full tables only");
+        }
+        truncateTableFromConnector(dbName, tableName);
+        long updateTime = System.currentTimeMillis();
+        Env.getCurrentEnv().getEditLog().logTruncateTable(
+                new TruncateTableInfo(getName(), dbName, tableName, null, updateTime));
+    }
+
+    void truncateTableFromConnector(String dbName, String tableName) throws DdlException {
+        makeSureInitialized();
+        if (!connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_TRUNCATE_TABLE)) {
+            throw new DdlException(
+                    "Truncate table is not supported for catalog: " + getName());
+        }
+        ExternalDatabase<?> database = getDbNullable(dbName);
+        if (database == null) {
+            throw new DdlException("Database does not exist: " + dbName);
+        }
+        TableIf localTable = database.getTableNullable(tableName);
+        if (localTable == null) {
+            throw new DdlException(
+                    "Table does not exist: " + dbName + "." + tableName);
+        }
+        PluginDrivenExternalTable connectorTable =
+                (PluginDrivenExternalTable) localTable;
+        ConnectorSession session = buildConnectorSession();
+        ConnectorMetadata metadata = connector.getMetadata(session);
+        Optional<ConnectorTableHandle> remoteHandle = metadata.getTableHandle(session,
+                connectorTable.getRemoteDbName(), connectorTable.getRemoteName());
+        if (!remoteHandle.isPresent()) {
+            throw new DdlException("Remote table does not exist: "
+                    + connectorTable.getRemoteDbName() + "."
+                    + connectorTable.getRemoteName());
+        }
+        try {
+            metadata.truncateTable(session, remoteHandle.get());
+        } catch (RuntimeException e) {
+            throw new DdlException(e.getMessage(), e);
+        }
+        database.unregisterTable(tableName);
+    }
+
+    @Override
+    public void replayTruncateTable(TruncateTableInfo info) {
+        getDbForReplay(info.getDb()).ifPresent(
+                database -> database.unregisterTable(info.getTable()));
     }
 
     @Override
