@@ -125,6 +125,8 @@ public class UnityDeltaCatalogAdapterTest {
         Assertions.assertTrue(connector.getMetadata(null)
                 .getTableHandle(null, "default", "policy_table").isEmpty());
         Assertions.assertTrue(connector.getMetadata(null)
+                .getTableHandle(null, "default", "masked_table").isEmpty());
+        Assertions.assertTrue(connector.getMetadata(null)
                 .getTableHandle(null, "default", "blocked").isEmpty());
         Assertions.assertTrue(connector.getMetadata(null)
                 .getTableHandle(null, "default", "missing_capabilities").isEmpty());
@@ -834,6 +836,11 @@ public class UnityDeltaCatalogAdapterTest {
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
                     + "\"data_source_format\":\"DELTA\","
                     + "\"row_filter\":{\"expression\":\"id > 0\"},"
+                    + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]},"
+                    + "{\"name\":\"masked_table\",\"catalog_name\":\"main\","
+                    + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
+                    + "\"data_source_format\":\"DELTA\",\"columns\":[{"
+                    + "\"name\":\"id\",\"mask\":{\"function_name\":\"redact\"}}],"
                     + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]},"
                     + "{\"name\":\"official_manifest\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","

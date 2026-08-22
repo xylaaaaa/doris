@@ -605,7 +605,8 @@ final class UnityDeltaClient {
         }
         // The native Parquet scan does not evaluate Unity cross-engine ABAC policies yet.
         // Keep policy-bearing tables out of discovery instead of exposing unfiltered data.
-        if (hasPolicy(table, "row_filter", "row-filter", "column_masks", "column-masks")) {
+        if (hasPolicy(table, "row_filter", "row-filter", "column_masks", "column-masks")
+                || hasColumnMask(table)) {
             return false;
         }
         JsonNode capabilities = table.get("manifest_capabilities");
@@ -631,6 +632,19 @@ final class UnityDeltaClient {
             if (policy != null && !policy.isNull()
                     && !(policy.isObject() && policy.isEmpty())
                     && !(policy.isArray() && policy.isEmpty())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasColumnMask(JsonNode table) {
+        JsonNode columns = table.get("columns");
+        if (columns == null || !columns.isArray()) {
+            return false;
+        }
+        for (JsonNode column : columns) {
+            if (hasPolicy(column, "mask")) {
                 return true;
             }
         }
