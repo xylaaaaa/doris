@@ -114,6 +114,16 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
     }
 
     @Override
+    public void dropTable(ConnectorSession session, ConnectorTableHandle handle) {
+        if (!writeEnabled || !catalogAdapter.supportsDropTable()) {
+            throw new UnsupportedOperationException(
+                    "Native Delta DROP TABLE requires delta.write.enabled=true, "
+                            + "delta.drop.enabled=true, and a Unity catalog");
+        }
+        catalogAdapter.dropTable((DeltaTableHandle) handle);
+    }
+
+    @Override
     public ConnectorTableSchema getTableSchema(
             ConnectorSession session, ConnectorTableHandle handle) {
         DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;

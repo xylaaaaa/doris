@@ -19,6 +19,7 @@ package org.apache.doris.datasource;
 
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Env;
+import org.apache.doris.catalog.TableIf;
 import org.apache.doris.common.DdlException;
 import org.apache.doris.connector.ConnectorFactory;
 import org.apache.doris.connector.ConnectorSessionBuilder;
@@ -32,8 +33,10 @@ import org.apache.doris.connector.api.ConnectorSession;
 import org.apache.doris.connector.api.ConnectorTableCreateRequest;
 import org.apache.doris.connector.api.ConnectorTableSchema;
 import org.apache.doris.connector.api.ConnectorTestResult;
+import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 import org.apache.doris.datasource.property.metastore.MetastoreProperties;
 import org.apache.doris.nereids.trees.plans.commands.info.CreateTableInfo;
+import org.apache.doris.persist.DropInfo;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.transaction.PluginDrivenTransactionManager;
 
@@ -47,6 +50,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * An {@link ExternalCatalog} backed by a Connector SPI plugin.
@@ -277,6 +281,70 @@ public class PluginDrivenExternalCatalog extends ExternalCatalog {
             Env.getCurrentEnv().getEditLog().logCreateTable(info);
         }
         return existed;
+    }
+
+    @Override
+    public void dropTable(String dbName, String tableName, boolean isView,
+            boolean isMtmv, boolean isStream, boolean ifExists,
+            boolean mustTemporary, boolean force) throws DdlException {
+        if (isView || isMtmv || isStream || mustTemporary) {
+            throw new DdlException(
+                    "Plugin connector DROP TABLE does not support views, streams, "
+                            + "materialized views, or temporary tables");
+        }
+        if (dropTableFromConnector(dbName, tableName, ifExists)) {
+            Env.getCurrentEnv().getEditLog().logDropTable(
+                    new DropInfo(getName(), dbName, tableName));
+        }
+    }
+
+    boolean dropTableFromConnector(
+            String dbName, String tableName, boolean ifExists) throws DdlException {
+        makeSureInitialized();
+        if (!connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_DROP_TABLE)) {
+            throw new DdlException(
+                    "Drop table is not supported for catalog: " + getName());
+        }
+        ExternalDatabase<?> database = getDbNullable(dbName);
+        if (database == null) {
+            throw new DdlException("Database does not exist: " + dbName);
+        }
+        TableIf localTable = database.getTableNullable(tableName);
+        if (localTable == null) {
+            if (ifExists) {
+                return false;
+            }
+            throw new DdlException(
+                    "Table does not exist: " + dbName + "." + tableName);
+        }
+        PluginDrivenExternalTable connectorTable =
+                (PluginDrivenExternalTable) localTable;
+        ConnectorSession session = buildConnectorSession();
+        ConnectorMetadata metadata = connector.getMetadata(session);
+        Optional<ConnectorTableHandle> remoteHandle = metadata.getTableHandle(session,
+                connectorTable.getRemoteDbName(), connectorTable.getRemoteName());
+        if (!remoteHandle.isPresent()) {
+            if (!ifExists) {
+                throw new DdlException("Remote table does not exist: "
+                        + connectorTable.getRemoteDbName() + "."
+                        + connectorTable.getRemoteName());
+            }
+            database.unregisterTable(tableName);
+            return true;
+        }
+        try {
+            metadata.dropTable(session, remoteHandle.get());
+        } catch (RuntimeException e) {
+            throw new DdlException(e.getMessage(), e);
+        }
+        database.unregisterTable(tableName);
+        return true;
+    }
+
+    @Override
+    public void replayDropTable(String dbName, String tblName) {
+        getDbForReplay(dbName).ifPresent(database -> database.unregisterTable(tblName));
     }
 
     @Override

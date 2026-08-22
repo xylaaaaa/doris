@@ -168,6 +168,7 @@ Spark 和 Starburst 使用已有的完整 Delta 实现；ClickHouse 从自研迁
 - 已接通 copy-on-write `DELETE FROM table [WHERE predicate]`：按同一 pinned snapshot 读取幸存行并原子替换 active files，`NULL` 谓词、无条件删空和 affected rows 已通过 path Delta 回归。当前仅支持整表范围，不支持 `PARTITION`、`USING`、CTE、`ORDER BY/LIMIT`。
 - 已接通 copy-on-write `UPDATE table SET ... [WHERE predicate]`：affected-row 预查询和重写都绑定同一 Delta version，支持别名、多列及表达式赋值、`IS NULL`、零匹配和无条件全表更新。当前不支持 `FROM`、CTE、子查询、非确定性谓词及 `ORDER BY/LIMIT`。
 - 已接通 copy-on-write `MERGE` 的首个完整分支切片：支持有条件的 matched DELETE、matched UPDATE、not-matched INSERT、未命中 target 保留和无动作 source 忽略，affected rows 与 target Delta version、source Doris 分区 visible versions 绑定。为避免一个 target 被多条 source 静默复制，当前要求 target/source 都显式使用 alias，source 必须是 UNIQUE KEY Doris 表，且 `ON` 等值条件覆盖全部 source key；暂不支持 CTE、子查询 source、非确定性条件和其他 source 类型。DELETE/UPDATE/MERGE 在存在 target row-filter/data-mask policy 时会明确拒绝；Unity external/catalog-managed 复用相同 overwrite 事务，但真实 Databricks DML E2E 仍待验证。
+- 已接通 Unity native Delta `DROP TABLE` 控制面链路，调用协商后的 UC Delta API 删除 catalog 注册项，并同步清理 Doris 外部表缓存。该能力要求同时显式设置 `delta.write.enabled=true` 和 `delta.drop.enabled=true`；path catalog 不声明删除能力，Doris 不会把 `DROP TABLE` 转换成对象存储目录删除。Unity external 的数据生命周期和 managed 表的回收语义由 Unity Catalog 决定，真实 Databricks 权限与生命周期 E2E 仍待验证。
 - 已验证 Unity 读取能力声明、凭证操作类型和过期时间的 fail-closed 校验；AWS、Azure 及 GCS OAuth 的初始临时凭证已能进入 FE/BE 读取链路。GCS OAuth 数据文件写入已接入 resumable upload，并用本地协议 fixture 覆盖分块、服务端部分落盘后的断点续传和过期凭证拒绝；BE 长查询中的自动凭证续期及真实 Databricks 三云联调仍未完成。
 - 本地 Delta fixtures、FE 单测和隔离 FE/BE 回归已通过；这些测试不能替代真实 Databricks workspace 的权限、网络、凭证续期和 catalog-commit 验收。
 
@@ -183,6 +184,8 @@ Spark 和 Starburst 使用已有的完整 Delta 实现；ClickHouse 从自研迁
 ### Databricks 与 Delta Lake
 
 - [Unity REST access for Delta clients](https://docs.databricks.com/aws/en/external-access/unity-rest)
+- [Databricks Tables API: Delete a table](https://docs.databricks.com/api/workspace/tables/delete)
+- [Unity Catalog 0.5.0 Delta API](https://github.com/unitycatalog/unitycatalog/releases/tag/v0.5.0)
 - [Iceberg REST access and table-type matrix](https://docs.databricks.com/aws/en/external-access/iceberg)
 - [Credential vending](https://docs.databricks.com/aws/en/external-access/credential-vending)
 - [Catalog commits](https://docs.databricks.com/aws/en/tables/features/catalog-commits)

@@ -201,4 +201,12 @@ suite("test_native_delta_path", "p0,external") {
         FROM ${writeCatalogName}.`default`.customer
         WHERE c_custkey = 200001
     """
+    test {
+        sql "DROP TABLE ${createCatalogName}.`default`.created_events"
+        exception "Drop table is not supported for catalog"
+    }
+    order_qt_created_after_rejected_drop """
+        SELECT COUNT(*)
+        FROM ${createCatalogName}.`default`.created_events
+    """
 }

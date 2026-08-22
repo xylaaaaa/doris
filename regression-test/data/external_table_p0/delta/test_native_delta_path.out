@@ -64,3 +64,6 @@ c_comment	text	Yes	false	\N
 -- !inserted_row --
 200001	Customer#000200001	12.34
 
+-- !created_after_rejected_drop --
+3
+

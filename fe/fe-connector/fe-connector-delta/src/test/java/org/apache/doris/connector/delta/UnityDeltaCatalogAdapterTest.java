@@ -52,9 +52,11 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 public class UnityDeltaCatalogAdapterTest {
     private static final String TEST_TOKEN = "test-unity-token-never-log";
@@ -66,9 +68,11 @@ public class UnityDeltaCatalogAdapterTest {
     private String catalogManagedTableId;
     private String deltaProtocolVersion;
     private String createStagingLocation;
+    private int deleteStatus;
     private final List<String> requestPaths = new ArrayList<>();
     private final List<String> requestQueries = new ArrayList<>();
     private final List<String> updateRequestPaths = new ArrayList<>();
+    private final Set<String> deletedTables = new HashSet<>();
 
     @TempDir
     private Path tempDirectory;
@@ -83,6 +87,7 @@ public class UnityDeltaCatalogAdapterTest {
         catalogManagedLocation = Paths.get(catalogManagedFixture.toURI()).toUri().toString();
         catalogManagedTableId = "c79de738-d13c-44a5-8e75-8435123d60c7";
         deltaProtocolVersion = "1.0";
+        deleteStatus = 200;
         createStagingLocation = tempDirectory.resolve("unity-created-table").toUri().toString();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", this::handleRequest);
@@ -538,6 +543,85 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
+    public void testUnityDropUsesDeltaApiWithoutDeletingExternalData() {
+        Map<String, String> properties = Map.of(
+                "type", "delta",
+                DeltaConnectorProperties.CATALOG_TYPE,
+                        DeltaConnectorProperties.CATALOG_TYPE_UNITY,
+                DeltaConnectorProperties.UNITY_URI, workspaceUri,
+                DeltaConnectorProperties.UNITY_CATALOG, "main",
+                DeltaConnectorProperties.UNITY_TOKEN, TEST_TOKEN,
+                DeltaConnectorProperties.WRITE_ENABLED, "true",
+                DeltaConnectorProperties.DROP_ENABLED, "true");
+        Connector connector = new DeltaConnectorProvider().create(
+                properties, connectorContext());
+        ConnectorTableHandle handle = connector.getMetadata(null)
+                .getTableHandle(null, "default", "events").orElseThrow();
+        Path deltaLog = Paths.get(URI.create(tableLocation)).resolve("_delta_log");
+
+        Assertions.assertTrue(connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_DROP_TABLE));
+        connector.getMetadata(null).dropTable(null, handle);
+
+        Assertions.assertTrue(Files.isDirectory(deltaLog));
+        Assertions.assertTrue(connector.getMetadata(null)
+                .getTableHandle(null, "default", "events").isEmpty());
+        UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
+        Assertions.assertDoesNotThrow(
+                () -> client.deleteTable("main", "default", "events"));
+        Assertions.assertTrue(updateRequestPaths.stream().anyMatch(path -> path.endsWith(
+                "/delta/v1/catalogs/main/schemas/default/tables/events")));
+    }
+
+    @Test
+    public void testUnityDropRequiresExplicitOptIn() {
+        Map<String, String> properties = Map.of(
+                "type", "delta",
+                DeltaConnectorProperties.CATALOG_TYPE,
+                        DeltaConnectorProperties.CATALOG_TYPE_UNITY,
+                DeltaConnectorProperties.UNITY_URI, workspaceUri,
+                DeltaConnectorProperties.UNITY_CATALOG, "main",
+                DeltaConnectorProperties.UNITY_TOKEN, TEST_TOKEN,
+                DeltaConnectorProperties.WRITE_ENABLED, "true");
+        Connector connector = new DeltaConnectorProvider().create(
+                properties, connectorContext());
+        ConnectorTableHandle handle = connector.getMetadata(null)
+                .getTableHandle(null, "default", "events").orElseThrow();
+
+        Assertions.assertFalse(connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_DROP_TABLE));
+        Assertions.assertThrows(UnsupportedOperationException.class,
+                () -> connector.getMetadata(null).dropTable(null, handle));
+    }
+
+    @Test
+    public void testUnityDropAuthorizationFailurePreservesTableAndTokenSecrecy() {
+        Map<String, String> properties = Map.of(
+                "type", "delta",
+                DeltaConnectorProperties.CATALOG_TYPE,
+                        DeltaConnectorProperties.CATALOG_TYPE_UNITY,
+                DeltaConnectorProperties.UNITY_URI, workspaceUri,
+                DeltaConnectorProperties.UNITY_CATALOG, "main",
+                DeltaConnectorProperties.UNITY_TOKEN, TEST_TOKEN,
+                DeltaConnectorProperties.WRITE_ENABLED, "true",
+                DeltaConnectorProperties.DROP_ENABLED, "true");
+        Connector connector = new DeltaConnectorProvider().create(
+                properties, connectorContext());
+        ConnectorTableHandle handle = connector.getMetadata(null)
+                .getTableHandle(null, "default", "events").orElseThrow();
+        deleteStatus = 403;
+
+        DorisConnectorException failure = Assertions.assertThrows(
+                DorisConnectorException.class,
+                () -> connector.getMetadata(null).dropTable(null, handle));
+
+        Assertions.assertTrue(failure.getMessage().contains("delete Delta table"));
+        Assertions.assertFalse(failure.getMessage().contains(TEST_TOKEN));
+        Assertions.assertTrue(connector.getMetadata(null)
+                .getTableHandle(null, "default", "events").isPresent());
+    }
+
+    @Test
     public void testCatalogManagedInsertUsesUnityCatalogCommitter() throws Exception {
         catalogManagedLocation = copyCatalogManagedFixture().toUri().toString();
         UnityDeltaClient client = UnityDeltaClient.create(workspaceUri, TEST_TOKEN);
@@ -696,6 +780,23 @@ public class UnityDeltaCatalogAdapterTest {
             respond(exchange, 200, loadTableResponse(Map.of()));
             return;
         }
+        String deltaTablePrefix =
+                "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/tables/";
+        if (path.startsWith(deltaTablePrefix)
+                && "DELETE".equalsIgnoreCase(exchange.getRequestMethod())) {
+            if (deleteStatus != 200) {
+                respond(exchange, deleteStatus,
+                        "{\"error_code\":\"PERMISSION_DENIED\"}");
+                return;
+            }
+            String tableName = path.substring(deltaTablePrefix.length());
+            if (!deletedTables.add(tableName)) {
+                respond(exchange, 404, "{\"error_code\":\"NOT_FOUND\"}");
+                return;
+            }
+            respond(exchange, 200, "{}");
+            return;
+        }
         if (path.equals("/api/2.1/unity-catalog/tables")) {
             respond(exchange, 200, "{\"tables\":["
                     + "{\"name\":\"events\",\"catalog_name\":\"main\","
@@ -764,6 +865,10 @@ public class UnityDeltaCatalogAdapterTest {
             return;
         }
         if (path.endsWith("/tables/events")) {
+            if (deletedTables.contains("events")) {
+                respond(exchange, 404, "{\"error_code\":\"NOT_FOUND\"}");
+                return;
+            }
             respond(exchange, 200, loadTableResponse(Map.of()));
             return;
         }

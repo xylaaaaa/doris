@@ -42,10 +42,25 @@ public class DeltaConnectorProvider implements ConnectorProvider {
     public void validateProperties(Map<String, String> properties) {
         validateBooleanProperty(properties, DeltaConnectorProperties.WRITE_ENABLED);
         validateBooleanProperty(properties, DeltaConnectorProperties.CREATE_ENABLED);
+        validateBooleanProperty(properties, DeltaConnectorProperties.DROP_ENABLED);
         validateTimeoutProperties(properties);
         String catalogType = DeltaConnectorProperties.catalogType(properties);
+        if (Boolean.parseBoolean(properties.getOrDefault(
+                DeltaConnectorProperties.DROP_ENABLED, "false"))
+                && !Boolean.parseBoolean(properties.getOrDefault(
+                DeltaConnectorProperties.WRITE_ENABLED, "false"))) {
+            throw new IllegalArgumentException("Delta catalog property '"
+                    + DeltaConnectorProperties.DROP_ENABLED + "=true' requires '"
+                    + DeltaConnectorProperties.WRITE_ENABLED + "=true'");
+        }
         switch (catalogType) {
             case DeltaConnectorProperties.CATALOG_TYPE_PATH:
+                if (Boolean.parseBoolean(properties.getOrDefault(
+                        DeltaConnectorProperties.DROP_ENABLED, "false"))) {
+                    throw new IllegalArgumentException(
+                            "Native Delta path catalogs do not support DROP TABLE; "
+                                    + "remove the catalog instead of deleting storage data");
+                }
                 validatePathProperties(properties);
                 return;
             case DeltaConnectorProperties.CATALOG_TYPE_UNITY:

@@ -257,6 +257,20 @@ final class UnityDeltaClient {
         }
     }
 
+    void deleteTable(String catalogName, String schemaName, String tableName) {
+        negotiateDeltaProtocol(catalogName);
+        try {
+            deltaTablesApi.deleteTable(catalogName, schemaName, tableName);
+        } catch (ApiException e) {
+            if (e.getCode() == 404) {
+                return;
+            }
+            throw requestFailure(
+                    "delete Delta table '" + catalogName + "." + schemaName + "."
+                            + tableName + "'", e);
+        }
+    }
+
     Configuration buildReadHadoopConfiguration(String catalogName, String schemaName,
             String tableName, String location, Configuration baseConfiguration) {
         return buildHadoopConfiguration(catalogName, schemaName, tableName, location,

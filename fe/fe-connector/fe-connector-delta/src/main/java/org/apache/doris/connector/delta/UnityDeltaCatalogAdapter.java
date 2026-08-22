@@ -346,6 +346,23 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
     }
 
     @Override
+    public void dropTable(DeltaTableHandle tableHandle) {
+        if (!supportsDropTable()) {
+            throw new UnsupportedOperationException(
+                    "Unity Delta DROP TABLE requires delta.drop.enabled=true");
+        }
+        resolveExistingTable(tableHandle);
+        client.deleteTable(catalogName, tableHandle.getDatabaseName(),
+                tableHandle.getTableName());
+    }
+
+    @Override
+    public boolean supportsDropTable() {
+        return Boolean.parseBoolean(catalogProperties.getOrDefault(
+                DeltaConnectorProperties.DROP_ENABLED, "false"));
+    }
+
+    @Override
     public String testConnection() {
         client.negotiateDeltaProtocol(catalogName);
         int schemaCount = listDatabaseNames().size();

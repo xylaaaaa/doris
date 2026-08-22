@@ -126,6 +126,9 @@ public final class DeltaConnector implements Connector {
             if (catalogAdapter.supportsCreateTable()) {
                 capabilities.add(ConnectorCapability.SUPPORTS_CREATE_TABLE);
             }
+            if (catalogAdapter.supportsDropTable()) {
+                capabilities.add(ConnectorCapability.SUPPORTS_DROP_TABLE);
+            }
         }
         return Collections.unmodifiableSet(capabilities);
     }

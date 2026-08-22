@@ -57,5 +57,6 @@ public enum ConnectorCapability {
      * for arbitrary SQL queries passed through to the remote data source.</p>
      */
     SUPPORTS_PASSTHROUGH_QUERY,
-    SUPPORTS_INSERT_OVERWRITE
+    SUPPORTS_INSERT_OVERWRITE,
+    SUPPORTS_DROP_TABLE
 }

@@ -87,10 +87,19 @@ public class DeltaConnectorVerticalSliceTest {
         Assertions.assertThrows(IllegalArgumentException.class,
                 () -> provider.validateProperties(Map.of(
                         DeltaConnectorProperties.WRITE_ENABLED, "yes")));
+        Assertions.assertThrows(IllegalArgumentException.class,
+                () -> provider.validateProperties(Map.of(
+                        DeltaConnectorProperties.DROP_ENABLED, "yes")));
         Map<String, String> invalidTimeouts = new LinkedHashMap<>(deltaProperties("delta/path_table"));
         invalidTimeouts.put(DeltaConnectorProperties.UNITY_READ_TIMEOUT_MS, "0");
         Assertions.assertThrows(IllegalArgumentException.class,
                 () -> provider.validateProperties(invalidTimeouts));
+        Map<String, String> destructivePath = new LinkedHashMap<>(
+                deltaProperties("delta/path_table"));
+        destructivePath.put(DeltaConnectorProperties.WRITE_ENABLED, "true");
+        destructivePath.put(DeltaConnectorProperties.DROP_ENABLED, "true");
+        Assertions.assertThrows(IllegalArgumentException.class,
+                () -> provider.validateProperties(destructivePath));
 
         Map<String, String> properties = deltaProperties("delta/path_table");
         provider.validateProperties(properties);
@@ -142,6 +151,8 @@ public class DeltaConnectorVerticalSliceTest {
                 ConnectorCapability.SUPPORTS_UPDATE));
         Assertions.assertTrue(connector.getCapabilities().contains(
                 ConnectorCapability.SUPPORTS_MERGE));
+        Assertions.assertFalse(connector.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_DROP_TABLE));
         Assertions.assertTrue(connector.testConnection(null).isSuccess());
         Assertions.assertTrue(connector.getMetadata(null)
                 .listTableNames(null, "default").isEmpty());
@@ -186,6 +197,8 @@ public class DeltaConnectorVerticalSliceTest {
                 ConnectorCapability.SUPPORTS_UPDATE));
         Assertions.assertFalse(readOnly.getCapabilities().contains(
                 ConnectorCapability.SUPPORTS_MERGE));
+        Assertions.assertFalse(readOnly.getCapabilities().contains(
+                ConnectorCapability.SUPPORTS_DROP_TABLE));
         Assertions.assertFalse(readOnly.testConnection(null).isSuccess());
     }
 

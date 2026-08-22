@@ -60,6 +60,16 @@ public interface DeltaCatalogAdapter {
         return false;
     }
 
+    /** Drops a catalog registration without directly deleting object-storage paths. */
+    default void dropTable(DeltaTableHandle tableHandle) {
+        throw new UnsupportedOperationException(
+                "This Delta catalog adapter does not support DROP TABLE");
+    }
+
+    default boolean supportsDropTable() {
+        return false;
+    }
+
     /** Historical scans use the already-bound current schema, so schema evolution must fail closed. */
     static void requireCompatibleSchema(
             DeltaKernelSnapshot current, DeltaKernelSnapshot requested) {
