@@ -34,6 +34,7 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
     private final String catalogTableId;
     private final boolean catalogManaged;
     private final boolean externalTable;
+    private final boolean externalWriteSupported;
     private final transient DeltaKernelSnapshot pinnedSnapshot;
 
     public DeltaTableHandle(String databaseName, String tableName,
@@ -52,12 +53,20 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
             String tablePath, long snapshotVersion, String catalogTableId,
             boolean catalogManaged, boolean externalTable) {
         this(databaseName, tableName, tablePath, snapshotVersion, catalogTableId,
-                catalogManaged, externalTable, null);
+                catalogManaged, externalTable, false, null);
+    }
+
+    public DeltaTableHandle(String databaseName, String tableName,
+            String tablePath, long snapshotVersion, String catalogTableId,
+            boolean catalogManaged, boolean externalTable, boolean externalWriteSupported) {
+        this(databaseName, tableName, tablePath, snapshotVersion, catalogTableId,
+                catalogManaged, externalTable, externalWriteSupported, null);
     }
 
     private DeltaTableHandle(String databaseName, String tableName,
             String tablePath, long snapshotVersion, String catalogTableId,
             boolean catalogManaged, boolean externalTable,
+            boolean externalWriteSupported,
             DeltaKernelSnapshot pinnedSnapshot) {
         this.databaseName = Objects.requireNonNull(databaseName, "databaseName");
         this.tableName = Objects.requireNonNull(tableName, "tableName");
@@ -69,6 +78,7 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
         this.catalogTableId = catalogTableId;
         this.catalogManaged = catalogManaged;
         this.externalTable = externalTable;
+        this.externalWriteSupported = externalWriteSupported;
         this.pinnedSnapshot = pinnedSnapshot;
         if (catalogManaged && catalogTableId == null) {
             throw new IllegalArgumentException(
@@ -109,6 +119,10 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
         return externalTable;
     }
 
+    public boolean supportsExternalWrite() {
+        return externalWriteSupported;
+    }
+
     public DeltaKernelSnapshot getPinnedSnapshot() {
         return pinnedSnapshot;
     }
@@ -120,12 +134,12 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
                     "Pinned Delta snapshot version does not match table handle");
         }
         return new DeltaTableHandle(databaseName, tableName, tablePath, snapshotVersion,
-                catalogTableId, catalogManaged, externalTable, snapshot);
+                catalogTableId, catalogManaged, externalTable, externalWriteSupported, snapshot);
     }
 
     public DeltaTableHandle withSnapshotVersion(long version) {
         return new DeltaTableHandle(databaseName, tableName, tablePath, version,
-                catalogTableId, catalogManaged, externalTable);
+                catalogTableId, catalogManaged, externalTable, externalWriteSupported);
     }
 
     @Override
@@ -140,6 +154,7 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
         return snapshotVersion == that.snapshotVersion
                 && catalogManaged == that.catalogManaged
                 && externalTable == that.externalTable
+                && externalWriteSupported == that.externalWriteSupported
                 && databaseName.equals(that.databaseName)
                 && tableName.equals(that.tableName)
                 && tablePath.equals(that.tablePath)
@@ -149,7 +164,7 @@ public final class DeltaTableHandle implements ConnectorTableHandle {
     @Override
     public int hashCode() {
         return Objects.hash(databaseName, tableName, tablePath, snapshotVersion,
-                catalogTableId, catalogManaged, externalTable);
+                catalogTableId, catalogManaged, externalTable, externalWriteSupported);
     }
 
     @Override

@@ -88,7 +88,8 @@ public class DeltaPathCatalogAdapter implements DeltaCatalogAdapter {
         try {
             DeltaKernelSnapshot snapshot = snapshotLoader.loadLatest(tablePath);
             return Optional.of(new DeltaTableHandle(databaseName, tableName, tablePath,
-                    snapshot.getVersion()).withPinnedSnapshot(snapshot));
+                    snapshot.getVersion(), null, false, true, writer != null)
+                    .withPinnedSnapshot(snapshot));
         } catch (TableNotFoundException e) {
             return Optional.empty();
         } catch (IOException e) {

@@ -172,6 +172,7 @@ Spark 和 Starburst 使用已有的完整 Delta 实现；ClickHouse 从自研迁
 - Unity 表列表请求已按 Databricks Tables API 的 `max_results <= 50` 限制分页，避免把通用 catalog 的大页大小直接带到 Databricks 端。
 - Unity 表 discovery 对列表响应中可识别的 `row_filter`、顶层 `column_masks` 以及 `columns[].mask` 策略字段 fail-closed；在 Doris 原生扫描尚未执行 Unity cross-engine ABAC 前，不把策略表暴露为普通 Delta 表。
 - Unity 表 capability discovery 同时兼容 Databricks Tables API 的官方 `securable_kind_manifest.capabilities` 响应结构，以及旧 fixture 中的 `manifest_capabilities` 别名。
+- Unity Delta table handle 记录 `HAS_DIRECT_EXTERNAL_ENGINE_WRITE_SUPPORT`；只有 Databricks 明确声明可写的表才进入 Doris 的 `READ_WRITE` credential 和 Delta writer 路径，read-only 表会在 FE fail-closed。
 - 已验证 Unity 读取能力声明、凭证操作类型和过期时间的 fail-closed 校验；AWS、Azure 及 GCS OAuth 的初始临时凭证已能进入 FE/BE 读取链路。GCS OAuth 数据文件写入已接入 resumable upload，并用本地协议 fixture 覆盖分块、服务端部分落盘后的断点续传和过期凭证拒绝；BE 长查询中的自动凭证续期及真实 Databricks 三云联调仍未完成。
 - 本地 Delta fixtures、FE 单测和隔离 FE/BE 回归已通过；这些测试不能替代真实 Databricks workspace 的权限、网络、凭证续期和 catalog-commit 验收。
 

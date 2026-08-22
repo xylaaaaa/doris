@@ -183,6 +183,7 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
             ConnectorTableHandle handle, List<ConnectorColumn> columns) {
         requireWriteEnabled();
         DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;
+        requireExternalWriteCapability(deltaHandle);
         if (!deltaHandle.isExternalTable() && !deltaHandle.isCatalogManaged()) {
             throw new UnsupportedOperationException(
                     "Ordinary Unity managed Delta writes are not supported; "
@@ -237,6 +238,7 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
             ConnectorTableHandle handle, List<ConnectorColumn> columns) {
         requireWriteEnabled();
         DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;
+        requireExternalWriteCapability(deltaHandle);
         String applicationId = session == null ? null : session.getQueryId();
         if (writer != null) {
             return writer.beginInsert(deltaHandle, applicationId);
@@ -249,6 +251,7 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
             ConnectorTableHandle handle, List<ConnectorColumn> columns) {
         requireWriteEnabled();
         DeltaTableHandle deltaHandle = (DeltaTableHandle) handle;
+        requireExternalWriteCapability(deltaHandle);
         DeltaKernelSnapshot snapshot = catalogAdapter.loadSnapshot(deltaHandle);
         String applicationId = session == null ? null : session.getQueryId();
         if (writer != null) {
@@ -277,6 +280,14 @@ public final class DeltaConnectorMetadata implements ConnectorMetadata {
             throw new UnsupportedOperationException(
                     "Native Delta INSERT requires delta.write.enabled=true and a supported "
                             + "external or catalog-managed table");
+        }
+    }
+
+    private void requireExternalWriteCapability(DeltaTableHandle handle) {
+        if (writer == null && !handle.supportsExternalWrite()) {
+            throw new UnsupportedOperationException(
+                    "Unity Catalog does not advertise external-engine write support for Delta table "
+                            + handle.getDatabaseName() + "." + handle.getTableName());
         }
     }
 

@@ -81,7 +81,9 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
     public Optional<DeltaTableHandle> getTableHandle(String databaseName, String tableName) {
         // Unity only vends external-engine credentials for tables advertising this capability.
         // Apply the same gate here as in listTableNames so a direct name lookup cannot bypass it.
-        if (!client.listDeltaTables(catalogName, databaseName).contains(tableName)) {
+        Optional<java.util.Set<String>> capabilities = client.getDeltaTableCapabilities(
+                catalogName, databaseName, tableName);
+        if (capabilities.isEmpty()) {
             return Optional.empty();
         }
         Optional<DeltaLoadTableResponse> response = client.loadTable(
@@ -111,7 +113,8 @@ final class UnityDeltaCatalogAdapter implements DeltaCatalogAdapter {
         }
         return Optional.of(new DeltaTableHandle(databaseName, tableName,
                 metadata.getLocation(), snapshot.getVersion(), tableId, catalogManaged,
-                metadata.getTableType() == DeltaTableType.EXTERNAL)
+                metadata.getTableType() == DeltaTableType.EXTERNAL,
+                capabilities.get().contains("HAS_DIRECT_EXTERNAL_ENGINE_WRITE_SUPPORT"))
                 .withPinnedSnapshot(snapshot));
     }
 

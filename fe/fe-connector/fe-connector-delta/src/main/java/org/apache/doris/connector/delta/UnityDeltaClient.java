@@ -217,6 +217,43 @@ final class UnityDeltaClient {
         return tableNames;
     }
 
+    Optional<Set<String>> getDeltaTableCapabilities(
+            String catalogName, String schemaName, String tableName) {
+        String pageToken = null;
+        do {
+            try {
+                JsonNode response = listTablesWithManifestCapabilities(
+                        catalogName, schemaName, pageToken);
+                JsonNode tables = response.get("tables");
+                if (tables == null || !tables.isArray()) {
+                    throw new ApiException("Unity Catalog list tables response has no tables array");
+                }
+                for (JsonNode table : tables) {
+                    if (tableName.equals(textValue(table, "name"))
+                            && isReadableDeltaTable(table)) {
+                        return Optional.of(tableCapabilities(table));
+                    }
+                }
+                JsonNode nextPageToken = response.get("next_page_token");
+                pageToken = nextPageToken == null || nextPageToken.isNull()
+                        ? null : nextPageToken.asText();
+            } catch (ApiException e) {
+                throw requestFailure("find Delta table '" + catalogName + "."
+                        + schemaName + "." + tableName + "'", e);
+            } catch (IOException e) {
+                throw new DorisConnectorException(
+                        "Unity Catalog request failed while finding Delta table '"
+                                + catalogName + "." + schemaName + "." + tableName + "'", e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new DorisConnectorException(
+                        "Unity Catalog request was interrupted while finding Delta table '"
+                                + catalogName + "." + schemaName + "." + tableName + "'", e);
+            }
+        } while (pageToken != null && !pageToken.isEmpty());
+        return Optional.empty();
+    }
+
     private JsonNode listTablesWithManifestCapabilities(
             String catalogName, String schemaName, String pageToken)
             throws IOException, InterruptedException, ApiException {
@@ -609,21 +646,19 @@ final class UnityDeltaClient {
                 || hasColumnMask(table)) {
             return false;
         }
+        return tableCapabilities(table).contains("HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT");
+    }
+
+    private static Set<String> tableCapabilities(JsonNode table) {
         JsonNode capabilities = table.get("manifest_capabilities");
         if (capabilities == null) {
             capabilities = table.get("manifest-capabilities");
         }
         if (capabilities == null) {
-            // Databricks Tables API names the manifest securable_kind_manifest and nests
-            // capability names under its capabilities field.
             JsonNode manifest = table.get("securable_kind_manifest");
             capabilities = manifest == null ? null : manifest.get("capabilities");
         }
-        if (capabilities == null) {
-            return false;
-        }
-        Set<String> capabilityNames = capabilityNames(capabilities);
-        return capabilityNames.contains("HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT");
+        return capabilityNames(capabilities);
     }
 
     private static boolean hasPolicy(JsonNode table, String... fieldNames) {

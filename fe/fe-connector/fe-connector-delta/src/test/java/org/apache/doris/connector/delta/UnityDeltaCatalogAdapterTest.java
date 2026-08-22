@@ -132,6 +132,10 @@ public class UnityDeltaCatalogAdapterTest {
                 .getTableHandle(null, "default", "missing_capabilities").isEmpty());
         ConnectorTableHandle handle = connector.getMetadata(null)
                 .getTableHandle(null, "default", "events").orElseThrow();
+        Assertions.assertFalse(((DeltaTableHandle) handle).supportsExternalWrite());
+        Assertions.assertTrue(((DeltaTableHandle) connector.getMetadata(null)
+                .getTableHandle(null, "default", "catalog_managed").orElseThrow())
+                .supportsExternalWrite());
         Assertions.assertEquals(1, ((DeltaTableHandle) handle).getSnapshotVersion());
         Assertions.assertNotNull(((DeltaTableHandle) handle).getPinnedSnapshot());
         Assertions.assertEquals(2, connector.getScanPlanProvider()
@@ -601,6 +605,31 @@ public class UnityDeltaCatalogAdapterTest {
     }
 
     @Test
+    public void testUnityReadOnlyCapabilityBlocksWriteBeforeCredentialVending() {
+        Map<String, String> properties = Map.of(
+                "type", "delta",
+                DeltaConnectorProperties.CATALOG_TYPE,
+                        DeltaConnectorProperties.CATALOG_TYPE_UNITY,
+                DeltaConnectorProperties.UNITY_URI, workspaceUri,
+                DeltaConnectorProperties.UNITY_CATALOG, "main",
+                DeltaConnectorProperties.UNITY_TOKEN, TEST_TOKEN,
+                DeltaConnectorProperties.WRITE_ENABLED, "true");
+        Connector connector = new DeltaConnectorProvider().create(
+                properties, connectorContext());
+        ConnectorTableHandle handle = connector.getMetadata(null)
+                .getTableHandle(null, "default", "events").orElseThrow();
+        List<ConnectorColumn> columns = connector.getMetadata(null)
+                .getTableSchema(null, handle).getColumns();
+
+        Assertions.assertThrows(UnsupportedOperationException.class,
+                () -> connector.getMetadata(null).getWriteConfig(null, handle, columns));
+        Assertions.assertThrows(UnsupportedOperationException.class,
+                () -> connector.getMetadata(null).beginInsert(null, handle, columns));
+        Assertions.assertTrue(requestPaths.stream().noneMatch(path -> path.endsWith(
+                "/tables/events/credentials")));
+    }
+
+    @Test
     public void testUnityDropAuthorizationFailurePreservesTableAndTokenSecrecy() {
         Map<String, String> properties = Map.of(
                 "type", "delta",
@@ -812,7 +841,8 @@ public class UnityDeltaCatalogAdapterTest {
                     + "{\"name\":\"catalog_managed\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"MANAGED\","
                     + "\"data_source_format\":\"DELTA\","
-                    + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]},"
+                    + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\","
+                    + "\"HAS_DIRECT_EXTERNAL_ENGINE_WRITE_SUPPORT\"]},"
                     + "{\"name\":\"blocked\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"MANAGED\","
                     + "\"data_source_format\":\"DELTA\","
