@@ -129,7 +129,8 @@ public class PluginDrivenExternalTableEngineTest {
         Mockito.when(supported.getCapabilities()).thenReturn(
                 Set.of(ConnectorCapability.SUPPORTS_INSERT_OVERWRITE,
                         ConnectorCapability.SUPPORTS_DELETE,
-                        ConnectorCapability.SUPPORTS_UPDATE));
+                        ConnectorCapability.SUPPORTS_UPDATE,
+                        ConnectorCapability.SUPPORTS_MERGE));
         Connector unsupported = createMockConnector(true, false);
         Mockito.when(unsupported.getCapabilities()).thenReturn(Set.of());
 
@@ -139,12 +140,16 @@ public class PluginDrivenExternalTableEngineTest {
                 .supportsDelete());
         Assertions.assertTrue(createTableWithCatalogType("delta", supported)
                 .supportsUpdate());
+        Assertions.assertTrue(createTableWithCatalogType("delta", supported)
+                .supportsMerge());
         Assertions.assertFalse(createTableWithCatalogType("jdbc", unsupported)
                 .supportsInsertOverwrite());
         Assertions.assertFalse(createTableWithCatalogType("jdbc", unsupported)
                 .supportsDelete());
         Assertions.assertFalse(createTableWithCatalogType("jdbc", unsupported)
                 .supportsUpdate());
+        Assertions.assertFalse(createTableWithCatalogType("jdbc", unsupported)
+                .supportsMerge());
     }
 
     // -------- Helpers --------

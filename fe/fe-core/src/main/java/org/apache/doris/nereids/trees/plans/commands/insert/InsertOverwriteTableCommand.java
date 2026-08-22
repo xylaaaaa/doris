@@ -18,6 +18,7 @@
 package org.apache.doris.nereids.trees.plans.commands.insert;
 
 import org.apache.doris.analysis.StmtType;
+import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.MTMV;
 import org.apache.doris.catalog.OlapTable;
@@ -120,6 +121,7 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
     private Optional<Plan> lineagePlan = Optional.empty();
     private Optional<ConnectorTableHandle> connectorOverwriteBaseHandle = Optional.empty();
     private OptionalLong connectorAffectedRowCount = OptionalLong.empty();
+    private Optional<ConnectorSourceSnapshot> connectorSourceSnapshot = Optional.empty();
 
     /**
      * constructor
@@ -183,6 +185,7 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
         NereidsPlanner planner = new NereidsPlanner(ctx.getStatementContext());
         LineageInfoExtractor.registerAnalyzePlanHook(ctx.getStatementContext(), planner);
         planner.plan(logicalPlanAdapter, ctx.getSessionVariable().toThrift());
+        validateConnectorSourceSnapshot(planner);
         Plan analyzedPlan = planner.getAnalyzedPlan();
         lineagePlan = Optional.ofNullable(analyzedPlan);
         executor.checkBlockRules();
@@ -498,7 +501,8 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
 
     private static boolean isCopyOnWriteDml(UnboundConnectorTableSink<?> sink) {
         return sink.getDMLCommandType() == DMLCommandType.DELETE
-                || sink.getDMLCommandType() == DMLCommandType.UPDATE;
+                || sink.getDMLCommandType() == DMLCommandType.UPDATE
+                || sink.getDMLCommandType() == DMLCommandType.MERGE;
     }
 
     static ConnectorTableHandle requireConsistentConnectorOverwriteSnapshot(
@@ -506,7 +510,7 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
         for (ConnectorTableHandle sourceHandle : sourceHandles) {
             if (!targetHandle.equals(sourceHandle)) {
                 throw new AnalysisException(
-                        "Connector table changed while planning copy-on-write DELETE");
+                        "Connector table changed while planning copy-on-write DML");
             }
         }
         return targetHandle;
@@ -518,6 +522,74 @@ public class InsertOverwriteTableCommand extends Command implements NeedAuditEnc
 
     public void setConnectorAffectedRowCount(long affectedRowCount) {
         this.connectorAffectedRowCount = OptionalLong.of(affectedRowCount);
+    }
+
+    public void setConnectorSourceSnapshot(ConnectorSourceSnapshot sourceSnapshot) {
+        this.connectorSourceSnapshot = Optional.of(sourceSnapshot);
+    }
+
+    /** Atomically captures schema and visible partition versions for an OLAP source table. */
+    public static ConnectorSourceSnapshot snapshotConnectorSource(OlapTable table) {
+        table.readLock();
+        try {
+            Map<Long, Long> visibleVersions = table.getPartitions().stream().collect(
+                    java.util.stream.Collectors.toMap(
+                            org.apache.doris.catalog.Partition::getId,
+                            org.apache.doris.catalog.Partition::getVisibleVersion));
+            return new ConnectorSourceSnapshot(
+                    table.getId(), table.getFullSchema(), visibleVersions);
+        } finally {
+            table.readUnlock();
+        }
+    }
+
+    private void validateConnectorSourceSnapshot(NereidsPlanner planner) {
+        if (!connectorSourceSnapshot.isPresent()) {
+            return;
+        }
+        ConnectorSourceSnapshot expected = connectorSourceSnapshot.get();
+        Optional<OlapTable> plannedSource = planner.getScanNodes().stream()
+                .map(scanNode -> scanNode.getTupleDesc().getTable())
+                .filter(OlapTable.class::isInstance)
+                .map(OlapTable.class::cast)
+                .filter(table -> table.getId() == expected.tableId)
+                .findFirst();
+        if (!plannedSource.isPresent()
+                || !expected.equals(snapshotConnectorSource(plannedSource.get()))) {
+            throw new AnalysisException(
+                    "Connector source table changed while planning copy-on-write MERGE");
+        }
+    }
+
+    /** Immutable source state used to bind MERGE counting and execution to one OLAP snapshot. */
+    public static final class ConnectorSourceSnapshot {
+        private final long tableId;
+        private final List<Column> schema;
+        private final Map<Long, Long> visibleVersions;
+
+        private ConnectorSourceSnapshot(
+                long tableId, List<Column> schema, Map<Long, Long> visibleVersions) {
+            this.tableId = tableId;
+            this.schema = schema.stream().map(Column::new)
+                    .collect(java.util.stream.Collectors.toUnmodifiableList());
+            this.visibleVersions = Map.copyOf(visibleVersions);
+        }
+
+        @Override
+        public boolean equals(Object value) {
+            if (!(value instanceof ConnectorSourceSnapshot)) {
+                return false;
+            }
+            ConnectorSourceSnapshot other = (ConnectorSourceSnapshot) value;
+            return tableId == other.tableId
+                    && schema.equals(other.schema)
+                    && visibleVersions.equals(other.visibleVersions);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(tableId, schema, visibleVersions);
+        }
     }
 
     /**

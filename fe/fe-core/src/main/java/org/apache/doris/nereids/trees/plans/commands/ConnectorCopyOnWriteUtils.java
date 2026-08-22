@@ -17,10 +17,17 @@
 
 package org.apache.doris.nereids.trees.plans.commands;
 
+import org.apache.doris.common.util.SqlUtils;
 import org.apache.doris.datasource.PluginDrivenExternalTable;
 import org.apache.doris.mysql.privilege.AccessControllerManager;
 import org.apache.doris.nereids.exceptions.AnalysisException;
+import org.apache.doris.qe.AutoCloseConnectContext;
 import org.apache.doris.qe.ConnectContext;
+import org.apache.doris.qe.StmtExecutor;
+import org.apache.doris.statistics.ResultRow;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 /** Safety checks shared by connector copy-on-write DML commands. */
 final class ConnectorCopyOnWriteUtils {
@@ -48,6 +55,31 @@ final class ConnectorCopyOnWriteUtils {
         if (hasDataMask) {
             throw new AnalysisException(
                     "Connector copy-on-write DML does not support data masking policies");
+        }
+    }
+
+    static String quoteQualifiedName(List<String> nameParts) {
+        return nameParts.stream()
+                .map(SqlUtils::getIdentSql).collect(Collectors.joining("."));
+    }
+
+    static String quoteIdentifier(String name) {
+        return SqlUtils.getIdentSql(name);
+    }
+
+    static long countRows(ConnectContext ctx, String sql, String operation) {
+        try (AutoCloseConnectContext internalContext =
+                new AutoCloseConnectContext(ctx.cloneContext())) {
+            List<ResultRow> rows = new StmtExecutor(
+                    internalContext.connectContext, sql).executeInternalQuery();
+            if (rows.size() != 1 || rows.get(0).getValues().size() != 1) {
+                throw new AnalysisException(
+                        "Connector " + operation + " affected-row query returned an invalid result");
+            }
+            return Long.parseLong(rows.get(0).get(0));
+        } catch (NumberFormatException e) {
+            throw new AnalysisException(
+                    "Connector " + operation + " affected-row query returned a non-numeric result", e);
         }
     }
 }

@@ -17,12 +17,18 @@
 
 package org.apache.doris.nereids.trees.plans.commands.insert;
 
+import org.apache.doris.catalog.Column;
+import org.apache.doris.catalog.OlapTable;
+import org.apache.doris.catalog.Partition;
+import org.apache.doris.catalog.Type;
 import org.apache.doris.common.UserException;
 import org.apache.doris.connector.api.handle.ConnectorTableHandle;
 import org.apache.doris.nereids.exceptions.AnalysisException;
+import org.apache.doris.nereids.trees.plans.commands.insert.InsertOverwriteTableCommand.ConnectorSourceSnapshot;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.util.List;
 
@@ -48,6 +54,30 @@ class InsertOverwriteTableCommandTest {
         Assertions.assertThrows(AnalysisException.class,
                 () -> InsertOverwriteTableCommand.requireConsistentConnectorOverwriteSnapshot(
                         target, List.of(changed)));
+    }
+
+    @Test
+    void connectorSourceSnapshotIncludesSchemaAndPartitionVersions() {
+        OlapTable table = Mockito.mock(OlapTable.class);
+        Partition partition = Mockito.mock(Partition.class);
+        Column column = new Column("id", Type.BIGINT);
+        Mockito.when(table.getId()).thenReturn(7L);
+        Mockito.when(table.getFullSchema()).thenReturn(List.of(column));
+        Mockito.when(table.getPartitions()).thenReturn(List.of(partition));
+        Mockito.when(partition.getId()).thenReturn(11L);
+        Mockito.when(partition.getVisibleVersion()).thenReturn(3L, 3L, 4L);
+
+        ConnectorSourceSnapshot first =
+                InsertOverwriteTableCommand.snapshotConnectorSource(table);
+        ConnectorSourceSnapshot unchanged =
+                InsertOverwriteTableCommand.snapshotConnectorSource(table);
+        ConnectorSourceSnapshot advanced =
+                InsertOverwriteTableCommand.snapshotConnectorSource(table);
+
+        Assertions.assertEquals(first, unchanged);
+        Assertions.assertNotEquals(first, advanced);
+        Mockito.verify(table, Mockito.times(3)).readLock();
+        Mockito.verify(table, Mockito.times(3)).readUnlock();
     }
 
     private static final class TestConnectorTableHandle implements ConnectorTableHandle {

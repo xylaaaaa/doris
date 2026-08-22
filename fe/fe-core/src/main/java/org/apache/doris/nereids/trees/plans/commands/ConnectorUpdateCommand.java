@@ -20,7 +20,6 @@ package org.apache.doris.nereids.trees.plans.commands;
 import org.apache.doris.analysis.StmtType;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.TableIf;
-import org.apache.doris.common.util.SqlUtils;
 import org.apache.doris.common.util.Util;
 import org.apache.doris.connector.api.Connector;
 import org.apache.doris.connector.api.ConnectorMetadata;
@@ -53,10 +52,8 @@ import org.apache.doris.nereids.trees.plans.logical.LogicalProject;
 import org.apache.doris.nereids.trees.plans.logical.LogicalSort;
 import org.apache.doris.nereids.trees.plans.visitor.PlanVisitor;
 import org.apache.doris.nereids.util.RelationUtil;
-import org.apache.doris.qe.AutoCloseConnectContext;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.qe.StmtExecutor;
-import org.apache.doris.statistics.ResultRow;
 import org.apache.doris.thrift.TPartialUpdateNewRowPolicy;
 
 import com.google.common.collect.ImmutableList;
@@ -67,7 +64,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
-import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
 /** Snapshot-pinned copy-on-write UPDATE for plugin connector tables. */
@@ -239,33 +235,20 @@ public final class ConnectorUpdateCommand extends Command implements ForwardWith
             throw new AnalysisException(
                     "Connector UPDATE requires a numeric snapshot version for affected-row counting");
         }
-        String tableName = nameParts.stream()
-                .map(SqlUtils::getIdentSql).collect(Collectors.joining("."));
+        String tableName = ConnectorCopyOnWriteUtils.quoteQualifiedName(nameParts);
         StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM ")
                 .append(tableName)
                 .append(" FOR VERSION AS OF ")
                 .append(version.getAsLong());
         if (tableAlias != null) {
-            sql.append(" AS ").append(SqlUtils.getIdentSql(tableAlias));
+            sql.append(" AS ").append(ConnectorCopyOnWriteUtils.quoteIdentifier(tableAlias));
         }
         predicate.ifPresent(value -> sql.append(" WHERE ").append(value.toSql()));
         return sql.toString();
     }
 
     static long countAffectedRows(ConnectContext ctx, String sql) {
-        try (AutoCloseConnectContext internalContext =
-                new AutoCloseConnectContext(ctx.cloneContext())) {
-            List<ResultRow> rows = new StmtExecutor(
-                    internalContext.connectContext, sql).executeInternalQuery();
-            if (rows.size() != 1 || rows.get(0).getValues().size() != 1) {
-                throw new AnalysisException(
-                        "Connector UPDATE affected-row query returned an invalid result");
-            }
-            return Long.parseLong(rows.get(0).get(0));
-        } catch (NumberFormatException e) {
-            throw new AnalysisException(
-                    "Connector UPDATE affected-row query returned a non-numeric result", e);
-        }
+        return ConnectorCopyOnWriteUtils.countRows(ctx, sql, "UPDATE");
     }
 
     @Override

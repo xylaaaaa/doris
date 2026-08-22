@@ -124,6 +124,41 @@ suite("test_native_delta_path", "p0,external") {
         FROM ${createCatalogName}.`default`.created_events
         ORDER BY id
     """
+    sql "DROP TABLE IF EXISTS test_native_delta_merge_source"
+    sql """
+        CREATE TABLE test_native_delta_merge_source (
+            id BIGINT NOT NULL,
+            payload STRING NULL,
+            action STRING NOT NULL
+        )
+        UNIQUE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 1
+        PROPERTIES (
+            'replication_num' = '1',
+            'enable_unique_key_merge_on_write' = 'true'
+        )
+    """
+    sql """
+        INSERT INTO test_native_delta_merge_source VALUES
+        (1011, 'beta-merged', 'U'),
+        (1012, 'deleted', 'D'),
+        (2000, 'inserted', 'I'),
+        (9999, 'ignored', 'X')
+    """
+    order_qt_merged_rows """
+        MERGE INTO ${createCatalogName}.`default`.created_events t
+        USING test_native_delta_merge_source s
+        ON t.id = s.id
+        WHEN MATCHED AND s.action = 'D' THEN DELETE
+        WHEN MATCHED THEN UPDATE SET payload = s.payload
+        WHEN NOT MATCHED AND s.action = 'I' THEN INSERT (id, payload)
+        VALUES (s.id, s.payload)
+    """
+    order_qt_created_after_merge """
+        SELECT id, payload
+        FROM ${createCatalogName}.`default`.created_events
+        ORDER BY id
+    """
 
     def sourceTable = new File(dorisHome,
             "samples/datalake/deltalake_and_kudu/data/customer").toPath()
