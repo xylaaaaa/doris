@@ -613,6 +613,12 @@ final class UnityDeltaClient {
             capabilities = table.get("manifest-capabilities");
         }
         if (capabilities == null) {
+            // Databricks Tables API names the manifest securable_kind_manifest and nests
+            // capability names under its capabilities field.
+            JsonNode manifest = table.get("securable_kind_manifest");
+            capabilities = manifest == null ? null : manifest.get("capabilities");
+        }
+        if (capabilities == null) {
             return false;
         }
         Set<String> capabilityNames = capabilityNames(capabilities);

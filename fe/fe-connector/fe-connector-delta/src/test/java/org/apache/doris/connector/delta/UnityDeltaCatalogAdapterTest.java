@@ -120,7 +120,7 @@ public class UnityDeltaCatalogAdapterTest {
         Assertions.assertEquals(List.of("default"),
                 connector.getMetadata(null).listDatabaseNames(null));
         Assertions.assertEquals(List.of("events", "catalog_managed", "propertyless",
-                "missing_type"),
+                "missing_type", "official_manifest"),
                 connector.getMetadata(null).listTableNames(null, "default"));
         Assertions.assertTrue(connector.getMetadata(null)
                 .getTableHandle(null, "default", "policy_table").isEmpty());
@@ -835,6 +835,11 @@ public class UnityDeltaCatalogAdapterTest {
                     + "\"data_source_format\":\"DELTA\","
                     + "\"row_filter\":{\"expression\":\"id > 0\"},"
                     + "\"manifest_capabilities\":[\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]},"
+                    + "{\"name\":\"official_manifest\",\"catalog_name\":\"main\","
+                    + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
+                    + "\"data_source_format\":\"DELTA\","
+                    + "\"securable_kind_manifest\":{\"capabilities\":["
+                    + "\"HAS_DIRECT_EXTERNAL_ENGINE_READ_SUPPORT\"]}},"
                     + "{\"name\":\"raw\",\"catalog_name\":\"main\","
                     + "\"schema_name\":\"default\",\"table_type\":\"EXTERNAL\","
                     + "\"data_source_format\":\"PARQUET\"}]}");

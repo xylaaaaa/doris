@@ -171,6 +171,7 @@ Spark 和 Starburst 使用已有的完整 Delta 实现；ClickHouse 从自研迁
 - 已接通 Unity native Delta `DROP TABLE` 控制面链路，调用协商后的 UC Delta API 删除 catalog 注册项，并同步清理 Doris 外部表缓存。该能力要求同时显式设置 `delta.write.enabled=true` 和 `delta.drop.enabled=true`；path catalog 不声明删除能力，Doris 不会把 `DROP TABLE` 转换成对象存储目录删除。Unity external 的数据生命周期和 managed 表的回收语义由 Unity Catalog 决定，真实 Databricks 权限与生命周期 E2E 仍待验证。
 - Unity 表列表请求已按 Databricks Tables API 的 `max_results <= 50` 限制分页，避免把通用 catalog 的大页大小直接带到 Databricks 端。
 - Unity 表 discovery 对列表响应中可识别的 `row_filter`/`column_masks` 策略字段 fail-closed；在 Doris 原生扫描尚未执行 Unity cross-engine ABAC 前，不把策略表暴露为普通 Delta 表。
+- Unity 表 capability discovery 同时兼容 Databricks Tables API 的官方 `securable_kind_manifest.capabilities` 响应结构，以及旧 fixture 中的 `manifest_capabilities` 别名。
 - 已验证 Unity 读取能力声明、凭证操作类型和过期时间的 fail-closed 校验；AWS、Azure 及 GCS OAuth 的初始临时凭证已能进入 FE/BE 读取链路。GCS OAuth 数据文件写入已接入 resumable upload，并用本地协议 fixture 覆盖分块、服务端部分落盘后的断点续传和过期凭证拒绝；BE 长查询中的自动凭证续期及真实 Databricks 三云联调仍未完成。
 - 本地 Delta fixtures、FE 单测和隔离 FE/BE 回归已通过；这些测试不能替代真实 Databricks workspace 的权限、网络、凭证续期和 catalog-commit 验收。
 
