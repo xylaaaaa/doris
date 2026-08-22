@@ -144,6 +144,8 @@ public class UnityDeltaCatalogAdapterTest {
                 && query.contains("protocol-versions=1.0")));
         Assertions.assertTrue(requestQueries.stream().anyMatch(query -> query != null
                 && query.contains("include_manifest_capabilities=true")));
+        Assertions.assertTrue(requestQueries.stream().anyMatch(query -> query != null
+                && query.contains("max_results=50")));
         Assertions.assertTrue(requestPaths.stream().noneMatch(path -> path.endsWith("/credentials")));
     }
 

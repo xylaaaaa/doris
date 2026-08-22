@@ -74,6 +74,8 @@ import java.util.stream.Collectors;
 /** Thin wrapper around the official Unity Catalog Java client. */
 final class UnityDeltaClient {
     private static final int PAGE_SIZE = 1000;
+    // Databricks Tables API limits max_results to 50; schemas use the larger generic limit.
+    private static final int TABLE_PAGE_SIZE = 50;
     private static final String DELTA_PROTOCOL_VERSION = "1.0";
     private static final String APP_NAME = "Apache-Doris";
     private static final String APP_VERSION = "native-delta";
@@ -221,7 +223,7 @@ final class UnityDeltaClient {
         StringBuilder uri = new StringBuilder(apiClient.getBaseUri()).append("/tables?")
                 .append("catalog_name=").append(ApiClient.urlEncode(catalogName))
                 .append("&schema_name=").append(ApiClient.urlEncode(schemaName))
-                .append("&max_results=").append(PAGE_SIZE)
+                .append("&max_results=").append(TABLE_PAGE_SIZE)
                 .append("&include_manifest_capabilities=true");
         if (pageToken != null && !pageToken.isEmpty()) {
             uri.append("&page_token=").append(ApiClient.urlEncode(pageToken));
