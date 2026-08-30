@@ -1,6 +1,6 @@
 # Databricks Native Delta 当前进度与待办
 
-更新时间：2026-08-22
+更新时间：2026-08-30
 
 ## 1. 当前结论
 
@@ -46,7 +46,7 @@ Doris Delta connector
 | DELETE | 本地 fixture、隔离集群 | copy-on-write；当前支持整表范围和 `WHERE`，不支持分区语法、CTE、子查询、`ORDER BY/LIMIT`。 |
 | UPDATE | 本地 fixture、隔离集群 | copy-on-write；支持确定性表达式、别名、`IS NULL`，不支持 `FROM`、CTE、子查询和 `ORDER BY/LIMIT`。 |
 | MERGE | 本地 fixture、隔离集群 | 支持 matched DELETE/UPDATE 和 not-matched INSERT；source 当前要求 Doris UNIQUE KEY 表，`ON` 覆盖全部 source key。 |
-| TRUNCATE TABLE | 代码/单测 | 当前切片复用空 overwrite transaction 清理全部 active files，只支持整表；完整 FE 构建和最终回归输出待验证。 |
+| TRUNCATE TABLE | 代码/单测 | 当前切片复用空 overwrite transaction 清理全部 active files，只支持整表；完整 FE 构建已通过，最终回归输出待验证。 |
 | Unity DROP TABLE | 本地 fixture、代码/单测 | 通过 Unity Delta API 删除 catalog 注册项；path catalog 不删除对象存储目录。 |
 | Unity write capability | 本地 fixture、代码/单测 | 只有 `HAS_DIRECT_EXTERNAL_ENGINE_WRITE_SUPPORT` 的 Unity 表才进入 `READ_WRITE` credential/writer 路径。 |
 | ABAC 安全边界 | 本地 fixture | 发现 `row_filter`、顶层 `column_masks` 或 `columns[].mask` 时 fail-closed；尚未实现 ABAC 正向执行。 |
@@ -60,7 +60,7 @@ Doris Delta connector
 | FE catalog 其他定向测试 | 已通过 | 覆盖 create/drop、MERGE、overwrite snapshot 和 plugin capability。 |
 | Native Delta path 回归 | 已有历史结果 | append、overwrite、DELETE、UPDATE、MERGE、credential 边界均有通过记录。 |
 | TRUNCATE 新增回归 | 待验证 | 需要在包含当前 FE 改动的构建上执行回归脚本并由测试框架生成 `.out`；当前没有手写结果文件。 |
-| 标准 `./build.sh --fe` | 当前切片尚未通过 | 多次失败原因为宿主机全局 OOM，内核杀掉约 13.7 GB 的 Maven/Javac 进程，不是 Java 编译错误。 |
+| 标准 `./build.sh --fe` | 已通过 | 使用 `MAVEN_OPTS='-Xmx4g -Xms512m -XX:+UseSerialGC'`、单 Maven 线程完成 FE 编译，输出 `Successfully build Doris`；此前未限制内存的尝试曾被宿主机 OOM 杀掉。 |
 | 隔离 FE/BE 集群 | 已通过历史验证 | FE/BE 健康，验证查询结果为 45；当前 FE 为释放编译内存已停止，BE 和 metadata 未删除。 |
 
 ## 4. 待开发功能
