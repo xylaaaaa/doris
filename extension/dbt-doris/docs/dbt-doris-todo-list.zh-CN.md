@@ -302,5 +302,5 @@ Snapshot 的 S1-S6 已完成，使用方式、失败语义和验证范围见
 - [ ] SSL、Timeout、Retry 和多 FE Failover。
 - [ ] Query ID、Invocation ID、影响行数和执行耗时。
 - [ ] Doris 服务端 Query Cancel。
-- [ ] External Catalog 元数据支持和性能优化。
+- [ ] External Catalog 连接器类型感知、写入能力验证和元数据性能优化。
 - [ ] 自动构建、测试和发布 wheel。

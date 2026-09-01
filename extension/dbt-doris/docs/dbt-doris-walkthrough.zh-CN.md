@@ -1,68 +1,6 @@
 # dbt 与 dbt-doris：概念、应用与演进方向
 
-## 1. dbt 到底是什么
-
-### 1.1 从四段 SQL 说起
-
-假设要做一张销售日报，最开始可能只有四段 SQL：
-
-- 清洗订单；
-- 关联客户；
-- 按天汇总销售额；
-- 检查日报结果。
-
-只有四段时，手工执行也没问题。
-
-但当它变成四百段 SQL，问题就不只是“SQL 会不会写”了：
-
-- 应该先跑哪一段；
-- 改了订单清洗，会影响哪些报表；
-- 开发环境和生产环境怎么隔离；
-- 订单 ID 重复了，谁能及时发现；
-- 一张表代表什么，应该问谁；
-- 哪些修改经过了评审和测试。
-
-dbt 解决的就是这些 SQL 周围的工程问题。
-
-> dbt 是面向数据转换的项目管理和构建工具。
-
-开发者仍然主要写 SQL，但这些 SQL 不再是一堆散落的脚本，
-而是有名称、有依赖、有测试、有说明的 Model。
-
-### 1.2 用订单例子理解 Model 和依赖
-
-订单项目里可以有这些 Model：
-
-```text
-原始订单
-   |
-   v
-清洗后的订单
-   |
-   +------> 订单事实表
-   |
-   +------> 每日销售汇总
-   |
-   +------> 客户购买汇总
-```
-
-“每日销售汇总”声明自己依赖“清洗后的订单”。
-
-dbt 因而知道：
-
-- 构建日报前，要先有清洗结果；
-- 清洗逻辑变化后，哪些下游可能受影响；
-- 只想验证日报时，需要选择哪一段依赖链；
-- 文档中应该怎样画出上下游关系。
-
-这就是 dbt 中 `ref()` 的核心价值：
-
-> `ref()` 既是引用，也是依赖关系。
-
-SQL 还是 SQL，但开发方式已经从“维护散落的脚本”，
-变成了“维护有依赖、有测试、能评审的数据产品”。
-
-## 2. 再用一句话说清楚
+## 1. 先用一句话说清楚
 
 > Doris 负责存储和计算数据，dbt 负责把数据转换组织成一个工程，
 > dbt-doris 负责让 dbt 能够按 Doris 的方式工作。
@@ -98,6 +36,68 @@ BI 报表、指标平台、数据服务
 任务几点运行、失败后怎么重试，通常还是 Airflow 或 DolphinScheduler 的工作。
 
 所以 dbt 既不是数据同步工具，也不是 Doris 的替代品。
+
+## 2. dbt 到底是什么
+
+### 2.1 从四段 SQL 说起
+
+假设要做一张销售日报，最开始可能只有四段 SQL：
+
+- 清洗订单；
+- 关联客户；
+- 按天汇总销售额；
+- 检查日报结果。
+
+只有四段时，手工执行也没问题。
+
+但当它变成四百段 SQL，问题就不只是“SQL 会不会写”了：
+
+- 应该先跑哪一段；
+- 改了订单清洗，会影响哪些报表；
+- 开发环境和生产环境怎么隔离；
+- 订单 ID 重复了，谁能及时发现；
+- 一张表代表什么，应该问谁；
+- 哪些修改经过了评审和测试。
+
+dbt 解决的就是这些 SQL 周围的工程问题。
+
+> dbt 是面向数据转换的项目管理和构建工具。
+
+开发者仍然主要写 SQL，但这些 SQL 不再是一堆散落的脚本，
+而是有名称、有依赖、有测试、有说明的 Model。
+
+### 2.2 用订单例子理解 Model 和依赖
+
+订单项目里可以有这些 Model：
+
+```text
+原始订单
+   |
+   v
+清洗后的订单
+   |
+   +------> 订单事实表
+   |
+   +------> 每日销售汇总
+   |
+   +------> 客户购买汇总
+```
+
+“每日销售汇总”声明自己依赖“清洗后的订单”。
+
+dbt 因而知道：
+
+- 构建日报前，要先有清洗结果；
+- 清洗逻辑变化后，哪些下游可能受影响；
+- 只想验证日报时，需要选择哪一段依赖链；
+- 文档中应该怎样画出上下游关系。
+
+这就是 dbt 中 `ref()` 的核心价值：
+
+> `ref()` 既是引用，也是依赖关系。
+
+SQL 还是 SQL，但开发方式已经从“维护散落的脚本”，
+变成了“维护有依赖、有测试、能评审的数据产品”。
 
 ## 3. dbt 的核心板块
 
@@ -185,7 +185,7 @@ Seed 适合很小、变化不频繁的 CSV 数据，例如销售渠道映射；
 它不适合替代 Flink 或 DataX 同步大规模业务数据。
 
 Docs 和 Lineage 把模型说明、测试和上下游组织起来。
-新人可以先看“日报来自哪里、又被谁使用”，而不是先翻几百个 SQL。
+新人可以先看“日报来自哪里、又被谁使用”，快速理解项目。
 
 ## 4. dbt-doris 做什么
 
@@ -205,7 +205,7 @@ Doris 执行 SQL
 ```
 
 当前 `master` 工作区的包版本元数据为 `1.0.0`，依赖声明为
-`dbt-core>=1.10.4`。下面的“当前能力”以这个工作区为准，
+`dbt-core~=1.12.0`。下面的“当前能力”以这个工作区为准，
 不等同于 PyPI 上某个已经发布版本的固定能力。
 
 状态含义：
@@ -215,8 +215,8 @@ Doris 执行 SQL
 - 🔵 dbt Core：不需要 Doris 专用实现，当前项目可以直接使用；
 - ❌ 未实现：Doris 数据库可能具备底层能力，但 dbt-doris 还没有提供接口。
 
-当前工作区最近一次回归使用 Python 3.11、dbt-core 1.10.4 和本地单 FE/
-单 BE Doris，共有 60 个无集群单元测试和 43 项 Functional 套件测试通过；
+当前工作区最近一次回归使用 Python 3.11、dbt-core 1.12.0 和本地单 FE/
+单 BE Doris；无集群单元测试和 43 项 Functional 套件测试全部通过；
 后者包含 37 项真实 Doris 测试和 6 项不连接数据库的 Relation 测试。
 下面的状态仍按“产品语义是否完整”判断：测试通过一条主路径，不等于异常恢复、
 版本矩阵和全部边界都已经验收。
@@ -245,28 +245,45 @@ Rust Engine 上的两个发行版；Core 2.0 是 Apache 2.0 开源发行版，Fu
 | SQL 理解 | 主要负责渲染 SQL，很多语法和类型错误要到数据库执行时才能发现 | Engine 原生理解多种 SQL Dialect，可在执行前做语法、类型和影响分析 |
 | 开发体验 | Parse、Compile、Docs 和血缘以 Python Core 能力为主 | 新 Engine 提供更快的解析和更严格的校验；Fusion 发行版及其编辑器还提供 LSP、实时错误、精确列级血缘和 Docs v2，部分能力需要登录 |
 | 运行依赖 | 依赖 Python、`dbt-core`、Adapter 包和数据库 Connector 的版本组合 | 以编译后的二进制运行；Fusion 可管理其支持的 Driver 和依赖 |
-| Doris 当前状态 | ✅ 当前 dbt-doris 1.0.0 就是这一类 Python Adapter，已在 dbt-core 1.10.4 上完成本轮验证 | ❌ 官方 v2 Adapter 列表还没有 Doris，当前 Python dbt-doris 不能被 v2 直接加载 |
+| Doris 当前状态 | ✅ 当前 dbt-doris 1.0.0 就是这一类 Python Adapter；开发、发布依赖和完整回归均以 dbt-core 1.12.x 为基线 | ❌ 官方 v2 Adapter 列表还没有 Doris，当前 Python dbt-doris 不能被 v2 直接加载 |
 
 官方 v2 可用性页面目前列出 Snowflake、BigQuery、Databricks、Redshift、
 Spark 和 DuckDB 等 Adapter，没有 Doris，见
 [Fusion availability](https://docs.getdbt.com/docs/fusion/fusion-availability)。
 项目兼容边界和比 v1 更严格的校验见
 [Supported features](https://docs.getdbt.com/docs/fusion/supported-features)。
-因此从 v1 到 v2 不是把 `setup.py` 中的 `dbt-core` 版本改成 2.0：
-需要为 Doris 补 Driver、Adapter 组件、SQL Dialect、认证和兼容测试。
-
-还要区分仓库里的另外三个版本号：
-
-| 写法 | 含义 | 是否代表 dbt v2 |
-| --- | --- | :---: |
-| `dbt-doris==1.0.0` | Doris Adapter 自己的包版本 | 否 |
-| `config-version: 2` | `dbt_project.yml` 的配置文件格式 | 否 |
-| YAML 中的 `version: 2` | Model、Source、Test 等属性文件的格式 | 否 |
+从 v1 到 v2 需要为 Doris 补 Driver、Adapter 组件、SQL Dialect、
+认证和兼容测试。
 
 所以本文第 4 节的现状和已通过测试都属于 dbt Core v1 路线；
 第 7 节会把“继续补齐 v1 Adapter”和“验证 v2 Adapter”拆成两条工作流。
 
-### 4.2 dbt-doris 1.0 当前能力明细
+### 4.2 为什么从 dbt Core 1.10 升级到 1.12
+
+1.10 和 1.12 都属于 Python 实现的 dbt Core v1。dbt-doris 继续开发 v1
+Adapter，后续基线采用仍在维护的最新 Minor 版本。
+
+| 对比项 | dbt Core 1.10 | dbt Core 1.12 |
+| --- | --- | --- |
+| 生命周期 | 已进入 Deprecated，官方维护结束 | 处于 Active Support，支持到 2027-07-15 |
+| Python 要求 | 仍支持 Python 3.9 | 要求 Python 3.10 及以上 |
+| 框架能力 | 现有 v1 项目和 Adapter 的历史验证基线 | 增加可选的 v2 Parser、UDF Resource 和新的 Catalog Specification，并改进错误处理和项目校验 |
+| 行为变化 | 使用较早的默认行为 | 一批 Behavior Flag 进入新默认行为，对 Macro 参数、Hook 失败和 Microbatch 等场景的检查更严格 |
+| dbt-doris 用法 | 保留已有测试结果作为历史基线 | 作为后续开发、CI 和发布兼容验证的主版本 |
+
+dbt Core 承诺 1.x 内已文档化的用户项目行为保持向后兼容，因此 1.12
+通常可以运行原来面向 1.10 编写的项目；使用了 1.12 新能力的项目则不能保证
+回到 1.10 运行。Adapter 使用的 Python 接口可能随 Minor 版本调整，
+所以 dbt-doris 仍需在 1.12 上完成 Unit、Functional 和常用命令回归。
+这些新增项由 dbt Core 提供框架机制，涉及 Doris SQL 和数据库对象的部分仍由
+dbt-doris 完成适配。
+
+当前路线确定为 **dbt Core 1.12.x + Python 3.10 以上**，并将 Core 依赖限制在
+`>=1.12.0,<1.13.0`，避免未经验证的新 Minor 或 v2 Runtime 被自动安装。
+官方生命周期和具体变化见 [About dbt versions](https://docs.getdbt.com/docs/dbt-versions)
+与 [Upgrading to v1.12](https://docs.getdbt.com/docs/dbt-versions/core-upgrade/upgrading-to-v1.12)。
+
+### 4.3 dbt-doris 1.0 当前能力明细
 
 | 分类 | 能力 | 状态 | 验证 | 当前行为与边界 |
 | --- | --- | :---: | --- | --- |
@@ -278,7 +295,7 @@ Spark 和 DuckDB 等 Adapter，没有 Doris，见
 | 对象管理 | 字段与类型元数据 | 🟡 | 实测（基础） | 可以从 `information_schema` 读取常用字段和类型；复杂类型、精度及 Schema Evolution 尚未完整验证 |
 | 对象管理 | Catalog 元数据 | 🟡 | 实测（命令） | `dbt docs generate` 已通过，但没有逐字段核对全部 Catalog 内容；Catalog SQL 的两个 CTE 内没有下推 Schema 条件，存在较大范围元数据扫描风险 |
 | 对象管理 | internal catalog 跨 Database Source | ✅ | 实测 | Source 可以读取同一 Doris 集群中其他 Database 的表 |
-| 对象管理 | External Catalog 三层 Relation | ❌ | 代码 | 尚未完整支持 `catalog.database.table` 的解析、缓存、文档和物化 |
+| 对象管理 | External Catalog 三层 Relation | ✅ | 代码/实测 | `catalog.database.table` 可用于 Source、Ref、Relation 查找、列元数据和物化 SQL；External Catalog 本身由 Doris 预先配置 |
 | 连接可靠性 | SSL、Timeout、Retry、多 FE Failover | ❌ | 代码 | Profile 尚未暴露这些连接与失败恢复配置 |
 | Model | Table | ✅ | 实测 | 先创建中间表，再通过表交换或重命名替换目标，避免直接覆盖正在使用的表 |
 | Model | View | ✅ | 实测 | 根据 Model 查询创建或更新 Doris View |
@@ -392,7 +409,7 @@ dbt 只把原始订单声明为 Source，表示“从这里开始加工”。
 
 Table、View、Incremental、Seed、Snapshot、Test 和 Docs 等属于 dbt Adapter
 的通用基础能力。比较其他产品时，没有必要在每个产品下面重复罗列这些能力；
-dbt-doris 是否补齐基础功能，统一看第 4.2 节的当前状态和第 7.1 节的计划。
+dbt-doris 是否补齐基础功能，统一看第 4.3 节的当前状态和第 7.1 节的计划。
 
 真正值得参考的是：其他 Adapter 怎样把数据库特有的对象、物理设计、增量方式、
 资源和治理能力变成 dbt Config，以及这些设计在 Doris 中有没有对应能力。
@@ -418,8 +435,8 @@ dbt-doris 是否补齐基础功能，统一看第 4.2 节的当前状态和第 7
 [Async Materialized View](https://doris.apache.org/docs/4.x/query-acceleration/materialized-view/async-materialized-view/overview/)、
 [Multi Catalog](https://doris.apache.org/docs/4.x/key-features/multi-catalog/)和
 [Workload Group](https://doris.apache.org/docs/4.x/admin-manual/workload-management/workload-group/)。
-这里的差距主要不是 Doris 缺少底层功能，而是 dbt-doris 还没有把它们完整接入
-Config、Relation、Materialization、连接管理和对象生命周期。
+这里的主要差距是 dbt-doris 还没有把 Doris 能力完整接入 Config、Relation、
+Materialization、连接管理和对象生命周期。
 
 ### 6.2 竞品能力怎样转成 dbt-doris 的思考
 
@@ -445,184 +462,33 @@ dbt-doris 是否需要把它变成 Config、SQL 或连接行为
 5. Python Model、Streaming Table、Liquid Clustering 等没有直接对应物的能力，
    只记录其解决的问题，不自动变成 dbt-doris 的实现目标。
 
-这样比较的目标不是追求功能数量相同，而是找出哪些成熟 Adapter 设计能够帮助
-dbt 用户正确使用 Doris。
-
-### 6.3 各 Adapter 的详细功能清单
-
-为了方便串讲时查阅，下面把六个 Adapter 的主要公开能力按功能域列出来。
-这里既包含基础能力，也包含数据库专属能力；它是功能清单，不再重复判断
-dbt-doris 是否已经支持，对应关系仍以第 6.1 节为准。
-
-#### 6.3.1 StarRocks
-
-依据：[dbt-starrocks 官方仓库](https://github.com/StarRocks/dbt-starrocks)、
-[dbt 官方 StarRocks 配置说明](https://docs.getdbt.com/reference/resource-configs/starrocks-configs)。
-
-| 功能域 | 公开能力 | 关键边界 |
-| --- | --- | --- |
-| 基础工作流 | Table、View、Incremental、Source、Custom Data Test、Docs Generate | 官方仓库要求 StarRocks 2.5+，推荐 3.4.x；具体功能随 StarRocks 版本变化 |
-| 表模型 | `table_type` 可选 Primary、Duplicate、Unique，配合 `keys`；Primary 表还可配置 `order_by` | Primary Key Model 从 StarRocks 2.5 起支持 |
-| 分区与分布 | `distributed_by`、固定或自动 Bucket、Range/List/Expression Partition、索引和 Table Properties | Expression Partition 从 3.1 起支持；低版本对分布列有额外要求 |
-| 增量策略 | Default、Insert Overwrite、Dynamic Overwrite、Microbatch；Microbatch 支持 `event_time`、`begin`、`lookback` 和 `batch_size` | Dynamic Overwrite 和基于它的 Microbatch 要求 3.4+；普通 Microbatch 可使用 Insert Overwrite |
-| Materialized View | `materialized_view` 可配置分区、分布、Bucket、Properties 和 `refresh_method` | Materialized View Materialization 从 StarRocks 3.1 起支持 |
-| External Catalog | Profile 可选择 Catalog；External Catalog 中的表可声明为 Source | 文档示例把 `catalog.database` 合并写入 Source 的 `schema` |
-| View 生命周期 | 可选择 `CREATE OR REPLACE VIEW`；SQL 未变化时可跳过重建 | 跳过无变化 View 是为了避免使依赖的 Materialized View 失效 |
-| 异步任务 | `is_async` 可把 CTAS、Insert 和 Cache Select 等提交为任务；提供任务超时、轮询间隔和指数退避配置 | 是否可提交仍取决于 StarRocks 版本和具体 SQL |
-
-#### 6.3.2 ClickHouse
-
-依据：[ClickHouse Materialization 文档](https://clickhouse.com/docs/integrations/dbt/materializations)、
-[连接与通用配置](https://clickhouse.com/docs/integrations/connectors/data-ingestion/etl-tools/dbt/features-and-configurations)。
-
-| 功能域 | 公开能力 | 关键边界 |
-| --- | --- | --- |
-| 基础与高级物化 | View、Table、Incremental、Snapshot、Materialized View | Materialized View 是 ClickHouse 插入触发型对象，不等同于 Doris Async MV |
-| 表引擎与布局 | `engine`、`order_by`、`primary_key`、`partition_by`、TTL、Table Settings 和 Query Settings | 默认 Engine 为 `MergeTree()`；不同 Engine 支持的 DDL 和写入行为不同 |
-| 列级配置 | Contract 开启后可为列配置 Codec 和 TTL，并支持复杂 ClickHouse 类型 | 类型 Contract 要求精确匹配，不会把不同整数宽度视为兼容 |
-| 查询加速结构 | Table 支持 Data Skipping Index 和 Projection | Projection 也可配置到 Distributed Table 的本地表 |
-| 增量策略 | Legacy Default、Delete+Insert、Append、Microbatch，以及实验性的 Insert Overwrite | Microbatch 要求 dbt-core 1.9+；Insert Overwrite 依赖 `partition_by`，对 Distributed Materialization 尚不完整 |
-| Materialized View | `materialized_view` 把源表新写入的数据转换后写入 Target | 它处理新写入数据，不是周期性全量刷新对象 |
-| 实验性对象 | Dictionary、Distributed Table、Distributed Incremental | 官方明确标为 Experimental，Distributed Incremental 对各增量策略的支持并不完全相同 |
-| Contract 与 Constraint | 支持精确列类型 Contract；Constraint 主要限于整表 `CHECK` | Primary Key、Foreign Key、Unique 和列级 Check Constraint 不在其支持范围内 |
-| 连接与集群 | HTTP/Native Driver、TLS/HTTPS、证书校验和客户端证书、Retry、连接/收发 Timeout、压缩、`ON CLUSTER` | Cluster 配置是 Distributed Materialization 的前提；Retry 只针对可重试异常 |
-
-#### 6.3.3 Snowflake
-
-依据：[dbt 官方 Snowflake 配置说明](https://docs.getdbt.com/reference/resource-configs/snowflake-configs)。
-
-| 功能域 | 公开能力 | 关键边界 |
-| --- | --- | --- |
-| 模型与高级对象 | 标准 SQL Model、Dynamic Table、Snowpark Python Model、Iceberg Table；还可通过 dbt Package 管理 Semantic View | 各对象的 Config 并不完全通用，例如 Dynamic Table 只支持其声明的配置集合 |
-| 增量策略 | Merge、Append、Delete+Insert、Insert Overwrite、Microbatch | Snowflake Insert Overwrite 覆盖整表，不按分区覆盖；`overwrite_columns` 可控制写入列 |
-| Dynamic Table | `target_lag` 支持时间间隔或 `downstream`，并支持 `on_configuration_change` | 查询本身变化时通常需要 Full Refresh；Dynamic Table SQL 受 Snowflake 自身限制 |
-| 表物理属性 | `cluster_by`、Transient Table、Automatic Clustering；增量临时 Relation 可选择 View、Temporary 或 Transient | `cluster_by` 会同时影响建表结果排序和 Clustering Key；部分旧的 Automatic Clustering 配置已经没有实际作用 |
-| Python Model | 通过 Snowpark 执行，可声明 Python 版本、Package、Import、Secret 和 External Access Integration | 可用 Python/Package 受 Snowflake Snowpark 环境限制 |
-| 计算资源 | Profile 设置默认 Warehouse，Model、Snapshot 和 Data Test 可覆盖 Warehouse | 适合按任务大小分配计算资源，但会影响成本和构建时间 |
-| 查询追踪 | Profile 或 Model 可设置 Query Tag，执行前写入 Session，完成后恢复 | Materialization 中途失败时，Session Tag 可能未被恢复 |
-| 权限与安全 | `copy_grants`、Secure View | Dynamic Table 的 `copy_grants` 要求 dbt-snowflake 1.11+；Secure View 可能带来性能开销 |
-| Source Freshness | 可从 Snowflake `LAST_ALTERED` 元数据计算 Freshness | `LAST_ALTERED` 也会被 DDL 和后台元数据维护更新，不只代表数据变化 |
-
-#### 6.3.4 Databricks
-
-依据：[dbt 官方 Databricks 配置说明](https://docs.getdbt.com/reference/resource-configs/databricks-configs)。
-
-| 功能域 | 公开能力 | 关键边界 |
-| --- | --- | --- |
-| 模型与高级对象 | SQL Model、Python Model、Materialized View、Streaming Table | Materialized View 和 Streaming Table 要求 Unity Catalog 与 Serverless SQL Warehouse |
-| 增量策略 | Append、Insert Overwrite、Merge、Replace Where、Delete+Insert、Microbatch | 多项策略只适用于 Delta；Delete+Insert 从 1.11 起提供，Microbatch 基于 `event_time` 生成 Replace Where 条件 |
-| 表格式与位置 | Iceberg Table Format；Delta、Hudi、Parquet、ORC 等 File Format；`location_root` 可控制存储位置 | 不同格式支持的增量、Snapshot 和 Schema Evolution 能力不同 |
-| 分区与布局 | `partition_by`、Liquid Clustering、Auto Liquid Clustering、固定 Bucket、Table Properties 和 Compression | 部分 Materialization 不能同时配置 Liquid Clustering 和普通 Partition；部分能力有 Adapter 版本要求 |
-| Materialized View / Streaming Table | 支持 Partition、Liquid Clustering、Properties、Tag、Cron、固定间隔或上游更新触发，以及配置变化处理 | `every`、`on_update`、Tag、Row Filter 等能力有 1.11/1.12 版本要求；两类对象的变更处理并不完全相同 |
-| 治理 | 表/列 Tag、Column Mask、Row Filter、Query Tag | Row Filter 只支持部分 Materialization，并要求 Unity Catalog |
-| 计算资源 | SQL Model 可按 Model 选择 SQL Warehouse 或 Cluster；Python Model 可选择 All-Purpose、Job 或 Serverless 方式 | 未配置时使用 Profile 中 `http_path` 指向的默认 Compute |
-| Python Workflow | 可配置 Job Cluster、Retry、通知、前后置任务和 Workflow 权限 | 这些是 Python Workflow 提交能力，不代表普通 SQL Model 都具有同样的任务配置 |
-| 版本边界 | 新版 Incremental 使用 `INSERT BY NAME` 防止列顺序错位 | dbt-databricks 1.11 的 Incremental 要求 Databricks Runtime 12.2 LTS+ |
-
-#### 6.3.5 BigQuery
-
-依据：[dbt 官方 BigQuery 配置说明](https://docs.getdbt.com/reference/resource-configs/bigquery-configs)。
-
-| 功能域 | 公开能力 | 关键边界 |
-| --- | --- | --- |
-| 命名空间 | dbt `database` 对应 Project，`schema` 对应 Dataset，可跨 Project/Dataset 读写 | 权限、Region 和 Dataset Location 仍必须匹配 |
-| 模型与高级对象 | 标准 SQL Model、Materialized View、BigQuery DataFrames 或 Dataproc Python Model | Python Model 的执行方式、依赖和权限与普通 SQL Model 不同 |
-| 增量策略 | Merge、Insert Overwrite、Microbatch；还可启用 Change History | Merge 要求有效的 `unique_key`；Change History 是 BigQuery 表能力，不等同于 dbt Snapshot |
-| 分区覆盖 | Insert Overwrite 可静态指定分区，也可从临时表动态识别分区；`copy_partitions` 可调用 Copy Table API 替换分区 | Insert Overwrite 要求分区表；Copy Partitions 只适用于动态分区替换 |
-| 分区与集群 | 结构化 `partition_by` 描述字段、类型、粒度和整数 Range；支持 `require_partition_filter`、分区过期和 `cluster_by` | 分区粒度和可用数据类型由 BigQuery 限制 |
-| Materialized View | 支持自动刷新开关、刷新间隔、最大陈旧时间、分区、Cluster、过期、Label、Tag、KMS 和配置变化策略 | `max_staleness` 在官方页面仍标为 Preview；部分配置变化需要 Drop/Create |
-| 资源路由 | Target、Project 或 Model 可通过 `reservation` 选择 BigQuery Reservation | Model 配置优先级最高，最终仍受 GCP Reservation 权限约束 |
-| 治理与安全 | Table/View Label、Job Label、Resource Tag、列级 Policy Tag、KMS、Authorized View 和 `grant_access_to` | Job Label 通过 Query Comment 转换；Policy Tag 还要求列级 `persist_docs` 和 IAM 权限 |
-| 生命周期 | 支持表/分区过期时间 | 表过期优先于分区过期，过期后数据不可继续查询 |
-
-#### 6.3.6 Trino
-
-依据：[dbt 官方 Trino 配置说明](https://docs.getdbt.com/reference/resource-configs/trino-configs)、
-[dbt-trino 官方仓库](https://github.com/starburstdata/dbt-trino)。
-
-| 功能域 | 公开能力 | 关键边界 |
-| --- | --- | --- |
-| 多 Catalog | Profile 指定目标 Catalog 和 Schema，Relation 使用 `catalog.schema.table`；可跨不同 Connector 查询 | 能否创建、改名、删除、Merge 或刷新对象取决于目标 Connector |
-| 基础物化 | Table、View、Incremental、Materialized View、Seed、Snapshot | Materialized View、Snapshot 精度等能力仍取决于 Connector |
-| Table 生命周期 | `on_table_exists` 可选 Rename、Drop、Replace、Skip，Full Refresh 也复用这些模式 | Replace 需要 Connector 支持 `CREATE OR REPLACE`；AWS Glue 等环境可能不能 Rename |
-| View 安全 | `view_security` 可选 Definer 或 Invoker | Connector 不支持 View 时需要关闭 `views_enabled` 或改用 Table |
-| 增量策略 | Append、Delete+Insert、Merge，并支持 `on_schema_change` | Merge 和 Delete 能力由 Connector 决定；当前官方配置文档和主分支没有把 Microbatch 列为已支持策略 |
-| Hive 分区覆盖 | Hive Connector 可通过 Session Property 把本批涉及的已有分区设为 Overwrite | 这是 Connector Session Property 的行为，不是名为 `insert_overwrite` 的 dbt 增量策略 |
-| Materialized View | 后续每次 `dbt run` 执行 Refresh，可配置 Properties 和 Full Refresh | 目标 Connector 必须实现 Trino Materialized View 和 Refresh |
-| Connector Properties | Model 可传入文件格式、分区、Bucket 等 Table Properties | 同一个 Property 在不同 Connector 中可能不存在或语义不同 |
-| Session Property | Profile 可设置默认 Session Property，Model 可通过 Pre-hook 临时覆盖 | Model 级覆盖依靠 Hook，不是统一的 Model Config |
-| Seed | Prepared Statement 批量写入，默认批大小可通过宏调整 | 大量列和行可能触发 Python HTTP Header 长度限制 |
-| Grants 与 Contract | Grants 适用于 Starburst Enterprise、Starburst Galaxy 和 SQL-standard Hive；Contract 支持 `not_null` | 最终仍要求 Connector 和授权模式支持相应语法 |
+这样比较的目标是找出能够帮助 dbt 用户正确使用 Doris 的成熟 Adapter 设计。
 
 ## 7. dbt-doris 下一步重点补什么
 
-当前 dbt-doris 已经可以完成连接、Table/View、Seed、Test、Docs、基础
-Incremental 和 Snapshot 等主流程，但还不能算基础功能完整。下一步首先应补齐
-dbt 用户通常期望 Adapter 提供的标准能力。
+下一步可以概括成两件事：先补齐 dbt Adapter 应有的基础功能，再把 Doris
+有特色、有价值的能力接入 dbt。
 
 ### 7.1 先补齐 dbt 基础功能
 
-| 方向 | 当前基础 | 下一步重点 |
-| --- | --- | --- |
-| [Incremental 实施方案](foundation/incremental.zh-CN.md) / [代码与完整实战](dbt-doris-incremental-code-guide.zh-CN.md) | 已有 Append、Unique Key Upsert 和自定义分区替换 | 统一策略名称和语义，接入 Doris 原生 Insert Overwrite，并补 Schema Change 和 Full Refresh 边界 |
-| [Snapshot](foundation/snapshot.zh-CN.md) | Check Strategy 主路径可用 | 补 Timestamp Strategy、稳定替换和异常恢复 |
-| [Test 与 Contract](foundation/tests-and-contracts.zh-CN.md) | 基础数据测试和用户 Unit Test 可运行，Contract 有基础列校验 | 扩大标准测试覆盖，完善类型、约束、失败记录和 Unit Test 兼容 |
-| [Docs 与 Freshness](foundation/docs-and-freshness.zh-CN.md) | Docs/Catalog 主路径和 `loaded_at_field` Freshness 可用 | 完善各类 Model 的说明持久化、元数据 Freshness 和 Catalog 查询 |
-| [Grants 与治理](foundation/grants-and-governance.zh-CN.md) | Hooks 可用，Grants 尚不可用 | 补 Doris 权限映射、授权和撤权 |
-| [生态兼容](foundation/ecosystem-compatibility.zh-CN.md) | 已有 Doris 自有测试 | 接入 dbt 官方 Adapter 测试，验证常用 Package，并建立版本兼容矩阵 |
+包括 Incremental、Snapshot、Test、Contract、Docs、Freshness、Grants 等
+dbt 用户会直接使用的标准能力，也包括连接稳定性、元数据性能、测试覆盖和版本
+兼容。目标是让熟悉 dbt 的用户迁到 Doris 后，常用工作流仍然具有清晰、稳定的
+行为。
 
-这部分的目标不是增加 Doris 专有功能，而是让熟悉 dbt 的用户迁到 Doris 后，
-Table、View、Incremental、Seed、Snapshot、Test、Docs、Contract、
-Freshness 和 Grants 等日常工作流有清晰、稳定的行为。
+### 7.2 再接入并做深 Doris 特色能力
 
-### 7.2 再把 Doris 原生能力做深
+重点不是照搬其他数据库的功能，而是让 dbt 能正确表达 Doris 的能力，例如：
 
-这里的“Doris 原生能力”主要指 Doris 特有的表模型和物理数据组织方式：
+- Duplicate、Unique、Aggregate Key 表模型；
+- Range、List、Expression、Auto 和 Dynamic Partition；
+- HASH、RANDOM Distribution，固定 Bucket 和 Auto Bucket；
+- Sort、Cluster、Secondary Index 和常用 Table Properties；
+- Dynamic Overwrite、Async Materialized View 和 External Catalog。
 
-| 原生能力 | 解决什么问题 | dbt-doris 当前情况 |
-| --- | --- | --- |
-| Duplicate、Unique、Aggregate Key 表模型 | 决定明细数据如何保存、相同 Key 是否覆盖，以及指标是否预聚合 | Duplicate Key 已可用；Unique Key 主要用于增量 Upsert；Aggregate Key 尚未支持 |
-| Range、List、Expression Partition | 按时间、地区或表达式切分大表，便于裁剪和管理数据 | 已有基础 Range/List 分区；表达式分区和结构化配置仍需补充 |
-| Auto、Dynamic Partition | 自动创建和管理时间分区，减少人工维护 | 尚未提供完整的 dbt 配置 |
-| HASH、RANDOM Distribution | 决定数据如何分布到 Tablet，影响并行执行和数据倾斜 | 已支持 HASH；RANDOM 尚未支持 |
-| 固定 Bucket、Auto Bucket | 控制 Tablet 数量，在并行度、文件数量和数据量之间取得平衡 | 已支持固定 Bucket；Auto Bucket 尚未支持 |
-| Sort、Cluster 和 Secondary Index | 根据常用过滤、排序和检索方式优化查询 | 尚未形成结构化配置 |
-| Table Properties | 配置副本、存储和其他 Doris 表属性 | 可以透传部分属性，但缺少常用属性的统一入口和校验 |
-
-后续目标是让这些配置在 Table、Incremental 和 Full Refresh 中保持一致，
-使用户可以在 dbt Model 中完成 Doris 表设计，而不只是提交一条查询 SQL。
-Async Materialized View 和 External Catalog 也属于 Doris 平台能力，
-但因为涉及独立对象和生命周期，本文把它们放在下一节的高级场景中。
-
-### 7.3 扩展高级场景和生产能力
-
-这部分不是要求 dbt-doris 重写 Doris 功能，而是把已有平台能力接入 dbt，
-再补齐 Adapter 自身的连接和运行能力。
-
-| 类型 | 方向 | dbt-doris 需要做什么 | 当前情况 |
-| --- | --- | --- | --- |
-| 高级增量 | Dynamic Overwrite | 在 Doris 2.1.3+ 将 Config 映射到原生 `INSERT OVERWRITE ... PARTITION(*)`，并统一首次构建、增量和 Full Refresh 行为 | 自定义 Partition Materialization 已有相近的分区识别与替换，但不是标准 Incremental Strategy |
-| 高级增量 | Microbatch | 接入 [dbt Microbatch](https://docs.getdbt.com/docs/build/incremental-strategy#microbatch) 按 `event_time`、`batch_size` 和 `lookback` 拆批的机制，并为每批选择 Doris Append 或分区覆盖 SQL | 未实现 |
-| 高级对象 | Async Materialized View | 增加 Materialization，管理创建、刷新、配置变化和删除 | Doris 已支持，Adapter 未接入 |
-| 多数据源 | External Catalog | 让 Relation、Source、引用、缓存和 Docs 正确处理 `catalog.database.table` | 仅验证 internal catalog 内跨 Database Source |
-| 连接可靠性 | SSL、Timeout、Retry、多 FE Failover | 在 Profile 中暴露并校验连接参数，定义可安全重试和 FE 切换的边界 | 未实现 |
-| 会话与资源 | Session Variable、Workload Group | 将 Profile 或 Model 配置设置到连接会话，使 dbt 任务可以选择 Doris 运行参数和资源组 | 未实现 |
-| 诊断与取消 | Query ID、服务端 Cancel | 关联 dbt Invocation、Model 与 Doris 查询，并确保中断任务时取消服务端查询，而不只是关闭客户端连接 | 当前 `cancel()` 只关闭连接 |
-| 元数据 | Catalog 性能 | 把 Schema/Table 过滤下推到元数据 SQL，避免生成文档时大范围扫描 `information_schema` | 命令可运行，但过滤发生得较晚 |
-| 发布工程 | 兼容矩阵 | 用 CI 和文档声明经过验证的 Python、dbt Core、Connector 和 Doris 版本组合 | 目前只有单一组合验证 |
-
-这些能力很重要，但应建立在标准 dbt 功能已经稳定的基础上。
-
-### 7.4 单独评估 dbt v2
-
-当前 dbt-doris 是 dbt Core v1 Python Adapter，不能直接运行在 dbt v2。
-v2 需要新的 Driver、Adapter 和 Doris SQL Dialect，应作为独立路线验证，
-不与当前 v1 基础功能的完善混在一起。
-
-整体优先级可以概括为：
-
-> 先补齐 dbt 基础功能，再做深 Doris 原生建模，
-> 然后扩展高级场景和生产能力，同时独立评估 dbt v2。
+dbt-doris 在这里主要负责识别 Config，生成正确的 Doris SQL，并管理对象的创建、
+刷新、变更和删除。这样用户才能在 dbt Model 中完成 Doris 表设计和平台能力接入，
+而不只是向 Doris 提交一条 `SELECT`。
 
 ## 8. 最后总结
 
@@ -656,5 +522,7 @@ BI 和应用消费结果
 - [测试结果与已知问题](dbt-doris-test-results-and-known-issues.zh-CN.md)
 - [Apache Doris dbt-doris](https://github.com/apache/doris/tree/master/extension/dbt-doris)
 - [dbt 官方文档](https://docs.getdbt.com/docs/introduction)
+- [dbt Core 版本与生命周期](https://docs.getdbt.com/docs/dbt-versions)
+- [dbt Core 1.12 升级说明](https://docs.getdbt.com/docs/dbt-versions/core-upgrade/upgrading-to-v1.12)
 - [dbt Fusion 与 v2 Engine](https://docs.getdbt.com/docs/fusion/about-fusion)
 - [dbt v2 Adapter 可用性](https://docs.getdbt.com/docs/fusion/fusion-availability)

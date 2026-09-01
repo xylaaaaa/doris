@@ -21,19 +21,21 @@
 from dataclasses import dataclass, field
 
 from dbt.adapters.base.relation import BaseRelation, Policy
-from dbt.exceptions import DbtRuntimeError
 
 
 @dataclass
 class DorisQuotePolicy(Policy):
-    database: bool = False
+    # Doris uses the dbt relation path as catalog.database.table.  For an
+    # internal-catalog relation ``database`` is None, so enabling this part
+    # keeps the normal two-part ``database.table`` rendering unchanged.
+    database: bool = True
     schema: bool = True
     identifier: bool = True
 
 
 @dataclass
 class DorisIncludePolicy(Policy):
-    database: bool = False
+    database: bool = True
     schema: bool = True
     identifier: bool = True
 
@@ -44,17 +46,36 @@ class DorisRelation(BaseRelation):
     include_policy: DorisIncludePolicy = field(default_factory=lambda: DorisIncludePolicy())
     quote_character: str = "`"
 
-    def __post_init__(self):
-        # In Doris, database and schema are the same concept — there is only
-        # one namespace level.  When a source or model sets "database" to a
-        # value that differs from "schema", treat database AS the schema so
-        # that cross-database references like {{ source(...) }} work correctly.
-        if self.database and self.database != self.schema:
-            self.path.schema = self.database
+    @classmethod
+    def create_from(cls, quoting, relation_config, **kwargs):
+        relation = super().create_from(quoting, relation_config, **kwargs)
 
-    def render(self):
-        if self.include_policy.database and self.include_policy.schema:
-            raise DbtRuntimeError(
-                "Got a Doris relation with schema and database set to include, but only one can be set"
-            )
-        return super().render()
+        # dbt's snapshot API historically called both target_database and
+        # target_schema with the same Doris Database name.  Preserve that
+        # public form as an internal-catalog two-part relation while allowing
+        # different values to represent catalog.database.table.
+        if str(getattr(relation_config, "resource_type", "")) == "snapshot":
+            snapshot_config = getattr(relation_config, "config", None)
+            target_database = getattr(snapshot_config, "target_database", None)
+            target_schema = getattr(snapshot_config, "target_schema", None)
+            if target_database and target_database == target_schema:
+                relation = relation.replace_path(
+                    database=None,
+                    schema=target_schema,
+                )
+
+        return relation
+
+    def __post_init__(self):
+        # dbt may use an empty string, or the legacy stringified ``None``, for
+        # an omitted database in a model relation. Treat both as None so they
+        # do not render an empty quoted identifier.
+        if self.database in ("", "None"):
+            self.path.database = None
+
+    def quoted(self, identifier):
+        return "{}{}{}".format(
+            self.quote_character,
+            str(identifier).replace(self.quote_character, self.quote_character * 2),
+            self.quote_character,
+        )

@@ -32,7 +32,7 @@
     sql_is_prepared=false
 ) -%}
     {% set sql_header = config.get('sql_header', none) %}
-    {% set table = relation.include(database=False) %}
+    {% set table = relation %}
     {% set select_sql = (
         sql if sql_is_prepared else doris__table_colume_type(sql)
     ) %}
@@ -54,7 +54,7 @@
     sql_is_prepared=false
 ) -%}
     {% set sql_header = config.get('sql_header', none) %}
-    {% set table = relation.include(database=False) %}
+    {% set table = relation %}
     {% set select_sql = (
         sql if sql_is_prepared else doris__table_colume_type(sql)
     ) %}
@@ -86,7 +86,7 @@
         {% set replication_num = configured_properties.get('replication_num') %}
     {% endif %}
 
-    create table {{ relation.include(database=False) }}
+    create table {{ relation }}
     {{ doris__distributed_by() }}
     {% if replication_num is not none %}
     properties ("replication_num" = "{{ replication_num }}")

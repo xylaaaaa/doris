@@ -16,6 +16,7 @@
 -- under the License.
 
 {% macro doris__get_columns_in_relation(relation) -%}
+    {% set catalog = relation.database or 'internal' %}
     {% call statement('get_columns_in_relation', fetch_result=True) %}
         select column_name  as `column`,
                column_type  as `dtype`,
@@ -23,7 +24,8 @@
                numeric_precision,
                numeric_scale
         from information_schema.columns
-        where table_schema = '{{ relation.schema }}'
+        where upper(table_catalog) = upper('{{ catalog | replace("'", "''") }}')
+          and table_schema = '{{ relation.schema | replace("\\", "\\\\") | replace("'", "\\'") }}'
           and table_name = '{{ relation.identifier }}'
         order by ordinal_position
     {% endcall %}

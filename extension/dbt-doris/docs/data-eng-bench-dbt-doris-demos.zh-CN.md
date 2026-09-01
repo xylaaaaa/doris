@@ -31,7 +31,7 @@
 Source/Ref、View/Table、Seed/Test、物理表配置、Incremental、Snapshot 和异步物化视图。
 它们不能证明 Adapter 的全部兼容性。Microbatch、Insert Overwrite、Contract、Freshness、
 Hook、dbt Docs/Catalog artifact 和 Grants 需要单独测试或后续 Demo。dbt-for-apache-doris
-当前不支持 Doris External Catalog 的三段式命名空间，因此 External Catalog 不纳入本轮 Demo。
+Demo 可以读取已在 Doris 中配置好的 External Catalog 表；External Catalog 的创建和连接器配置不属于 Demo 执行步骤。
 
 | 要发布的能力 | 主要证据 Demo | 必须看到的结果 |
 | --- | --- | --- |
@@ -236,7 +236,6 @@ version: 2
 
 sources:
   - name: orders
-    database: dbt_demo_daily_source
     schema: dbt_demo_daily_source
     tables:
       - name: orders
@@ -244,8 +243,9 @@ sources:
 ~~~
 
 Model 中的 `{{ source('orders', 'orders') }}` 会被编译为
-`dbt_demo_daily_source.orders`。这里通过 Source 的 `database` 和 `schema` 指向源
-Database，同时把模型写入 Profile 的目标 Database `dbt_demo_daily`。
+`dbt_demo_daily_source.orders`。Source 的 `schema` 指向源 Database，模型写入
+Profile 的目标 Database `dbt_demo_daily`。如果源表位于 External Catalog，额外将
+Source 的 `database` 设置为 Catalog 名称即可生成三层 Relation。
 
 #### 1.2.5 编写每日汇总 Table model
 
@@ -534,19 +534,17 @@ flowchart LR
 
 **dbt 项目如何连接 Doris**
 
-`profiles.yml` 使用 `type: doris`，目标 Database 和 schema 都是
+`profiles.yml` 使用 `type: doris`，目标 Database 为
 `dbt_demo_geographic`，端口由 `DORIS_PORT` 环境变量传入。`models/sources.yml` 把两个
 Source 分别指向两个源 Database：
 
 ~~~yaml
 sources:
   - name: customer_schema
-    database: dbt_demo_geographic_customer
     schema: dbt_demo_geographic_customer
     tables:
       - name: CUSTOMER_ADDRESSES
   - name: orders_schema
-    database: dbt_demo_geographic_orders
     schema: dbt_demo_geographic_orders
     tables:
       - name: ORDERS
@@ -1051,10 +1049,13 @@ DORIS_PORT=19030 DBT_BIN=/path/to/dbt ./scripts/run.sh
 
 对外可以表述为“5 个 Doris 原生 dbt 场景已通过”；不能据此表述为全部 dbt Core 功能都已兼容。
 
-### 1.9 本地端到端结果
+### 1.9 历史本地端到端结果
 
-2026-08-19 在本地单 FE/单 BE Doris 集群上，用当前 checkout 的 `dbt-doris` 1.0.0、
-dbt Core 1.12.2 和 `DORIS_PORT=19030` 从仓库中的五个脚本目录重新执行，结果如下：
+以下是 2026-08-19 在本地单 FE/单 BE Doris 集群上的历史运行记录，使用当时
+checkout 的 `dbt-doris` 1.0.0、dbt Core 1.12.2 和 `DORIS_PORT=19030`，从仓库中的五个
+脚本目录重新执行。它证明了当时版本组合的端到端行为，不等同于当前发布脚本默认的
+`dbt-for-apache-doris` 1.1.0 新运行；发布前仍需在干净 Doris 实例上重新执行并保存本次
+版本的 artifacts。
 
 | Demo | 执行内容 | 结果 |
 | --- | --- | --- |

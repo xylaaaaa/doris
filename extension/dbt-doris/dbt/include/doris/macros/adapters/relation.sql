@@ -15,6 +15,16 @@
 -- specific language governing permissions and limitations
 -- under the License.
 
+{% macro doris__generate_database_name(custom_database_name=none, node=none) -%}
+  {# A missing dbt target.database is None. Returning it directly avoids
+     Jinja stringifying it as the catalog name ``None`` in model metadata. #}
+  {% if custom_database_name is none %}
+    {{ return(target.database) }}
+  {% else %}
+    {{ return(custom_database_name) }}
+  {% endif %}
+{%- endmacro %}
+
 {% macro doris__engine() -%}
     {% set label = 'ENGINE' %}
     {% set engine = config.get('engine', 'OLAP') %}
@@ -133,6 +143,9 @@
     {% if not relation_type or relation_type is none %}
         {% set relation_type = 'table' %}
     {% endif %}
+    {% if relation_type == 'materialized_view' %}
+        {% set relation_type = 'materialized view' %}
+    {% endif %}
     {% call statement('drop_relation', auto_begin=False) %}
       drop {{ relation_type }} if exists {{ relation }}
     {% endcall %}
@@ -166,7 +179,7 @@
 
 {% macro doris__rename_relation(from_relation, to_relation) -%}
   {% call statement('drop_relation') %}
-    drop {{ to_relation.type }} if exists {{ to_relation }}
+    drop {{ 'materialized view' if to_relation.type == 'materialized_view' else to_relation.type }} if exists {{ to_relation }}
   {% endcall %}
   {% call statement('rename_relation') %}
     {% if to_relation.is_view %}
@@ -174,6 +187,8 @@
     create view {{ to_relation }} as {{ doris__view_query_from_show_create(
         results[0]['Create View']
     ) }}
+    {% elif to_relation.type == 'materialized_view' %}
+    alter materialized view {{ from_relation }} rename `{{ to_relation.table | replace("`", "``") }}`
     {% else %}
     alter table {{ from_relation }} rename {{ to_relation.table }}
     {% endif %}
@@ -236,7 +251,7 @@
   {% endif %}
 
   {%- set new_relation = api.Relation.create(
-      database=none,
+      database=database,
       schema=schema,
       identifier=identifier,
       type=type
@@ -249,9 +264,15 @@
 {% endmacro %}
 
 {% macro create_indexes(relation) -%}
-  {# Doris does not support traditional indexes; this is a no-op #}
+  {#-- No-op: this adapter has no index config yet.
+
+       Doris does support secondary indexes -- inverted, bloom filter, bitmap and
+       ngram bloom filter -- so this is a missing feature, not a platform limit.
+       Adding them means exposing an `indexes` config and building the clauses at
+       CREATE TABLE time, since Doris declares indexes in the table definition
+       rather than through a separate CREATE INDEX statement. --#}
 {%- endmacro %}
 
 {% macro catalog_source(catalog,database,table) -%}
-  `{{catalog}}`.`{{database}}`.`{{table}}`
+  {{ adapter.quote(catalog) }}.{{ adapter.quote(database) }}.{{ adapter.quote(table) }}
 {%- endmacro %}

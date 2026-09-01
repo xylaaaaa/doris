@@ -20,13 +20,13 @@
 
 {% macro doris__drop_schema(relation) -%}
   {%- call statement('drop_schema') -%}
-    drop database if exists {{ relation.without_identifier().include(database=False) }} 
+    drop database if exists {{ relation.without_identifier() }}
   {%- endcall -%}
 {% endmacro %}
 
 
 {% macro doris__create_schema(relation) -%}
   {%- call statement('create_schema') -%}
-    create database if not exists {{ relation.without_identifier().include(database=False) }}
+    create database if not exists {{ relation.without_identifier() }}
   {% endcall %}
 {% endmacro %}

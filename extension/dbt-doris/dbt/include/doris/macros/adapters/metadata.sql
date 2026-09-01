@@ -16,45 +16,93 @@
 -- under the License.
 
 {% macro doris__list_relations_without_caching(schema_relation) -%}
+  {% set catalog = schema_relation.database or 'internal' %}
   {% call statement('list_relations_without_caching', fetch_result=True) %}
     select
-      null as "database",
-      table_name as name,
-      table_schema as "schema",
-      case when table_type = 'BASE TABLE' then 'table'
-           when table_type = 'VIEW' then 'view'
-           else table_type end as table_type
-    from information_schema.tables
-    where table_schema = '{{ schema_relation.schema }}'
+      {% if schema_relation.database %}
+      tables.table_catalog as "database",
+      {% else %}
+      case when lower(tables.table_catalog) = 'internal' then null
+           else tables.table_catalog end as "database",
+      {% endif %}
+      tables.table_name as name,
+      tables.table_schema as "schema",
+      case when materialized_views.Name is not null then 'materialized_view'
+           when tables.table_type = 'BASE TABLE' then 'table'
+           when tables.table_type = 'VIEW' then 'view'
+           else tables.table_type end as table_type
+    from information_schema.tables as tables
+    {% if not schema_relation.database or schema_relation.database | lower == 'internal' %}
+    left join mv_infos(
+      "database" = "{{ schema_relation.schema | replace('\\', '\\\\') | replace('"', '\\"') }}"
+    ) as materialized_views
+      on tables.table_name = materialized_views.Name
+    {% else %}
+    left join (select null as Name) as materialized_views
+      on false
+    {% endif %}
+    where upper(tables.table_catalog) = upper('{{ catalog | replace("'", "''") }}')
+      and tables.table_schema = '{{ schema_relation.schema | replace("\\", "\\\\") | replace("'", "\\'") }}'
   {% endcall %}
   {{ return(load_result('list_relations_without_caching').table) }}
 {%- endmacro %}
 
 {% macro doris__get_catalog(information_schema, schemas) -%}
+    {% set catalog = information_schema.database or 'internal' %}
     {%- call statement('catalog', fetch_result=True) -%}
-    with tables as (
+    with materialized_views as (
+        {% if catalog | lower == 'internal' %}
+        {%- for schema in schemas %}
         select
-            null as "table_database",
-            table_schema,
-            table_name,
-            case when table_type = 'BASE TABLE' then 'table'
-                 when table_type = 'VIEW' then 'view'
-                 else table_type
+            '{{ schema | replace("\\", "\\\\") | replace("'", "\\'") }}' as table_schema,
+            Name as table_name
+        from mv_infos(
+            "database" = "{{ schema | replace('\\', '\\\\') | replace('"', '\\"') }}"
+        )
+        {%- if not loop.last %} union all {% endif -%}
+        {%- endfor %}
+        {% else %}
+        select null as table_schema, null as table_name where false
+        {% endif %}
+    ),
+    tables as (
+        select
+            {% if information_schema.database %}
+            information_schema_tables.table_catalog as "table_database",
+            {% else %}
+            case when lower(information_schema_tables.table_catalog) = 'internal' then null
+                 else information_schema_tables.table_catalog end as "table_database",
+            {% endif %}
+            information_schema_tables.table_schema,
+            information_schema_tables.table_name,
+            case when materialized_views.table_name is not null then 'materialized_view'
+                 when information_schema_tables.table_type = 'BASE TABLE' then 'table'
+                 when information_schema_tables.table_type = 'VIEW' then 'view'
+                 else information_schema_tables.table_type
             end as table_type,
             null as table_owner,
-            table_comment
-        from information_schema.tables
+            information_schema_tables.table_comment
+        from information_schema.tables as information_schema_tables
+        left join materialized_views
+          on information_schema_tables.table_schema = materialized_views.table_schema
+         and information_schema_tables.table_name = materialized_views.table_name
     ),
     columns as (
         select
-            null as "table_database",
+            {% if information_schema.database %}
+            information_schema_columns.table_catalog as "table_database",
+            {% else %}
+            case when lower(information_schema_columns.table_catalog) = 'internal' then null
+                 else information_schema_columns.table_catalog end as "table_database",
+            {% endif %}
             table_schema as "table_schema",
             table_name as "table_name",
             column_name as "column_name",
             ordinal_position as "column_index",
             data_type as "column_type",
             column_comment as "column_comment"
-        from information_schema.columns
+        from information_schema.columns as information_schema_columns
+        where upper(information_schema_columns.table_catalog) = upper('{{ catalog | replace("'", "''") }}')
     )
     select
         columns.table_database,
@@ -71,6 +119,15 @@
     join columns using (table_schema, table_name)
     where tables.table_schema not in ('information_schema')
     and (
+      {% if information_schema.database %}
+      upper(tables.table_database) = upper('{{ catalog | replace("'", "''") }}')
+      {% else %}
+      ('{{ catalog | lower | replace("'", "''") }}' = 'internal'
+       and tables.table_database is null)
+      or upper(tables.table_database) = upper('{{ catalog | replace("'", "''") }}')
+      {% endif %}
+    )
+    and (
     {%- for schema in schemas -%}
       upper(tables.table_schema) = upper('{{ schema }}'){%- if not loop.last %} or {% endif -%}
     {%- endfor -%}
@@ -86,8 +143,11 @@
 {%- endmacro %}
 
 {% macro doris__list_schemas(database) -%}
+    {% set catalog = database or 'internal' %}
     {% call statement('list_schemas', fetch_result=True, auto_begin=False) -%}
-    select distinct schema_name from information_schema.schemata
+    select distinct schema_name
+    from information_schema.schemata
+    where upper(catalog_name) = upper('{{ catalog | replace("'", "''") }}')
     {%- endcall %}
     {{ return(load_result('list_schemas').table) }}
 {%- endmacro %}

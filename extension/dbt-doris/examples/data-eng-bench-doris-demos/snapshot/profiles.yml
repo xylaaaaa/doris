@@ -7,6 +7,5 @@ snapshot_demo:
       port: "{{ env_var('DORIS_PORT', '9030') | int }}"
       username: "{{ env_var('DORIS_USER', 'root') }}"
       password: "{{ env_var('DORIS_PASSWORD', '') }}"
-      database: dbt_demo_snapshot
       schema: dbt_demo_snapshot
       threads: 2

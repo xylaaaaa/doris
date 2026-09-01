@@ -198,9 +198,9 @@ verifier 输出
 - Hook；
 - dbt Docs/Catalog artifact；
 - Grants；
-- Doris External Catalog 三段式命名空间。
+- Doris Catalog 的创建和连接器配置。
 
-其中 Doris External Catalog 当前明确不支持，不应写成“待补 Demo”。
+External Catalog 必须预先在 Doris 中配置，Demo 只负责通过三层 Relation 读取和转换数据。
 
 ## 7. Agent 的位置
 

@@ -142,7 +142,8 @@ class DorisAdapter(SQLAdapter):
         return version is not None and version >= (3, 0, 0)
 
     def _latest_schema_change_job(self, relation: BaseRelation):
-        schema = self.quote(relation.schema)
+        schema_relation = relation.without_identifier()
+        schema = schema_relation.render()
         table_name = relation.identifier.replace("'", "''")
         _, table = self.execute(
             "show alter table column from {} "
@@ -217,7 +218,7 @@ class DorisAdapter(SQLAdapter):
 
     @classmethod
     def quote(cls, identifier):
-        return "`{}`".format(identifier)
+        return "`{}`".format(str(identifier).replace("`", "``"))
 
     def check_schema_exists(self, database, schema):
         results = self.execute_macro(LIST_SCHEMAS_MACRO_NAME, kwargs={"database": database})
@@ -226,16 +227,17 @@ class DorisAdapter(SQLAdapter):
         return exists
 
     def get_relation(self, database: Optional[str], schema: str, identifier: str):
-        return super().get_relation(None, schema, identifier)
+        return super().get_relation(database, schema, identifier)
 
     def drop_schema(self, relation: BaseRelation):
+        schema_relation = relation
         relations = self.list_relations(
             database=relation.database,
             schema=relation.schema
         )
         for relation in relations:
             self.drop_relation(relation)
-        super().drop_schema(relation)
+        super().drop_schema(schema_relation)
 
     def list_relations_without_caching(self, schema_relation: DorisRelation) -> List[DorisRelation]:
         kwargs = {"schema_relation": schema_relation}
@@ -248,10 +250,16 @@ class DorisAdapter(SQLAdapter):
                     f"Invalid value from 'show table extended ...', "
                     f"got {len(row)} values, expected 4"
                 )
-            _database, name, schema, type_info = row
-            rel_type = RelationType.View if "view" in type_info else RelationType.Table
+            database, name, schema, type_info = row
+            normalized_type = type_info.lower()
+            if normalized_type == RelationType.MaterializedView.value:
+                rel_type = RelationType.MaterializedView
+            elif normalized_type == RelationType.View.value:
+                rel_type = RelationType.View
+            else:
+                rel_type = RelationType.Table
             relation = self.Relation.create(
-                database=None,
+                database=database,
                 schema=schema,
                 identifier=name,
                 type=rel_type,
@@ -260,28 +268,36 @@ class DorisAdapter(SQLAdapter):
 
         return relations
 
+    @classmethod
     def _catalog_filter_table(
-            self, table: agate.Table, used_schemas: FrozenSet[Tuple[str, str]]
+        cls, table: agate.Table, used_schemas: FrozenSet[Tuple[Optional[str], str]]
     ) -> agate.Table:
         table = table_from_rows(
             table.rows,
             table.column_names,
-            text_only_columns=["table_schema", "table_name"],
+            text_only_columns=["table_database", "table_schema", "table_name"],
         )
-        return table.where(self._catalog_filter_schemas(used_schemas))
+        return table.where(cls._catalog_filter_schemas(used_schemas))
 
     @staticmethod
     def _catalog_filter_schemas(
-            used_schemas: FrozenSet[Tuple[str, str]]
+        used_schemas: FrozenSet[Tuple[Optional[str], str]]
     ):
-        schemas = frozenset((None, s.lower()) for d, s in used_schemas)
+        schemas = frozenset(
+            (d.lower() if d is not None else None, s.lower())
+            for d, s in used_schemas
+            if s is not None
+        )
 
         def predicate(row: agate.Row) -> bool:
             table_database = row.get("table_database")
             table_schema = row.get("table_schema")
             if table_schema is None:
                 return False
-            return (table_database, table_schema.lower()) in schemas
+            normalized_database = (
+                table_database.lower() if table_database is not None else None
+            )
+            return (normalized_database, table_schema.lower()) in schemas
 
         return predicate
 

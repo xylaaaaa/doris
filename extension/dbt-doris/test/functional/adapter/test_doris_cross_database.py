@@ -18,13 +18,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-Tests for Doris cross-database (database != schema) relation handling.
-
-Doris has only one namespace level (database = schema).  When a source or model
-sets "database" to a different value, the adapter must NOT crash and should map
-the database value to schema for correct SQL rendering.
-"""
+"""Tests for Doris two-part and three-part relation handling."""
 
 import pytest
 from dbt.tests.util import run_dbt
@@ -35,11 +29,11 @@ from dbt.adapters.doris.relation import DorisRelation
 # Unit tests — no database connection needed
 # ---------------------------------------------------------------------------
 
-class TestDorisRelationDatabaseMapping:
-    """Verify DorisRelation maps database → schema without raising errors."""
+class TestDorisRelationNamespace:
+    """Verify internal and external Doris relation rendering."""
 
     def test_database_equals_schema(self):
-        """database == schema should work as before."""
+        """Equal catalog and database names still render as three parts."""
         rel = DorisRelation.create(
             database="my_db",
             schema="my_db",
@@ -47,17 +41,19 @@ class TestDorisRelationDatabaseMapping:
         )
         assert rel.schema == "my_db"
         assert rel.identifier == "my_table"
+        assert rel.render() == "`my_db`.`my_db`.`my_table`"
 
     def test_database_differs_from_schema(self):
-        """database != schema should NOT raise; database is used as schema."""
+        """A database value is preserved as the Doris catalog component."""
         rel = DorisRelation.create(
             database="other_db",
             schema="default_schema",
             identifier="my_table",
         )
-        # database value should overwrite schema
-        assert rel.schema == "other_db"
+        assert rel.database == "other_db"
+        assert rel.schema == "default_schema"
         assert rel.identifier == "my_table"
+        assert rel.render() == "`other_db`.`default_schema`.`my_table`"
 
     def test_database_none(self):
         """database=None should leave schema unchanged."""
@@ -77,19 +73,17 @@ class TestDorisRelationDatabaseMapping:
         )
         assert rel.schema == "my_schema"
 
-    def test_render_excludes_database(self):
-        """Rendered SQL should only include schema.identifier, never database."""
+    def test_render_includes_catalog(self):
+        """External catalog relations render all three qualified parts."""
         rel = DorisRelation.create(
             database="cross_db",
             schema="original_schema",
             identifier="orders",
         )
         rendered = rel.render()
-        # schema was mapped to "cross_db"
         assert "cross_db" in rendered
         assert "orders" in rendered
-        # Should be schema.identifier format, no three-part name
-        assert rendered.count(".") == 1
+        assert rendered.count(".") == 2
 
     def test_render_without_database(self):
         """Normal case: database=None renders schema.identifier."""
@@ -117,7 +111,7 @@ version: 2
 
 sources:
   - name: cross_db_src
-    database: cross_db_test
+    database: internal
     schema: cross_db_test
     tables:
       - name: remote_table
@@ -133,14 +127,13 @@ CROSS_DB_MODEL_SQL = """
 select id, val from {{ source('cross_db_src', 'remote_table') }}
 """
 
-# A source defined with ONLY database set (no explicit schema)
-# Should still work — database is mapped to schema.
+# A source defined with an explicit internal-catalog database.
 DB_ONLY_SOURCE_YML = """
 version: 2
 
 sources:
   - name: db_only_src
-    database: cross_db_test
+    schema: cross_db_test
     tables:
       - name: remote_table
 """
@@ -197,7 +190,7 @@ class TestDorisCrossDatabaseSource:
 
 
 class TestDorisDatabaseOnlySource:
-    """Source defined with database but no explicit schema — should map correctly."""
+    """Source defined with a Doris database and no catalog."""
 
     @pytest.fixture(scope="class")
     def models(self):

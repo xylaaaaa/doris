@@ -2,7 +2,6 @@ version: 2
 
 sources:
   - name: orders
-    database: "{{ env_var('DORIS_DEMO_SOURCE_DATABASE', 'dbt_demo_daily_source') }}"
     schema: "{{ env_var('DORIS_DEMO_SOURCE_DATABASE', 'dbt_demo_daily_source') }}"
     tables:
       - name: orders

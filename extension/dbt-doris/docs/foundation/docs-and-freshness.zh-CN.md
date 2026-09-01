@@ -320,4 +320,4 @@ Capability 必须按“实现一个、测试一个、声明一个”的顺序增
 - Catalog 内容准确且过滤在扫描层生效；
 - 字段时间和 Internal Catalog 元数据时间都可计算 Freshness；
 - Capability 与真实实现、测试完全一致；
-- External Catalog 等未支持边界有明确错误信息。
+- 仍未支持的能力边界有明确错误信息。
