@@ -17,6 +17,10 @@
 
 {% macro doris__list_relations_without_caching(schema_relation) -%}
   {% set catalog = schema_relation.database or 'internal' %}
+  {% set information_schema_name = (
+      adapter.quote(catalog) ~ '.information_schema'
+      if schema_relation.database else 'information_schema'
+  ) %}
   {% call statement('list_relations_without_caching', fetch_result=True) %}
     select
       {% if schema_relation.database %}
@@ -31,7 +35,7 @@
            when tables.table_type = 'BASE TABLE' then 'table'
            when tables.table_type = 'VIEW' then 'view'
            else tables.table_type end as table_type
-    from information_schema.tables as tables
+    from {{ information_schema_name }}.tables as tables
     {% if not schema_relation.database or schema_relation.database | lower == 'internal' %}
     left join mv_infos(
       "database" = "{{ schema_relation.schema | replace('\\', '\\\\') | replace('"', '\\"') }}"
@@ -49,6 +53,10 @@
 
 {% macro doris__get_catalog(information_schema, schemas) -%}
     {% set catalog = information_schema.database or 'internal' %}
+    {% set information_schema_name = (
+        adapter.quote(catalog) ~ '.information_schema'
+        if information_schema.database else 'information_schema'
+    ) %}
     {%- call statement('catalog', fetch_result=True) -%}
     with materialized_views as (
         {% if catalog | lower == 'internal' %}
@@ -82,7 +90,7 @@
             end as table_type,
             null as table_owner,
             information_schema_tables.table_comment
-        from information_schema.tables as information_schema_tables
+        from {{ information_schema_name }}.tables as information_schema_tables
         left join materialized_views
           on information_schema_tables.table_schema = materialized_views.table_schema
          and information_schema_tables.table_name = materialized_views.table_name
@@ -101,7 +109,7 @@
             ordinal_position as "column_index",
             data_type as "column_type",
             column_comment as "column_comment"
-        from information_schema.columns as information_schema_columns
+        from {{ information_schema_name }}.columns as information_schema_columns
         where upper(information_schema_columns.table_catalog) = upper('{{ catalog | replace("'", "''") }}')
     )
     select
@@ -144,9 +152,13 @@
 
 {% macro doris__list_schemas(database) -%}
     {% set catalog = database or 'internal' %}
+    {% set information_schema_name = (
+        adapter.quote(catalog) ~ '.information_schema'
+        if database else 'information_schema'
+    ) %}
     {% call statement('list_schemas', fetch_result=True, auto_begin=False) -%}
     select distinct schema_name
-    from information_schema.schemata
+    from {{ information_schema_name }}.schemata
     where upper(catalog_name) = upper('{{ catalog | replace("'", "''") }}')
     {%- endcall %}
     {{ return(load_result('list_schemas').table) }}
