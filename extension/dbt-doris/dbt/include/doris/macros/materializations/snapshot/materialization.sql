@@ -26,14 +26,14 @@
   {% set strategy_name = config.get('strategy') %}
   {% set unique_key = config.get('unique_key') %}
   {% set grant_config = config.get('grants') %}
-  {# dbt's legacy target_database/target_schema snapshot options both point to
-     a Doris Database. Keep that form as a two-part internal relation. When
-     they differ, target_database is the Doris Catalog and is retained as the
-     first component of a three-part relation. #}
-  {% set target_catalog = model.database if model.database and model.database != model.schema else none %}
-
+  {# Internal Catalog snapshots omit target_database. dbt Core's check
+     strategy reads node.database directly on subsequent runs, so keep the
+     key present with the same None value used by two-part Doris relations. #}
+  {% if 'database' not in model %}
+    {% do model.update({'database': none}) %}
+  {% endif %}
   {% set target_relation_exists, target_relation = get_or_create_relation(
-      database=target_catalog,
+      database=model.database,
       schema=model.schema,
       identifier=target_table,
       type='table'

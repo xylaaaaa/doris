@@ -2,7 +2,6 @@
 
 {{
     config(
-        target_database='dbt_demo_snapshot_history',
         target_schema='dbt_demo_snapshot_history',
         unique_key='customer_id',
         distributed_by=['customer_id'],

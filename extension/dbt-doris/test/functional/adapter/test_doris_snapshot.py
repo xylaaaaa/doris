@@ -62,7 +62,6 @@ SNAPSHOT_SQL = """
 
 {{
     config(
-        target_database=target.schema,
         target_schema=target.schema,
         unique_key='id',
         strategy='check',

@@ -226,18 +226,6 @@ class DorisAdapter(SQLAdapter):
         exists = True if schema in [row[0] for row in results] else False
         return exists
 
-    def get_relation(self, database: Optional[str], schema: str, identifier: str):
-        # dbt snapshots created with the legacy target_database=target_schema
-        # form pass the same value as both Catalog and Database on later
-        # lookups. Doris treats that as a Catalog-qualified name, so collapse
-        # the legacy pair back to the internal catalog representation.
-        if database is not None and database == schema:
-            database = None
-        relation = super().get_relation(database, schema, identifier)
-        if relation is not None and database is None and relation.database == schema:
-            relation = relation.replace_path(database=None)
-        return relation
-
     def drop_schema(self, relation: BaseRelation):
         schema_relation = relation
         relations = self.list_relations(

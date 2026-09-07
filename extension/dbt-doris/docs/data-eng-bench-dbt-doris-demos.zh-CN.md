@@ -925,7 +925,6 @@ Snapshot 配置使用 <code>strategy='check'</code>、<code>check_cols</code> �
 ~~~jinja
 {% snapshot customer_snapshot %}
 {{ config(
-    target_database='dbt_demo_snapshot_history',
     target_schema='dbt_demo_snapshot_history',
     unique_key='customer_id',
     distributed_by=['customer_id'],
