@@ -574,6 +574,12 @@ PAIMON_CPP_NAME="paimon-cpp-0a4f4e2.tar.gz"
 PAIMON_CPP_SOURCE="doris-thirdparty-paimon-cpp-0a4f4e2"
 PAIMON_CPP_MD5SUM="b8599a0421dbf1ec05e2f1a481d64e87"
 
+# paimon-cpp's ORC dependency (kept separate from Doris's ORC 1.9.0)
+PAIMON_ORC_DOWNLOAD="https://github.com/apache/orc/archive/refs/tags/v2.1.1.tar.gz"
+PAIMON_ORC_NAME="orc-v2.1.1.tar.gz"
+PAIMON_ORC_SOURCE=
+PAIMON_ORC_SHA256SUM="1f8eef537814fdcd003de13e49c6edb35427b45eb40bafd3355f775d99a0ff99"
+
 # all thirdparties which need to be downloaded is set in array TP_ARCHIVES
 export TP_ARCHIVES=(
     'LIBEVENT'
@@ -659,6 +665,7 @@ export TP_ARCHIVES=(
     'JUICEFS'
     'PUGIXML'
     'PAIMON_CPP'
+    'PAIMON_ORC'
 )
 
 if [[ "$(uname -s)" == 'Darwin' ]]; then

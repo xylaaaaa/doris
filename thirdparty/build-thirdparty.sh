@@ -2005,6 +2005,9 @@ build_pugixml() {
 # paimon-cpp
 build_paimon_cpp() {
     check_if_source_exist "${PAIMON_CPP_SOURCE}"
+    local paimon_orc_archive
+    paimon_orc_archive="$(cd "${TP_SOURCE_DIR}" && pwd)/${PAIMON_ORC_NAME}"
+    export PAIMON_ORC_URL="${PAIMON_ORC_URL:-${paimon_orc_archive}}"
     cd "${TP_SOURCE_DIR}/${PAIMON_CPP_SOURCE}"
 
     rm -rf "${BUILD_DIR}"
