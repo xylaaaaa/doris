@@ -103,6 +103,34 @@ md5sum_func() {
     return 0
 }
 
+sha256sum_func() {
+    local FILENAME="$1"
+    local DESC_DIR="$2"
+    local SHA256SUM="$3"
+    local sha256
+
+    sha256="$(sha256sum "${DESC_DIR}/${FILENAME}" | awk '{print $1}')"
+    if [[ "${sha256}" != "${SHA256SUM}" ]]; then
+        echo "${DESC_DIR}/${FILENAME} sha256sum check failed!"
+        echo -e "expected-sha256 ${SHA256SUM} \nactual-sha256 ${sha256}"
+        return 1
+    fi
+    return 0
+}
+
+check_sum_func() {
+    local FILENAME="$1"
+    local DESC_DIR="$2"
+    local CHECKSUM="$3"
+    local CHECKSUM_TYPE="${4:-md5}"
+
+    if [[ "${CHECKSUM_TYPE}" == "sha256" ]]; then
+        sha256sum_func "${FILENAME}" "${DESC_DIR}" "${CHECKSUM}"
+    else
+        md5sum_func "${FILENAME}" "${DESC_DIR}" "${CHECKSUM}"
+    fi
+}
+
 is_git_package() {
     local TP_ARCH="$1"
     local GIT_URL_VAR="${TP_ARCH}_GIT_URL"
@@ -121,7 +149,8 @@ download_func() {
     local FILENAME="$1"
     local DOWNLOAD_URL="$2"
     local DESC_DIR="$3"
-    local MD5SUM="$4"
+    local CHECKSUM="$4"
+    local CHECKSUM_TYPE="${5:-md5}"
 
     if [[ -z "${FILENAME}" ]]; then
         echo "Error: No file name specified to download"
@@ -139,7 +168,7 @@ download_func() {
     local STATUS=1
     for attemp in 1 2; do
         if [[ -r "${DESC_DIR}/${FILENAME}" ]]; then
-            if md5sum_func "${FILENAME}" "${DESC_DIR}" "${MD5SUM}"; then
+            if check_sum_func "${FILENAME}" "${DESC_DIR}" "${CHECKSUM}" "${CHECKSUM_TYPE}"; then
                 echo "Archive ${FILENAME} already exist."
                 STATUS=0
                 break
@@ -149,7 +178,7 @@ download_func() {
         else
             echo "Downloading ${FILENAME} from ${DOWNLOAD_URL} to ${DESC_DIR}"
             if wget --no-check-certificate -q "${DOWNLOAD_URL}" -O "${DESC_DIR}/${FILENAME}"; then
-                if md5sum_func "${FILENAME}" "${DESC_DIR}" "${MD5SUM}"; then
+                if check_sum_func "${FILENAME}" "${DESC_DIR}" "${CHECKSUM}" "${CHECKSUM_TYPE}"; then
                     STATUS=0
                     echo "Success to download ${FILENAME}"
                     break
@@ -171,13 +200,14 @@ download_func() {
 download_with_fallbacks() {
     local FILENAME="$1"
     local DESC_DIR="$2"
-    local MD5SUM="$3"
-    shift 3
+    local CHECKSUM="$3"
+    local CHECKSUM_TYPE="$4"
+    shift 4
 
     local DOWNLOAD_URL=""
     for DOWNLOAD_URL in "$@"; do
         [[ -n "${DOWNLOAD_URL}" ]] || continue
-        if download_func "${FILENAME}" "${DOWNLOAD_URL}" "${DESC_DIR}" "${MD5SUM}"; then
+        if download_func "${FILENAME}" "${DOWNLOAD_URL}" "${DESC_DIR}" "${CHECKSUM}" "${CHECKSUM_TYPE}"; then
             return 0
         fi
     done
@@ -193,6 +223,7 @@ for TP_ARCH in "${TP_ARCHIVES[@]}"; do
     fi
     NAME="${TP_ARCH}_NAME"
     MD5SUM="${TP_ARCH}_MD5SUM"
+    SHA256SUM="${TP_ARCH}_SHA256SUM"
     URL="${TP_ARCH}_DOWNLOAD"
     FALLBACK_URL="${TP_ARCH}_FALLBACK_DOWNLOAD"
     DOWNLOAD_URLS=()
@@ -203,7 +234,14 @@ for TP_ARCH in "${TP_ARCHIVES[@]}"; do
     if [[ -n "${!FALLBACK_URL}" ]]; then
         DOWNLOAD_URLS+=("${!FALLBACK_URL}")
     fi
-    if ! download_with_fallbacks "${!NAME}" "${TP_SOURCE_DIR}" "${!MD5SUM}" "${DOWNLOAD_URLS[@]}"; then
+    if [[ -n "${!SHA256SUM}" ]]; then
+        CHECKSUM="${!SHA256SUM}"
+        CHECKSUM_TYPE="sha256"
+    else
+        CHECKSUM="${!MD5SUM}"
+        CHECKSUM_TYPE="md5"
+    fi
+    if ! download_with_fallbacks "${!NAME}" "${TP_SOURCE_DIR}" "${CHECKSUM}" "${CHECKSUM_TYPE}" "${DOWNLOAD_URLS[@]}"; then
         echo "Failed to download ${!NAME}"
         exit 1
     fi
